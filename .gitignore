@@ -1,0 +1,6 @@
+target/
+src-tauri/gen/
+node_modules/
+*.log
+.DS_Store
+_to_delete/

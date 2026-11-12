@@ -1,0 +1,366 @@
+/* Zecky Lock it: ink, gold, Newsreader for the things that matter, Inter for the rest. */
+
+@font-face {
+  font-family: "Newsreader";
+  src: url("fonts/newsreader-latin-wght-normal.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/inter-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+
+:root {
+  --ink: #14161c;
+  --ink-raised: #1b1e26;
+  --ink-line: #2a2e39;
+  --gold: #d4a657;
+  --gold-soft: rgba(212, 166, 87, 0.14);
+  --text: #ece8df;
+  --text-quiet: #9a968c;
+  --warn: #e0a08a;
+  --serif: "Newsreader", Georgia, serif;
+  --sans: "Inter", "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 22px 28px 0;
+}
+
+.brand {
+  font-family: var(--serif);
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--gold);
+  letter-spacing: 0.01em;
+}
+
+.product {
+  font-size: 13px;
+  color: var(--text-quiet);
+  letter-spacing: 0.04em;
+}
+
+.practice {
+  margin: 14px 28px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--ink-line);
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: var(--text-quiet);
+}
+
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 28px 28px;
+  min-height: 0;
+}
+
+.view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 14px;
+}
+
+h1 {
+  margin: 0;
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 30px;
+  line-height: 1.15;
+  letter-spacing: -0.005em;
+}
+
+.state {
+  text-align: center;
+  font-size: 40px;
+}
+
+.lead {
+  margin: 0;
+  color: var(--text-quiet);
+}
+
+#view-locked .lead,
+#view-open .lead,
+#view-open .quiet {
+  text-align: center;
+}
+
+.quiet {
+  margin: 0;
+  color: var(--text-quiet);
+  font-size: 13px;
+}
+
+/* The lock and its ring. */
+
+.lock {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 2px;
+}
+
+.lock-art {
+  width: 208px;
+  height: 208px;
+}
+
+.ring {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 2.5;
+  opacity: 0.9;
+}
+
+.shackle {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 11;
+  stroke-linecap: round;
+}
+
+.body {
+  fill: var(--gold);
+}
+
+.hole {
+  fill: var(--ink);
+}
+
+#locked-idle,
+#locked-confirm,
+#lock-again {
+  margin-top: 12px;
+}
+
+/* Choosing keys. */
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.key {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.key:has(input:checked) {
+  border-color: var(--gold);
+  background: var(--gold-soft);
+}
+
+.key:has(input:disabled) {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.key:has(input:focus-visible) {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.key input {
+  appearance: none;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  border: 1.5px solid var(--text-quiet);
+  border-radius: 50%;
+  outline: none;
+}
+
+.key input:checked {
+  border-color: var(--gold);
+  background: radial-gradient(circle, var(--gold) 0 45%, transparent 50%);
+}
+
+.key-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.key-name {
+  font-weight: 550;
+}
+
+.key-note {
+  font-size: 13px;
+  color: var(--text-quiet);
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-quiet);
+}
+
+.field input {
+  padding: 12px 14px;
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line);
+  border-radius: 12px;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  user-select: text;
+}
+
+.field input:focus-visible {
+  outline: none;
+  border-color: var(--gold);
+}
+
+/* Buttons. */
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+}
+
+.primary,
+.secondary {
+  width: 100%;
+  padding: 14px 18px;
+  border-radius: 14px;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.primary {
+  background: var(--gold);
+  border: 1px solid var(--gold);
+  color: var(--ink);
+}
+
+.primary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.secondary {
+  background: transparent;
+  border: 1px solid var(--ink-line);
+  color: var(--text);
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+}
+
+.link {
+  align-self: center;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  color: var(--text-quiet);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.confirm {
+  margin: 0;
+  text-align: center;
+  font-family: var(--serif);
+  font-size: 22px;
+}
+
+.message {
+  min-height: 1.5em;
+  margin: 0;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--warn);
+}
+
+.message.calm {
+  color: var(--text-quiet);
+}
+
+.fingerprint {
+  margin: 0;
+  text-align: center;
+  color: var(--text-quiet);
+  font-size: 13px;
+}
+
+.fingerprint code {
+  margin-left: 6px;
+  font-family: var(--serif);
+  font-size: 24px;
+  letter-spacing: 0.08em;
+  font-variant-numeric: lining-nums tabular-nums;
+  color: var(--gold);
+  user-select: text;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}

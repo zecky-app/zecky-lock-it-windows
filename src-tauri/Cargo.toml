@@ -1,0 +1,21 @@
+[package]
+name = "zecky-lock-it"
+description = "Zecky Lock it for Windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "zecky_lock_it"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+lockit-auth = { path = "../crates/lockit-auth" }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+tauri = { version = "2", features = [] }
+zeroize = "1"

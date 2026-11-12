@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zecky Lock it</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <span class="brand">Zecky</span>
+    <span class="product">Lock it</span>
+  </header>
+
+  <p class="practice" role="note">Practice build. No wallet, no funds, no network.</p>
+
+  <main>
+    <!-- Shown while the app reads its state. -->
+    <section id="view-loading" class="view">
+      <p class="quiet">One moment.</p>
+    </section>
+
+    <!-- No lock yet: choose the keys. -->
+    <section id="view-setup" class="view" hidden>
+      <h1>Choose your keys</h1>
+      <p class="lead">Pick one, two or three. Every key you pick will be needed to open the lock.</p>
+
+      <form id="setup-form" autocomplete="off">
+        <label class="key" data-kind="device_hello">
+          <input type="checkbox" name="kind" value="device_hello">
+          <span class="key-text">
+            <span class="key-name">This PC</span>
+            <span class="key-note" data-note>Windows Hello: face, fingerprint or PIN</span>
+          </span>
+        </label>
+
+        <label class="key" data-kind="security_key">
+          <input type="checkbox" name="kind" value="security_key">
+          <span class="key-text">
+            <span class="key-name">Security key</span>
+            <span class="key-note" data-note>A YubiKey or other FIDO2 key, with its PIN</span>
+          </span>
+        </label>
+
+        <label class="key" data-kind="passphrase">
+          <input type="checkbox" name="kind" value="passphrase">
+          <span class="key-text">
+            <span class="key-name">Passphrase</span>
+            <span class="key-note" data-note>Words only you know, at least 12 characters</span>
+          </span>
+        </label>
+
+        <div id="setup-passphrase" class="fields" hidden>
+          <label class="field">
+            <span>Passphrase</span>
+            <input type="password" id="new-passphrase" autocomplete="new-password" spellcheck="false">
+          </label>
+          <label class="field">
+            <span>Once more</span>
+            <input type="password" id="new-passphrase-again" autocomplete="new-password" spellcheck="false">
+          </label>
+        </div>
+
+        <p id="setup-message" class="message" role="status" aria-live="polite"></p>
+        <button type="submit" class="primary" id="setup-submit" disabled>Lock it</button>
+      </form>
+    </section>
+
+    <!-- A lock exists and is closed. -->
+    <section id="view-locked" class="view" hidden>
+      <div class="lock" aria-hidden="true">
+        <svg viewBox="0 0 240 240" class="lock-art">
+          <circle cx="120" cy="120" r="104" class="ring"/>
+          <path class="shackle" d="M92 112 V88 a28 28 0 0 1 56 0 V112"/>
+          <rect class="body" x="78" y="108" width="84" height="66" rx="10"/>
+          <circle class="hole" cx="120" cy="134" r="8"/>
+          <rect class="hole" x="116.500" y="134" width="7" height="22" rx="3"/>
+        </svg>
+      </div>
+      <h1 class="state">Locked</h1>
+      <p class="lead" id="locked-keys"></p>
+
+      <div id="locked-idle">
+        <button type="button" class="primary" id="open-ask">Open the lock</button>
+      </div>
+
+      <form id="locked-confirm" autocomplete="off" hidden>
+        <p class="confirm">Really open the lock?</p>
+        <label class="field" id="open-passphrase-field" hidden>
+          <span>Passphrase</span>
+          <input type="password" id="open-passphrase" autocomplete="current-password" spellcheck="false">
+        </label>
+        <div class="row">
+          <button type="button" class="secondary" id="open-cancel">Keep it locked</button>
+          <button type="submit" class="primary" id="open-confirm">Open the lock</button>
+        </div>
+      </form>
+
+      <p id="locked-message" class="message" role="status" aria-live="polite"></p>
+      <button type="button" class="link" id="remove-lock">Remove this practice lock</button>
+    </section>
+
+    <!-- The lock just opened. -->
+    <section id="view-open" class="view" hidden>
+      <div class="lock" aria-hidden="true">
+        <svg viewBox="0 0 240 240" class="lock-art">
+          <circle cx="120" cy="120" r="104" class="ring"/>
+          <path class="shackle" d="M92 112 V80 a28 28 0 0 1 56 0 V88"/>
+          <rect class="body" x="78" y="108" width="84" height="66" rx="10"/>
+          <circle class="hole" cx="120" cy="134" r="8"/>
+          <rect class="hole" x="116.500" y="134" width="7" height="22" rx="3"/>
+        </svg>
+      </div>
+      <h1 class="state">Open</h1>
+      <p class="lead">Every key answered. The practice secret came back.</p>
+      <p class="fingerprint"><span>Fingerprint</span> <code id="open-fingerprint"></code></p>
+      <p class="quiet">You should see the same eight characters every time this lock opens.</p>
+      <button type="button" class="primary" id="lock-again">Lock it again</button>
+    </section>
+  </main>
+
+  <script src="main.js"></script>
+</body>
+</html>
