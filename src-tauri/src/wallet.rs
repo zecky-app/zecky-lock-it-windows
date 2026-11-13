@@ -84,7 +84,7 @@ fn runtime() -> &'static tokio::runtime::Runtime {
     })
 }
 
-fn data_dir(app: &AppHandle) -> CommandResult<PathBuf> {
+pub(crate) fn data_dir(app: &AppHandle) -> CommandResult<PathBuf> {
     let dir = app.path().app_local_data_dir().map_err(|e| problem(format!("the app's data folder could not be found: {e}")))?;
     fs::create_dir_all(&dir).map_err(|e| problem(format!("the app's data folder could not be created: {e}")))?;
     Ok(dir)
@@ -98,7 +98,7 @@ fn lock_path(app: &AppHandle) -> CommandResult<PathBuf> {
     Ok(data_dir(app)?.join(LOCK_FILE))
 }
 
-fn read_lock(app: &AppHandle) -> CommandResult<Option<Vault>> {
+pub(crate) fn read_lock(app: &AppHandle) -> CommandResult<Option<Vault>> {
     match fs::read_to_string(lock_path(app)?) {
         Ok(json) => Ok(Some(Vault::from_json(&json)?)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -111,7 +111,7 @@ fn sapling_params(app: &AppHandle) -> CommandResult<PathBuf> {
     Ok(dir.join("params"))
 }
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
@@ -125,11 +125,14 @@ pub struct Settings {
     tor: bool,
     /// Seconds of "Really open the lock?"; 0 is Don't ask.
     wait: u32,
+    /// Ask the keys when Lock it opens and after it locked itself
+    /// (key 1, "Opening Zecky" on the Mac). On by default.
+    pub(crate) ask_on_start: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { server: None, tor: true, wait: 10 }
+        Self { server: None, tor: true, wait: 10, ask_on_start: true }
     }
 }
 
@@ -139,7 +142,7 @@ fn settings_path(app: &AppHandle) -> CommandResult<PathBuf> {
     Ok(data_dir(app)?.join("settings.json"))
 }
 
-fn load_settings(app: &AppHandle) -> Settings {
+pub(crate) fn load_settings(app: &AppHandle) -> Settings {
     settings_path(app)
         .ok()
         .and_then(|path| fs::read_to_string(path).ok())
@@ -147,7 +150,7 @@ fn load_settings(app: &AppHandle) -> Settings {
         .unwrap_or_default()
 }
 
-fn save_settings(app: &AppHandle, settings: &Settings) -> CommandResult<()> {
+pub(crate) fn save_settings(app: &AppHandle, settings: &Settings) -> CommandResult<()> {
     let json = serde_json::to_string_pretty(settings).map_err(|e| problem(e.to_string()))?;
     fs::write(settings_path(app)?, json).map_err(|e| problem(format!("the settings could not be saved: {e}")))
 }
@@ -482,10 +485,35 @@ async fn broadcast(app: &AppHandle, slot: &WalletSlot, signed: SignedPayment, ov
     }
 }
 
-/// Asks every key of the lock and returns the words. Used to open the
-/// lock, and as the check before showing the words, the viewing key,
-/// erasing, and weakening a key.
-async fn ask_the_keys(app: &AppHandle, window: &WebviewWindow, passphrase: Option<String>) -> CommandResult<Zeroizing<String>> {
+/// What the owner typed for the keys that are typed: the passphrase and the
+/// Zecky code. Wiped when dropped.
+#[derive(Default, Deserialize)]
+#[serde(default)]
+pub struct Typed {
+    passphrase: Option<Zeroizing<String>>,
+    code: Option<Zeroizing<String>>,
+}
+
+impl Typed {
+    fn for_kind(&self, kind: lockit_auth::KeyKind) -> Option<&str> {
+        match kind {
+            lockit_auth::KeyKind::Code => self.code.as_ref().map(|c| c.as_str()),
+            _ => self.passphrase.as_ref().map(|p| p.as_str()),
+        }
+    }
+}
+
+/// The lock, opened: the words, every key with its secret (to seal it again
+/// with other rules or keys), and its rules.
+pub(crate) struct OpenedLock {
+    pub phrase: Zeroizing<String>,
+    pub keys: Vec<(lockit_auth::KeyDescriptor, lockit_auth::Secret)>,
+    pub policy: lockit_auth::Policy,
+}
+
+/// Asks every key of the lock and opens it. A shorter time lock whose wait
+/// has passed takes over here, sealed into the lock.
+pub(crate) async fn open_fully(app: &AppHandle, window: &WebviewWindow, typed: Typed) -> CommandResult<OpenedLock> {
     let vault = read_lock(app)?.ok_or_else(|| problem("there is no wallet on this PC"))?;
     #[cfg(windows)]
     let handle = crate::raw_window_handle(window);
@@ -494,17 +522,41 @@ async fn ask_the_keys(app: &AppHandle, window: &WebviewWindow, passphrase: Optio
         let _ = window;
         0
     };
-    tauri::async_runtime::spawn_blocking(move || -> CommandResult<Zeroizing<String>> {
-        let passphrase = passphrase.map(Zeroizing::new);
-        let opened = vault.open_with(|descriptor| {
-            let mut source = source_for(descriptor.kind, passphrase.as_ref().map(|text| text.as_str()), handle)?;
+    let mut opened = tauri::async_runtime::spawn_blocking(move || -> CommandResult<OpenedLock> {
+        let (payload, keys) = vault.open_with_secrets(|descriptor| {
+            let mut source = source_for(descriptor.kind, typed.for_kind(descriptor.kind), handle)?;
             source.unlock(descriptor)
         })?;
-        let phrase = std::str::from_utf8(&opened).map_err(|_| problem("the lock holds damaged words"))?;
-        Ok(Zeroizing::new(phrase.to_owned()))
+        let phrase = std::str::from_utf8(&payload).map_err(|_| problem("the lock holds damaged words"))?;
+        Ok(OpenedLock { phrase: Zeroizing::new(phrase.to_owned()), keys, policy: vault.policy.clone() })
     })
     .await
-    .map_err(|e| problem(format!("asking the keys stopped unexpectedly: {e}")))?
+    .map_err(|e| problem(format!("asking the keys stopped unexpectedly: {e}")))??;
+    if let (Some(hours), Some(from)) = (opened.policy.pending_hours, opened.policy.pending_from) {
+        if from <= now() {
+            opened.policy = lockit_auth::Policy { time_lock_hours: hours, pending_hours: None, pending_from: None };
+            reseal(app, &opened)?;
+        }
+    }
+    Ok(opened)
+}
+
+/// Seals the lock again with the same words, `opened.keys` and
+/// `opened.policy`. Written to a new file first, then moved over the old one.
+pub(crate) fn reseal(app: &AppHandle, opened: &OpenedLock) -> CommandResult<()> {
+    let vault = Vault::seal_with_policy(opened.phrase.as_bytes(), opened.keys.clone(), opened.policy.clone())?;
+    let json = vault.to_json()?;
+    let path = lock_path(app)?;
+    let fresh = path.with_extension("new.json");
+    fs::write(&fresh, json).map_err(|e| problem(format!("the lock could not be saved: {e}")))?;
+    fs::rename(&fresh, &path).map_err(|e| problem(format!("the lock could not be saved: {e}")))?;
+    Ok(())
+}
+
+/// Asks every key of the lock and returns the words. Used as the check
+/// before showing the words, the viewing key, erasing, and weakening a key.
+async fn ask_the_keys(app: &AppHandle, window: &WebviewWindow, typed: Typed) -> CommandResult<Zeroizing<String>> {
+    Ok(open_fully(app, window, typed).await?.phrase)
 }
 
 /// Opens the lock: every key of the lock is asked. The words stay in memory
@@ -514,11 +566,19 @@ pub async fn wallet_open_lock(
     app: AppHandle,
     window: WebviewWindow,
     slot: State<'_, WalletSlot>,
-    passphrase: Option<String>,
+    typed: Typed,
 ) -> CommandResult<()> {
-    let phrase = ask_the_keys(&app, &window, passphrase).await?;
+    crate::rules::may_open(&app)?;
+    let phrase = ask_the_keys(&app, &window, typed).await?;
     *slot.opened.lock().map_err(|_| problem("the app is in an unknown state"))? = Some(phrase);
     Ok(())
+}
+
+/// Keeps the opened words: the lock is open.
+pub(crate) fn set_opened(slot: &WalletSlot, phrase: Zeroizing<String>) {
+    if let Ok(mut opened) = slot.opened.lock() {
+        *opened = Some(phrase);
+    }
 }
 
 /// Closes the lock: the words are let go.
@@ -646,14 +706,17 @@ pub fn settings_set_tor(app: AppHandle, on: bool) -> CommandResult<()> {
 /// How long "Really open the lock?" waits. Making it longer goes straight
 /// through; making it shorter asks the keys first, as on Lock it Mac.
 #[tauri::command]
-pub async fn settings_set_wait(app: AppHandle, window: WebviewWindow, seconds: u32, passphrase: Option<String>) -> CommandResult<()> {
+pub async fn settings_set_wait(app: AppHandle, window: WebviewWindow, seconds: u32, typed: Typed) -> CommandResult<()> {
     if !WAITS.contains(&seconds) {
         return Err(problem("choose 10, 5 or 3 seconds, or Don't ask"));
     }
     let mut settings = load_settings(&app);
     let weaker = seconds < settings.wait || (seconds == 0 && settings.wait != 0);
     if weaker {
-        drop(ask_the_keys(&app, &window, passphrase).await?);
+        drop(ask_the_keys(&app, &window, typed).await?);
+        crate::rules::log(&app, if seconds == 0 { "Really open the lock?: don't ask".into() } else { format!("Really open the lock?: {seconds} seconds") });
+    } else {
+        crate::rules::log(&app, format!("Really open the lock?: {seconds} seconds"));
     }
     settings.wait = seconds;
     save_settings(&app, &settings)
@@ -661,8 +724,8 @@ pub async fn settings_set_wait(app: AppHandle, window: WebviewWindow, seconds: u
 
 /// The 24 words, after every key of the lock was asked. Only for showing.
 #[tauri::command]
-pub async fn wallet_show_words(app: AppHandle, window: WebviewWindow, passphrase: Option<String>) -> CommandResult<Vec<String>> {
-    let phrase = ask_the_keys(&app, &window, passphrase).await?;
+pub async fn wallet_show_words(app: AppHandle, window: WebviewWindow, typed: Typed) -> CommandResult<Vec<String>> {
+    let phrase = ask_the_keys(&app, &window, typed).await?;
     let birthday = wallet(&app)?.balance().map(|b| b.birthday).unwrap_or(0);
     let mut words: Vec<String> = phrase.split(' ').map(str::to_owned).collect();
     words.push(birthday.to_string());
@@ -671,8 +734,8 @@ pub async fn wallet_show_words(app: AppHandle, window: WebviewWindow, passphrase
 
 /// The viewing key, after every key of the lock was asked.
 #[tauri::command]
-pub async fn wallet_viewing_key(app: AppHandle, window: WebviewWindow, passphrase: Option<String>) -> CommandResult<String> {
-    drop(ask_the_keys(&app, &window, passphrase).await?);
+pub async fn wallet_viewing_key(app: AppHandle, window: WebviewWindow, typed: Typed) -> CommandResult<String> {
+    drop(ask_the_keys(&app, &window, typed).await?);
     let wallet = wallet(&app)?;
     tauri::async_runtime::spawn_blocking(move || Ok(wallet.viewing_key()?)).await.map_err(|e| problem(e.to_string()))?
 }
@@ -681,8 +744,8 @@ pub async fn wallet_viewing_key(app: AppHandle, window: WebviewWindow, passphras
 /// Windows Hello key and the settings. Go Max's node data stays. Asks
 /// every key first.
 #[tauri::command]
-pub async fn wallet_erase(app: AppHandle, window: WebviewWindow, slot: State<'_, WalletSlot>, passphrase: Option<String>) -> CommandResult<()> {
-    drop(ask_the_keys(&app, &window, passphrase).await?);
+pub async fn wallet_erase(app: AppHandle, window: WebviewWindow, slot: State<'_, WalletSlot>, typed: Typed) -> CommandResult<()> {
+    drop(ask_the_keys(&app, &window, typed).await?);
     let vault = read_lock(&app)?;
     wallet_close_lock(slot.clone());
     if let Ok(mut unsent) = slot.unsent.lock() {
@@ -693,6 +756,7 @@ pub async fn wallet_erase(app: AppHandle, window: WebviewWindow, slot: State<'_,
     fs::remove_file(dir.join(LOCK_FILE)).map_err(|e| problem(format!("the lock could not be removed: {e}")))?;
     let _ = fs::remove_dir_all(dir.join("wallet"));
     let _ = fs::remove_file(dir.join("settings.json"));
+    crate::rules::erase(&app);
     #[cfg(windows)]
     if let Some(vault) = vault {
         let hello: Vec<_> = vault.keys.iter().filter(|key| key.kind == lockit_auth::KeyKind::DeviceHello).cloned().collect();

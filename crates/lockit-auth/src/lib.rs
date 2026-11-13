@@ -28,10 +28,11 @@
 
 mod error;
 pub mod keys;
+pub mod protect;
 mod secret;
 mod vault;
 
 pub use error::{Error, Result};
 pub use keys::{KeyDescriptor, KeyKind, KeySource};
 pub use secret::Secret;
-pub use vault::{Vault, MAX_KEYS, VAULT_VERSION};
+pub use vault::{Policy, Vault, MAX_KEYS, VAULT_VERSION};

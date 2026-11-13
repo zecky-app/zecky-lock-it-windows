@@ -21,8 +21,12 @@ pub enum Error {
     },
 
     /// Only security keys were chosen; they check, but give no secret.
-    #[error("a security key checks that it is you, but a lock also needs Windows Hello or a passphrase")]
+    #[error("a security key or a Zecky code adds a check, but a lock also needs Windows Hello or a passphrase")]
     NeedsSecretKey,
+
+    /// A Zecky code is six digits.
+    #[error("a Zecky code is six digits")]
+    CodeNotSixDigits,
 
     /// The same kind of key was added twice.
     #[error("each key of a lock must be of a different kind; {0} was chosen twice")]

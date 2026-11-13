@@ -18,6 +18,7 @@
 //!   they run on a worker thread and never freeze the window.
 
 mod go_max;
+mod rules;
 mod wallet;
 
 use std::{fs, path::PathBuf};
@@ -139,6 +140,8 @@ pub(crate) fn source_for(
 ) -> Result<Box<dyn KeySource>, lockit_auth::Error> {
     match kind {
         KeyKind::Passphrase => Ok(Box::new(PassphraseKey::new(passphrase.unwrap_or_default()))),
+        // For a code key, `passphrase` carries the six digits.
+        KeyKind::Code => Ok(Box::new(PassphraseKey::code(passphrase.unwrap_or_default()))),
         #[cfg(windows)]
         KeyKind::DeviceHello => Ok(Box::new(lockit_auth::keys::windows_hello::WindowsHelloKey::new())),
         #[cfg(windows)]
@@ -333,6 +336,18 @@ pub fn run() {
             wallet::settings_set_server,
             wallet::settings_set_tor,
             wallet::settings_set_wait,
+            rules::lock_rules,
+            rules::time_lock_choose,
+            rules::time_lock_keep,
+            rules::time_lock_request,
+            rules::time_lock_cancel_request,
+            rules::break_glass,
+            rules::seen_broken,
+            rules::code_set,
+            rules::code_remove,
+            rules::app_unlock,
+            rules::set_ask_on_start,
+            rules::lock_log,
             go_max::go_max_view,
             go_max::go_max_start,
             go_max::go_max_stop

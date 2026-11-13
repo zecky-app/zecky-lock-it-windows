@@ -15,6 +15,17 @@
     </button>
   </header>
 
+  <!-- ===== Lock it is locked (asked when it opens, and after it locked itself) ===== -->
+  <section id="app-locked" class="app-locked" hidden>
+    <div data-padlock="applock"></div>
+    <h1 class="title center">Zecky Lock it is locked</h1>
+    <p class="lead center" id="app-locked-lead">Confirm it's you to see your wallet.</p>
+    <label class="field narrow-field" id="app-locked-passphrase-field" hidden><span>Passphrase</span><input class="input" type="password" id="app-locked-passphrase" autocomplete="current-password" spellcheck="false"></label>
+    <label class="field narrow-field" id="app-locked-code-field" hidden><span>Zecky code</span><input class="input code-input" type="password" inputmode="numeric" maxlength="6" id="app-locked-code" autocomplete="off"></label>
+    <p class="message center" id="app-locked-message" role="status" aria-live="polite"></p>
+    <button type="button" class="brass unlock-button" id="app-unlock">Unlock</button>
+  </section>
+
   <!-- ===== Getting started ===== -->
   <main class="onboarding">
     <section id="view-loading" class="view">
@@ -142,6 +153,12 @@
       </div>
       <p class="open-note" id="open-note"></p>
       <button type="button" class="payment-line" id="payment-line"></button>
+      <div class="glass-notice" id="glass-notice" hidden>
+        <span class="glass-icon">⚒</span>
+        <span id="glass-notice-text"></span>
+        <button type="button" id="glass-seen">OK</button>
+      </div>
+      <p class="timelock-line" id="timelock-line" hidden></p>
     </div>
 
     <button type="button" class="go-max-coin" id="go-max-coin" title="Go Max: your own node">
@@ -223,6 +240,7 @@
         <p class="sheet-sub">Every time Zcash was locked or released.</p></div>
         <button type="button" class="done" data-close>Done</button>
       </div>
+      <div class="chips tabs"><button type="button" class="chip on" id="tab-payments">Payments</button><button type="button" class="chip" id="tab-lock">The lock</button></div>
       <ul class="activity" id="activity-list"></ul>
     </section>
 
@@ -354,6 +372,7 @@
         <div class="page" data-page="security" hidden>
           <div class="card list">
             <button type="button" class="row" data-go="keys"><span class="row-icon">⚿</span><span class="row-title">Keys to the lock</span><span class="row-detail" id="row-keys"></span><span class="chev">›</span></button>
+            <button type="button" class="row" data-go="timelock"><span class="row-icon">◷</span><span class="row-title">Time lock</span><span class="row-detail" id="row-timelock"></span><span class="chev">›</span></button>
             <button type="button" class="row" data-go="phrase"><span class="row-icon">❡</span><span class="row-title">Recovery phrase</span><span class="row-detail">Sealed by your keys</span><span class="chev">›</span></button>
             <button type="button" class="row" data-go="viewkey"><span class="row-icon">◉</span><span class="row-title">Viewing key</span><span class="row-detail">View</span><span class="chev">›</span></button>
           </div>
@@ -368,6 +387,22 @@
         <div class="page" data-page="keys" hidden>
           <div class="card list" id="keys-list"></div>
           <div class="card pad">
+            <div class="inline"><p class="card-title">Ask when opening Lock it</p><label class="switch"><input type="checkbox" id="ask-on-start"><span></span></label></div>
+            <p class="small quiet" id="ask-on-start-note">Windows Hello when Lock it starts, and after it locked itself (sleep, 5 minutes away). Why: your balance and history stay private on a shared or unattended PC.</p>
+            <p class="small message" id="ask-on-start-message"></p>
+          </div>
+          <div class="card pad">
+            <p class="card-title">Zecky code</p>
+            <p class="small quiet">Six digits only you know, asked with your other keys every time the lock opens. Why: someone who knows your Windows PIN still cannot take anything out.</p>
+            <div class="inline">
+              <span class="small message" id="code-note"></span>
+              <span class="buttons">
+                <button type="button" class="secondary narrow" id="code-remove" hidden>Remove code</button>
+                <button type="button" class="secondary narrow" id="code-set">Set a Zecky code</button>
+              </span>
+            </div>
+          </div>
+          <div class="card pad">
             <p class="card-title">Really open the lock?</p>
             <p class="small quiet">A pause before your keys are asked, with the reminder that nobody legitimate rushes you.</p>
             <div class="chips" id="wait-chips">
@@ -379,6 +414,24 @@
             <p class="small message" id="wait-note"></p>
           </div>
           <p class="small quiet">Always asked, whatever you choose: showing the recovery phrase, the viewing key and erasing. Making a key stricter needs nothing; weakening one asks your keys first. The keys themselves are chosen when the wallet is made.</p>
+        </div>
+
+        <!-- Time lock -->
+        <div class="page" data-page="timelock" hidden>
+          <div class="card pad">
+            <p class="card-title">Time lock</p>
+            <p class="small quiet">Opening the lock has to be asked for this long ahead. Why: for Zcash you mean to keep, a wait of days protects you against pressure and impulse. Turning it off or shorter waits as long as the current time lock. In an emergency you can break the glass. It does not stop someone who has your 24 words.</p>
+            <div class="chips" id="timelock-chips">
+              <button type="button" class="chip" data-hours="0">Off</button>
+              <button type="button" class="chip" data-hours="24">24 hours</button>
+              <button type="button" class="chip" data-hours="72">3 days</button>
+              <button type="button" class="chip" data-hours="168">7 days</button>
+            </div>
+            <p class="small gold" id="timelock-pending" hidden></p>
+            <button type="button" class="link-gold small-link" id="timelock-keep" hidden></button>
+            <p class="small quiet" id="timelock-broken" hidden></p>
+            <p class="small message" id="timelock-note"></p>
+          </div>
         </div>
 
         <!-- Recovery phrase -->
@@ -468,6 +521,34 @@
     </section>
   </div>
 
+  <!-- ===== Time lock: ask, or wait (TimeLockPrompt) ===== -->
+  <div class="scrim" id="timelock-prompt" hidden>
+    <div class="prompt">
+      <div class="prompt-ring tl-ring"><div class="prompt-lock" data-padlock="timelock"></div><span class="tl-clock">◷</span></div>
+      <p class="eyebrow center" id="tl-label">TIME LOCK</p>
+      <div id="tl-asking">
+        <h2 class="prompt-title center" id="tl-title">Ask to open the lock</h2>
+        <p class="prompt-intro" id="tl-text"></p>
+        <div class="sheet-actions">
+          <button type="button" class="brass" id="tl-keep">Keep it locked</button>
+          <button type="button" class="secondary" id="tl-ask">Start the wait</button>
+        </div>
+        <button type="button" class="glass-link" id="tl-break">⚒ Break the glass</button>
+      </div>
+      <div id="tl-glass" hidden>
+        <h2 class="prompt-title center red">Break the glass</h2>
+        <p class="prompt-intro">Only for an emergency. After your keys the lock opens straight away, and the time lock turns off. It stays on record in Activity.</p>
+        <p class="prompt-intro strong">Nobody legitimate will ever ask you to do this.</p>
+        <label class="field"><span>Type: I am breaking the glass myself</span><input class="input" id="tl-sentence" spellcheck="false" autocomplete="off"></label>
+        <p class="message" id="tl-message" role="status" aria-live="polite"></p>
+        <div class="sheet-actions">
+          <button type="button" class="brass" id="tl-glass-keep">Keep it locked</button>
+          <button type="button" class="brass danger" id="tl-glass-go" disabled>Break the glass</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== Really open the lock? ===== -->
   <div class="scrim" id="open-prompt" hidden>
     <div class="prompt">
@@ -486,6 +567,10 @@
         <span>Passphrase</span>
         <input class="input" type="password" id="prompt-passphrase" autocomplete="current-password" spellcheck="false">
       </label>
+      <label class="field" id="prompt-code-field" hidden>
+        <span>Zecky code</span>
+        <input class="input code-input" type="password" inputmode="numeric" maxlength="6" id="prompt-code" autocomplete="off">
+      </label>
       <p class="message" id="prompt-message" role="status" aria-live="polite"></p>
       <div class="sheet-actions">
         <button type="button" class="brass" id="prompt-keep">Keep it locked</button>
@@ -503,6 +588,18 @@
       <label class="field" id="confirm-passphrase-field" hidden>
         <span>Passphrase</span>
         <input class="input" type="password" id="confirm-passphrase" autocomplete="current-password" spellcheck="false">
+      </label>
+      <label class="field" id="confirm-code-field" hidden>
+        <span>Zecky code</span>
+        <input class="input code-input" type="password" inputmode="numeric" maxlength="6" id="confirm-code" autocomplete="off">
+      </label>
+      <label class="field" id="confirm-new-code-field" hidden>
+        <span>New Zecky code, six digits</span>
+        <input class="input code-input" type="password" inputmode="numeric" maxlength="6" id="confirm-new-code" autocomplete="off">
+      </label>
+      <label class="field" id="confirm-new-code-again-field" hidden>
+        <span>Once more</span>
+        <input class="input code-input" type="password" inputmode="numeric" maxlength="6" id="confirm-new-code-again" autocomplete="off">
       </label>
       <p class="message" id="confirm-message" role="status" aria-live="polite"></p>
       <div class="sheet-actions">

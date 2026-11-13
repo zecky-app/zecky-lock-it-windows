@@ -42,7 +42,7 @@ use crate::{
 pub const VAULT_VERSION: u32 = 1;
 
 /// The most keys a lock can have.
-pub const MAX_KEYS: usize = 3;
+pub const MAX_KEYS: usize = 4;
 
 const KEY_INFO: &[u8] = b"zecky-lockit/vault/v1/key";
 
@@ -61,6 +61,33 @@ pub struct Vault {
     pub nonce: String,
     /// Encrypted payload with its authentication tag, base64.
     pub ciphertext: String,
+    /// The lock's rules (the time lock). Authenticated with the header, so
+    /// they cannot be changed without the keys. Left out of the file, and of
+    /// the authenticated header, while they are the defaults, so locks made
+    /// before rules existed open unchanged.
+    #[serde(default, skip_serializing_if = "Policy::is_default")]
+    pub policy: Policy,
+}
+
+/// The lock's rules, kept inside the lock.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Policy {
+    /// The time lock in hours: opening has to be asked for this long ahead.
+    /// 0 is off.
+    #[serde(default)]
+    pub time_lock_hours: u32,
+    /// A shorter time lock (or off) chosen, waiting to take over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_hours: Option<u32>,
+    /// When the shorter time lock takes over (Unix seconds).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_from: Option<i64>,
+}
+
+impl Policy {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// The part of the file that is authenticated but not encrypted.
@@ -70,6 +97,8 @@ struct Header<'a> {
     vault_id: &'a str,
     keys: &'a [KeyDescriptor],
     kdf_salt: &'a str,
+    #[serde(skip_serializing_if = "Policy::is_default")]
+    policy: &'a Policy,
 }
 
 impl Vault {
@@ -77,7 +106,12 @@ impl Vault {
     ///
     /// `keys` are the pairs returned by [`crate::KeySource::enroll`]. Between one and
     /// [`MAX_KEYS`] are accepted, each of a different kind.
-    pub fn seal(payload: &[u8], mut keys: Vec<(KeyDescriptor, Secret)>) -> Result<Self> {
+    pub fn seal(payload: &[u8], keys: Vec<(KeyDescriptor, Secret)>) -> Result<Self> {
+        Self::seal_with_policy(payload, keys, Policy::default())
+    }
+
+    /// Seals with rules (a time lock) kept inside the lock.
+    pub fn seal_with_policy(payload: &[u8], mut keys: Vec<(KeyDescriptor, Secret)>, policy: Policy) -> Result<Self> {
         if keys.is_empty() || keys.len() > MAX_KEYS {
             return Err(Error::KeyCount { given: keys.len(), max: MAX_KEYS });
         }
@@ -96,7 +130,7 @@ impl Vault {
         let nonce: [u8; 24] = random_bytes()?;
 
         let (descriptors, secrets): (Vec<_>, Vec<_>) = keys.into_iter().unzip();
-        let header = header_bytes(VAULT_VERSION, &vault_id, &descriptors, &kdf_salt)?;
+        let header = header_bytes(VAULT_VERSION, &vault_id, &descriptors, &kdf_salt, &policy)?;
         let cipher = cipher_for(&descriptors, &secrets, &vault_id, &kdf_salt)?;
         let ciphertext = cipher
             .encrypt(XNonce::from_slice(&nonce), Payload { msg: payload, aad: &header })
@@ -109,6 +143,7 @@ impl Vault {
             kdf_salt,
             nonce: B64.encode(nonce),
             ciphertext: B64.encode(ciphertext),
+            policy,
         })
     }
 
@@ -129,7 +164,7 @@ impl Vault {
             .decode(&self.ciphertext)
             .map_err(|_| Error::Format("the ciphertext is not valid base64".into()))?;
 
-        let header = header_bytes(self.version, &self.vault_id, &self.keys, &self.kdf_salt)?;
+        let header = header_bytes(self.version, &self.vault_id, &self.keys, &self.kdf_salt, &self.policy)?;
         let cipher = cipher_for(&self.keys, secrets, &self.vault_id, &self.kdf_salt)?;
         cipher
             .decrypt(XNonce::from_slice(&nonce), Payload { msg: &ciphertext, aad: &header })
@@ -154,6 +189,22 @@ impl Vault {
             secrets.push(ask(descriptor)?);
         }
         self.open(&secrets)
+    }
+
+    /// Opens the vault like [`Vault::open_with`], and also returns every key
+    /// with its secret, so the vault can be sealed again with other rules or
+    /// one key more or less, without asking the owner twice.
+    pub fn open_with_secrets(
+        &self,
+        mut ask: impl FnMut(&KeyDescriptor) -> Result<Secret>,
+    ) -> Result<(Zeroizing<Vec<u8>>, Vec<(KeyDescriptor, Secret)>)> {
+        self.check_shape()?;
+        let mut secrets = Vec::with_capacity(self.keys.len());
+        for descriptor in &self.keys {
+            secrets.push(ask(descriptor)?);
+        }
+        let payload = self.open(&secrets)?;
+        Ok((payload, self.keys.iter().cloned().zip(secrets).collect()))
     }
 
     /// Reads a vault from its JSON form.
@@ -184,10 +235,10 @@ impl Vault {
     }
 }
 
-fn header_bytes(version: u32, vault_id: &str, keys: &[KeyDescriptor], kdf_salt: &str) -> Result<Vec<u8>> {
+fn header_bytes(version: u32, vault_id: &str, keys: &[KeyDescriptor], kdf_salt: &str, policy: &Policy) -> Result<Vec<u8>> {
     // serde_json writes struct fields in declaration order and BTreeMap keys
     // sorted, so the same header always gives the same bytes.
-    serde_json::to_vec(&Header { version, vault_id, keys, kdf_salt }).map_err(|e| Error::Format(e.to_string()))
+    serde_json::to_vec(&Header { version, vault_id, keys, kdf_salt, policy }).map_err(|e| Error::Format(e.to_string()))
 }
 
 fn cipher_for(

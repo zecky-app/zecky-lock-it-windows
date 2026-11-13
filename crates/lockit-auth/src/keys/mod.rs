@@ -25,6 +25,8 @@ pub enum KeyKind {
     SecurityKey,
     /// A passphrase the owner remembers.
     Passphrase,
+    /// A six-digit Zecky code, always on top of Hello or a passphrase.
+    Code,
 }
 
 impl std::fmt::Display for KeyKind {
@@ -34,15 +36,17 @@ impl std::fmt::Display for KeyKind {
             KeyKind::DeviceHello => "This PC (Windows Hello)",
             KeyKind::SecurityKey => "The security key",
             KeyKind::Passphrase => "The passphrase",
+            KeyKind::Code => "Your Zecky code",
         })
     }
 }
 
 impl KeyKind {
-    /// Whether this kind gives a secret. A security key is a check only (as
-    /// on Lock it Mac), so a lock must also hold one of the others.
+    /// Whether this kind can carry a lock on its own: Windows Hello or a
+    /// passphrase. A security key is a check only (as on Lock it Mac), and a
+    /// six-digit code is too short alone, so they always come on top.
     pub fn gives_secret(self) -> bool {
-        !matches!(self, KeyKind::SecurityKey)
+        matches!(self, KeyKind::DeviceHello | KeyKind::Passphrase)
     }
 
     /// Stable one-byte tag mixed into the vault key. Never change these.
@@ -51,6 +55,7 @@ impl KeyKind {
             KeyKind::DeviceHello => 1,
             KeyKind::SecurityKey => 2,
             KeyKind::Passphrase => 3,
+            KeyKind::Code => 4,
         }
     }
 }

@@ -1,7 +1,7 @@
 //! Tests for the vault and the keys that run on any platform.
 
 use lockit_auth::{
-    keys::passphrase::PassphraseKey, Error, KeyDescriptor, KeyKind, KeySource, Secret, Vault,
+    keys::passphrase::PassphraseKey, Error, KeyDescriptor, KeyKind, KeySource, Policy, Secret, Vault,
 };
 
 const PHRASE: &[u8] = b"abandon ability able about above absent absorb abstract absurd abuse access accident";
@@ -229,4 +229,62 @@ fn base64_decode(text: &str) -> Vec<u8> {
 fn base64_encode(bytes: &[u8]) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+#[test]
+fn a_lock_made_before_rules_existed_still_opens() {
+    // Written the way test builds 2 to 4 wrote it: no `policy` field at all.
+    let mut hello = FakeKey::new(KeyKind::DeviceHello, 0x21);
+    let vault = Vault::seal(PHRASE, vec![hello.enroll("This PC").unwrap()]).unwrap();
+    let json = vault.to_json().unwrap();
+    assert!(!json.contains("policy"), "default rules stay out of the file");
+    let read = Vault::from_json(&json).unwrap();
+    assert_eq!(read.open_with(|key| hello.unlock(key)).unwrap().as_slice(), PHRASE);
+}
+
+#[test]
+fn the_time_lock_is_inside_the_lock_and_cannot_be_edited_out() {
+    let mut hello = FakeKey::new(KeyKind::DeviceHello, 0x31);
+    let policy = Policy { time_lock_hours: 72, ..Default::default() };
+    let vault = Vault::seal_with_policy(PHRASE, vec![hello.enroll("This PC").unwrap()], policy.clone()).unwrap();
+    let json = vault.to_json().unwrap();
+    let read = Vault::from_json(&json).unwrap();
+    assert_eq!(read.policy, policy);
+    assert_eq!(read.open_with(|key| hello.unlock(key)).unwrap().as_slice(), PHRASE);
+
+    // Someone edits the file to switch the time lock off, or removes it.
+    let mut tampered = read.clone();
+    tampered.policy.time_lock_hours = 0;
+    assert!(matches!(tampered.open_with(|key| hello.unlock(key)), Err(Error::WrongKeyOrDamaged)));
+    let stripped = json.replace("\"time_lock_hours\": 72", "\"time_lock_hours\": 0");
+    let stripped = Vault::from_json(&stripped).unwrap();
+    assert!(matches!(stripped.open_with(|key| hello.unlock(key)), Err(Error::WrongKeyOrDamaged)));
+}
+
+#[test]
+fn opening_with_secrets_lets_the_lock_be_sealed_again_with_a_code() {
+    let mut hello = FakeKey::new(KeyKind::DeviceHello, 0x41);
+    let vault = Vault::seal(PHRASE, vec![hello.enroll("This PC").unwrap()]).unwrap();
+    let (payload, mut keys) = vault.open_with_secrets(|key| hello.unlock(key)).unwrap();
+
+    let mut code = PassphraseKey::code("482916").with_cost(8 * 1024, 1);
+    keys.push(code.enroll("Zecky code").unwrap());
+    let resealed = Vault::seal_with_policy(&payload, keys, Policy { time_lock_hours: 24, ..Default::default() }).unwrap();
+    assert_eq!(resealed.keys.len(), 2);
+
+    let mut right = PassphraseKey::code("482916").with_cost(8 * 1024, 1);
+    let opened = resealed.open_with(|key| if key.kind == KeyKind::Code { right.unlock(key) } else { hello.unlock(key) }).unwrap();
+    assert_eq!(opened.as_slice(), PHRASE);
+
+    let mut wrong = PassphraseKey::code("000000").with_cost(8 * 1024, 1);
+    let refused = resealed.open_with(|key| if key.kind == KeyKind::Code { wrong.unlock(key) } else { hello.unlock(key) });
+    assert!(matches!(refused, Err(Error::WrongKeyOrDamaged)));
+}
+
+#[test]
+fn a_code_is_six_digits_and_never_alone() {
+    assert!(matches!(PassphraseKey::code("12345").with_cost(8 * 1024, 1).enroll("Code"), Err(Error::CodeNotSixDigits)));
+    assert!(matches!(PassphraseKey::code("12a456").with_cost(8 * 1024, 1).enroll("Code"), Err(Error::CodeNotSixDigits)));
+    let mut code = PassphraseKey::code("123456").with_cost(8 * 1024, 1);
+    assert!(matches!(Vault::seal(PHRASE, vec![code.enroll("Code").unwrap()]), Err(Error::NeedsSecretKey)));
 }

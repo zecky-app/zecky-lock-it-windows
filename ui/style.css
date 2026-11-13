@@ -58,6 +58,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .top {
   position: relative;
+  z-index: 31;
   flex: none;
   display: flex;
   justify-content: center;
@@ -686,3 +687,53 @@ select.input { appearance: auto; }
 .held-line:not(:disabled):hover { color: var(--text); }
 .brass.danger { background: rgba(217, 112, 95, 0.12); color: var(--red); text-shadow: none; border: 1px solid rgba(217, 112, 95, 0.6); box-shadow: none; }
 .brass.danger:hover:not(:disabled) { background: rgba(217, 112, 95, 0.2); box-shadow: none; }
+
+/* ---------- Lock rules ---------- */
+
+.app-locked {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: var(--ink);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 0 32px 60px;
+}
+.narrow-field { width: 320px; }
+.unlock-button { width: 230px; height: 50px; border-radius: 12px; font-size: 15px; }
+.code-input { letter-spacing: 8px; font-size: 18px; text-align: center; }
+.timelock-line { margin: 4px 0 0; font-size: 12px; font-weight: 500; color: var(--gold); position: relative; z-index: 3; }
+.timelock-line.ready { color: var(--green); }
+.glass-notice {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 14px;
+  border-radius: 99px;
+  background: rgba(217, 112, 95, 0.1);
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 500;
+}
+.glass-notice button { height: 24px; padding: 0 10px; border-radius: 99px; border: 1px solid rgba(154, 156, 165, 0.5); color: var(--text); font-weight: 600; font-size: 12px; }
+.glass-icon { width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--red); display: grid; place-items: center; font-size: 10px; }
+.tl-ring { border: 3px solid rgba(212, 166, 87, 0.25); border-radius: 50%; }
+.tl-clock { position: absolute; right: 8px; bottom: 6px; color: var(--gold); font-size: 18px; }
+#tl-asking, #tl-glass { display: flex; flex-direction: column; gap: 14px; width: 100%; }
+.glass-link { color: var(--red); font-weight: 600; font-size: 13px; align-self: center; }
+.red { color: var(--red); }
+.strong { color: var(--text); font-weight: 500; }
+.switch { position: relative; width: 38px; height: 22px; flex: none; }
+.switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; z-index: 1; }
+.switch span { position: absolute; inset: 0; border-radius: 99px; background: var(--line); transition: background 0.15s; }
+.switch span::after { content: ""; position: absolute; left: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--text); transition: transform 0.15s; }
+.switch input:checked + span { background: var(--gold); }
+.switch input:checked + span::after { transform: translateX(16px); }
+.buttons { display: flex; gap: 8px; }
+.tabs { margin-bottom: 2px; }

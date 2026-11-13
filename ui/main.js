@@ -8,7 +8,7 @@
 const invoke = window.__TAURI__.core.invoke;
 const listen = window.__TAURI__.event ? window.__TAURI__.event.listen : null;
 
-const KEY_NAMES = { device_hello: "This PC", security_key: "Security key", passphrase: "Passphrase" };
+const KEY_NAMES = { device_hello: "This PC", security_key: "Security key", passphrase: "Passphrase", code: "Zecky code" };
 const MIN_PASSPHRASE = 12;
 /// "Really open the lock?" waits this long by default, as Lock it Mac.
 let OPEN_WAIT = 10;
@@ -261,8 +261,11 @@ const padlockHost = $("padlock");
 Lockart.padlock(padlockHost, { size: 212, plate: "LOCKED" });
 Lockart.drawMedallion($("medallion"));
 Lockart.padlock(document.querySelector('[data-padlock="prompt"]'), { size: 62 });
+Lockart.padlock(document.querySelector('[data-padlock="timelock"]'), { size: 62 });
+Lockart.padlock(document.querySelector('[data-padlock="applock"]'), { size: 150, plate: "LOCKED" });
 
 let overview = null;
+let rules = null;
 let activity = [];
 let homeTimer = null;
 let lockOpen = false;
@@ -291,6 +294,7 @@ async function refreshHome() {
   }
   if (!overview.exists) return start();
   activity = await invoke("wallet_activity").catch(() => activity);
+  rules = await invoke("lock_rules").catch(() => rules);
   lockOpen = overview.lock_open;
   renderHome();
   if (!$("sheet-sync").hidden) renderSync();
@@ -385,8 +389,135 @@ function renderHome() {
     status.textContent = percent === null ? "Connecting…" : `Checking blocks · ${percent.toFixed(1)}%${sync.server ? " · " + sync.server : ""}`;
     status.title = "Sync details";
   }
+  renderTimeLockLine();
   refreshCoin();
 }
+
+const dateTime = (seconds) => new Date(seconds * 1000).toLocaleString(undefined, { weekday: "long", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+function renderTimeLockLine() {
+  const line = $("timelock-line");
+  const notice = $("glass-notice");
+  if (!rules) { line.hidden = true; notice.hidden = true; return; }
+  notice.hidden = !(rules.broken_notice && rules.last_broken);
+  if (!notice.hidden) $("glass-notice-text").textContent = `Glass broken on ${dateTime(rules.last_broken)}. The time lock is off now.`;
+  const p = rules.phase;
+  line.hidden = !(p.phase === "waiting" || p.phase === "ready");
+  line.classList.toggle("ready", p.phase === "ready");
+  if (p.phase === "waiting") line.textContent = `◷ The lock can be opened from ${dateTime(p.until)}`;
+  if (p.phase === "ready") line.textContent = `◷ The lock can be opened until ${dateTime(p.until)}`;
+}
+
+$("glass-seen").addEventListener("click", async () => { await invoke("seen_broken").catch(() => {}); if (rules) rules.broken_notice = false; renderTimeLockLine(); });
+
+// ---------- Time lock: ask, or wait (TimeLockPrompt) ----------
+
+function hoursLabel(h) { return h === 0 ? "Off" : h === 24 ? "24 hours" : h % 24 === 0 ? `${h / 24} days` : `${h} hours`; }
+
+function showTimeLock() {
+  const p = rules.phase;
+  $("tl-label").textContent = `TIME LOCK · ${hoursLabel(rules.hours).toUpperCase()}`;
+  $("tl-asking").hidden = false;
+  $("tl-glass").hidden = true;
+  $("tl-sentence").value = "";
+  say($("tl-message"), "");
+  if (p.phase === "waiting") {
+    $("tl-title").textContent = "The lock is waiting";
+    $("tl-text").textContent = `It can be opened from ${dateTime(p.until)}, for 24 hours. Nothing can leave before then, whoever asks.`;
+    $("tl-ask").textContent = "Cancel the request";
+  } else {
+    const ready = Date.now() / 1000 + rules.hours * 3600;
+    $("tl-title").textContent = "Ask to open the lock";
+    $("tl-text").textContent = `Your time lock asks for ${hoursLabel(rules.hours)} first. Start the wait now, and the lock can be opened from ${dateTime(ready)}, for 24 hours. Nobody legitimate will ever rush you.`;
+    $("tl-ask").textContent = "Start the wait";
+  }
+  $("timelock-prompt").hidden = false;
+  $("tl-keep").focus();
+}
+
+function hideTimeLock() { $("timelock-prompt").hidden = true; $("tl-sentence").value = ""; }
+
+$("tl-keep").addEventListener("click", hideTimeLock);
+$("tl-glass-keep").addEventListener("click", hideTimeLock);
+$("tl-ask").addEventListener("click", async () => {
+  const waiting = rules.phase.phase === "waiting";
+  await invoke(waiting ? "time_lock_cancel_request" : "time_lock_request").catch(() => {});
+  rules = await invoke("lock_rules").catch(() => rules);
+  hideTimeLock();
+  renderHome();
+});
+$("tl-break").addEventListener("click", () => { $("tl-asking").hidden = true; $("tl-glass").hidden = false; $("tl-sentence").focus(); });
+$("tl-sentence").addEventListener("input", () => {
+  const ok = $("tl-sentence").value.trim().replace(/[.!]+$/, "").toLowerCase() === "i am breaking the glass myself";
+  $("tl-glass-go").disabled = !ok;
+});
+$("tl-glass-go").addEventListener("click", async () => {
+  const sentence = $("tl-sentence").value;
+  hideTimeLock();
+  try {
+    const typed = await askKeys("Break the glass", "Your keys, then the lock opens straight away and the time lock turns off.", { danger: true, action: "Break the glass" });
+    await invoke("break_glass", { sentence, typed: typedOnly(typed) });
+    lockOpen = true;
+    rules = await invoke("lock_rules").catch(() => rules);
+    renderHome();
+  } catch (problem) {
+    if (problem && problem.message !== "cancelled") $("open-note").textContent = describe(problem) || "Not confirmed, so the lock stayed closed.";
+  }
+});
+
+// ---------- Lock it is locked: asked when it opens, and after 5 minutes away ----------
+
+let appLocked = false;
+let lastActive = Date.now();
+let lastTick = Date.now();
+const AWAY = 5 * 60 * 1000;
+
+function showAppLocked() {
+  appLocked = true;
+  if (lockOpen) closeLock();
+  closeSheet();
+  keepLocked();
+  hideTimeLock();
+  $("confirm").hidden = true;
+  const hello = rules && rules.start_with_hello;
+  $("app-locked-passphrase-field").hidden = hello || !needsPassphrase();
+  $("app-locked-code-field").hidden = hello || !needsCode();
+  $("app-locked-lead").textContent = hello ? "Windows Hello opens it: face, fingerprint or PIN." : "Your keys open it.";
+  say($("app-locked-message"), "");
+  $("eye").hidden = true;
+  $("app-locked").hidden = false;
+  $("app-unlock").focus();
+}
+
+$("app-unlock").addEventListener("click", async () => {
+  const typed = { passphrase: $("app-locked-passphrase").value || null, code: $("app-locked-code").value || null };
+  $("app-locked-passphrase").value = "";
+  $("app-locked-code").value = "";
+  $("app-unlock").disabled = true;
+  say($("app-locked-message"), "Follow the prompt from Windows.", true);
+  try {
+    await invoke("app_unlock", { typed });
+    appLocked = false;
+    lastActive = Date.now();
+    $("app-locked").hidden = true;
+    $("eye").hidden = false;
+    refreshHome();
+  } catch (problem) {
+    say($("app-locked-message"), describe(problem) || "Not confirmed, so Lock it stayed locked.");
+  } finally {
+    $("app-unlock").disabled = false;
+  }
+});
+
+for (const type of ["mousemove", "mousedown", "keydown", "wheel"]) document.addEventListener(type, () => { lastActive = Date.now(); }, { passive: true });
+
+setInterval(() => {
+  const now = Date.now();
+  const slept = now - lastTick > 2 * 60 * 1000;
+  lastTick = now;
+  if (appLocked || sending || !overview || !overview.exists || !(rules && rules.ask_on_start)) return;
+  if (slept || now - lastActive > AWAY) showAppLocked();
+}, 15000);
 
 /// How much of [birthday, tip) is checked, as the Mac's sync ring.
 function checkedShare() {
@@ -443,11 +574,12 @@ let countdown = 0;
 let countdownTimer = null;
 
 function needsPassphrase() { return overview && overview.keys.some((key) => key.kind === "passphrase"); }
+function needsCode() { return overview && overview.keys.some((key) => key.kind === "code"); }
 
 async function openWithoutPause() {
   try {
-    const passphrase = needsPassphrase() ? await askKeys("Open the lock", "Your keys open the lock.", { action: "Open the lock" }) : null;
-    await invoke("wallet_open_lock", { passphrase });
+    const typed = needsPassphrase() || needsCode() ? await askKeys("Open the lock", "Your keys open the lock.", { action: "Open the lock" }) : {};
+    await invoke("wallet_open_lock", { typed });
     lockOpen = true;
     renderHome();
   } catch (problem) {
@@ -457,6 +589,7 @@ async function openWithoutPause() {
 
 function askToOpen() {
   if (lockOpen || !overview) return;
+  if (rules && (rules.phase.phase === "not_asked" || rules.phase.phase === "waiting")) return showTimeLock();
   OPEN_WAIT = overview.settings ? overview.settings.wait : 10;
   if (OPEN_WAIT === 0) return openWithoutPause();
   const days = heldDays();
@@ -464,7 +597,9 @@ function askToOpen() {
   $("prompt-intro").textContent = held + "Nobody legitimate will ever rush you, ask for your 24 words, or tell you to move your Zcash to keep it safe.";
   $("prompt-agree").checked = false;
   $("prompt-passphrase").value = "";
+  $("prompt-code").value = "";
   $("prompt-passphrase-field").hidden = !needsPassphrase();
+  $("prompt-code-field").hidden = !needsCode();
   say($("prompt-message"), "");
   countdown = OPEN_WAIT;
   $("open-prompt").hidden = false;
@@ -486,6 +621,7 @@ function tickPrompt() {
 function keepLocked() {
   clearInterval(countdownTimer);
   $("prompt-passphrase").value = "";
+  $("prompt-code").value = "";
   $("open-prompt").hidden = true;
 }
 
@@ -493,13 +629,14 @@ $("prompt-agree").addEventListener("change", tickPrompt);
 $("prompt-keep").addEventListener("click", keepLocked);
 $("prompt-open").addEventListener("click", async () => {
   if (busy || countdown > 0 || !$("prompt-agree").checked) return;
-  const passphrase = needsPassphrase() ? $("prompt-passphrase").value : null;
+  const typed = { passphrase: needsPassphrase() ? $("prompt-passphrase").value : null, code: needsCode() ? $("prompt-code").value : null };
   $("prompt-passphrase").value = "";
+  $("prompt-code").value = "";
   busy = true;
   tickPrompt();
   say($("prompt-message"), "Follow the prompts from Windows.", true);
   try {
-    await invoke("wallet_open_lock", { passphrase });
+    await invoke("wallet_open_lock", { typed });
     lockOpen = true;
     keepLocked();
     $("open-note").textContent = "";
@@ -548,6 +685,7 @@ for (const button of layer.querySelectorAll("[data-close]")) button.addEventList
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (!$("confirm").hidden) $("confirm-cancel").click();
+  else if (!$("timelock-prompt").hidden) hideTimeLock();
   else if (!$("open-prompt").hidden) keepLocked();
   else if (!layer.hidden && !sending) ($("sheet-send").hidden ? closeSheet() : closeSend());
 });
@@ -576,6 +714,9 @@ $("receive-copy").addEventListener("click", async () => {
 
 // Activity
 function renderActivity() {
+  $("tab-payments").classList.toggle("on", activityTab === "payments");
+  $("tab-lock").classList.toggle("on", activityTab === "lock");
+  if (activityTab === "lock") return renderLockLog();
   const list = $("activity-list");
   list.textContent = "";
   if (activity.length === 0) {
@@ -835,31 +976,47 @@ $("send-next").addEventListener("click", async () => {
 /// Shows the dialog; resolves with the passphrase (or null when the lock has
 /// no passphrase key) on Continue, rejects on Cancel. The keys themselves
 /// (Windows Hello, security key) are asked by Windows right after.
-function askKeys(title, intro, { danger = false, action = "Continue" } = {}) {
+function askKeys(title, intro, { danger = false, action = "Continue", newCode = false, keys = true } = {}) {
   return new Promise((resolve, reject) => {
     $("confirm-title").textContent = title;
     $("confirm-intro").textContent = intro;
-    $("confirm-passphrase").value = "";
-    $("confirm-passphrase-field").hidden = !needsPassphrase();
+    for (const id of ["confirm-passphrase", "confirm-code", "confirm-new-code", "confirm-new-code-again"]) $(id).value = "";
+    $("confirm-passphrase-field").hidden = !(keys && needsPassphrase());
+    $("confirm-code-field").hidden = !(keys && needsCode());
+    $("confirm-new-code-field").hidden = !newCode;
+    $("confirm-new-code-again-field").hidden = !newCode;
     say($("confirm-message"), "");
     const go = $("confirm-go");
     go.textContent = action;
     go.classList.toggle("danger", danger);
     $("confirm").hidden = false;
-    (needsPassphrase() ? $("confirm-passphrase") : $("confirm-cancel")).focus();
+    const first = [...$("confirm").querySelectorAll(".field:not([hidden]) input")][0];
+    (first || $("confirm-cancel")).focus();
+    const clear = () => { for (const id of ["confirm-passphrase", "confirm-code", "confirm-new-code", "confirm-new-code-again"]) $(id).value = ""; };
     const finish = (ok) => {
+      if (ok && newCode) {
+        const code = $("confirm-new-code").value;
+        if (!/^\d{6}$/.test(code)) return say($("confirm-message"), "A Zecky code is six digits.");
+        if (code !== $("confirm-new-code-again").value) return say($("confirm-message"), "The two codes are not the same.");
+      }
       $("confirm").hidden = true;
       go.onclick = null;
       $("confirm-cancel").onclick = null;
-      const passphrase = needsPassphrase() ? $("confirm-passphrase").value : null;
-      $("confirm-passphrase").value = "";
-      if (ok) resolve(passphrase);
+      const typed = {
+        passphrase: keys && needsPassphrase() ? $("confirm-passphrase").value : null,
+        code: keys && needsCode() ? $("confirm-code").value : null,
+        newCode: newCode ? $("confirm-new-code").value : null,
+      };
+      clear();
+      if (ok) resolve(typed);
       else reject(new Error("cancelled"));
     };
     go.onclick = () => finish(true);
     $("confirm-cancel").onclick = () => finish(false);
   });
 }
+
+function typedOnly(t) { return { passphrase: t.passphrase, code: t.code }; }
 
 // ---------- Holding: "Locked for ..." (HoldingSheet) ----------
 
@@ -977,12 +1134,13 @@ const PAGE_TEXT = {
   display: ["Display", "How Lock it looks on this PC."],
   security: ["Security", "The keys, your words, erasing."],
   keys: ["Keys to the lock", "What has to be passed before the lock opens."],
+  timelock: ["Time lock", "A wait of days before the lock opens."],
   phrase: ["Recovery phrase", "Your 24 words, sealed on this PC."],
   viewkey: ["Viewing key", "Read-only access to this wallet."],
   about: ["About", "Zecky Lock it for Windows."],
   how: ["How Zecky works", "Short chapters. Open the one you want."],
 };
-const PARENT = { keys: "security", phrase: "security", viewkey: "security" };
+const PARENT = { keys: "security", timelock: "security", phrase: "security", viewkey: "security" };
 
 let settingsPage = "overview";
 let settingsView = null;
@@ -1049,14 +1207,32 @@ function renderSettings() {
     n.textContent = String(i + 1);
     const title = document.createElement("span");
     title.className = "row-title";
-    title.textContent = { device_hello: "This PC (Windows Hello)", security_key: "Security key", passphrase: "Passphrase" }[key.kind];
+    title.textContent = { device_hello: "This PC (Windows Hello)", security_key: "Security key", passphrase: "Passphrase", code: "Zecky code" }[key.kind];
     const state = document.createElement("span");
     state.className = "row-detail on";
-    state.textContent = { device_hello: "Face, fingerprint or PIN", security_key: "Touch the key", passphrase: "Asked when opening" }[key.kind];
+    state.textContent = { device_hello: "Face, fingerprint or PIN", security_key: "Touch the key", passphrase: "Asked when opening", code: "Six digits" }[key.kind];
     row.append(n, title, state);
     list.append(row);
   });
   for (const chip of document.querySelectorAll("[data-wait]")) chip.classList.toggle("on", Number(chip.dataset.wait) === s.wait);
+  if (rules) {
+    $("row-timelock").textContent = hoursLabel(rules.hours);
+    for (const chip of document.querySelectorAll("[data-hours]")) chip.classList.toggle("on", Number(chip.dataset.hours) === rules.hours);
+    $("timelock-pending").hidden = !rules.pending_from;
+    $("timelock-keep").hidden = !rules.pending_from;
+    if (rules.pending_from) {
+      $("timelock-pending").textContent = `Becomes ${hoursLabel(rules.pending_hours).toLowerCase()} on ${dateTime(rules.pending_from)}.`;
+      $("timelock-keep").textContent = `Keep ${hoursLabel(rules.hours).toLowerCase()}`;
+    }
+    $("timelock-broken").hidden = !rules.last_broken;
+    if (rules.last_broken) $("timelock-broken").textContent = `⚒ Glass last broken on ${dateTime(rules.last_broken)}`;
+    $("ask-on-start").checked = rules.ask_on_start;
+    $("ask-on-start-note").textContent = rules.start_with_hello
+      ? "Windows Hello when Lock it starts, and after it locked itself (sleep, 5 minutes away). Why: your balance and history stay private on a shared or unattended PC."
+      : "Your keys when Lock it starts, and after it locked itself (sleep, 5 minutes away). Why: your balance and history stay private on a shared or unattended PC.";
+    $("code-set").textContent = rules.code ? "Change code" : "Set a Zecky code";
+    $("code-remove").hidden = !rules.code;
+  }
   // About
   $("about-version").textContent = settingsView ? settingsView.version : "…";
   $("about-name").textContent = `Lock it for Windows ${settingsView ? settingsView.version : ""}`;
@@ -1141,8 +1317,8 @@ for (const chip of document.querySelectorAll("[data-wait]")) {
     const weaker = seconds === 0 || (now !== 0 && seconds < now);
     say($("wait-note"), "");
     try {
-      const passphrase = weaker ? await askKeys("Confirm it's you", "Making the pause shorter weakens a key, so your keys are asked first.") : null;
-      await invoke("settings_set_wait", { seconds, passphrase });
+      const typed = weaker ? await askKeys("Confirm it's you", "Making the pause shorter weakens a key, so your keys are asked first.") : {};
+      await invoke("settings_set_wait", { seconds, typed: typedOnly(typed) });
       await loadSettings();
       if (overview) overview.settings = currentSettings();
       renderSettings();
@@ -1165,8 +1341,8 @@ $("phrase-toggle").addEventListener("click", async () => {
   if (!$("phrase-shown").hidden) return hidePhrase();
   say($("phrase-note"), "");
   try {
-    const passphrase = await askKeys("Confirm it's you", "Your 24 words are the wallet. Make sure nobody can see your screen.", { action: "Show the words" });
-    const words = await invoke("wallet_show_words", { passphrase });
+    const typed = await askKeys("Confirm it's you", "Your 24 words are the wallet. Make sure nobody can see your screen.", { action: "Show the words" });
+    const words = await invoke("wallet_show_words", { typed: typedOnly(typed) });
     const birthday = words.pop();
     const list = $("phrase-words");
     list.textContent = "";
@@ -1195,8 +1371,8 @@ $("viewkey-toggle").addEventListener("click", async () => {
   if (!$("viewkey-text").hidden) return hideViewKey();
   say($("viewkey-note"), "");
   try {
-    const passphrase = await askKeys("Confirm it's you", "Whoever has the viewing key sees every payment, past and future.", { action: "Show the key" });
-    $("viewkey-text").textContent = await invoke("wallet_viewing_key", { passphrase });
+    const typed = await askKeys("Confirm it's you", "Whoever has the viewing key sees every payment, past and future.", { action: "Show the key" });
+    $("viewkey-text").textContent = await invoke("wallet_viewing_key", { typed: typedOnly(typed) });
     $("viewkey-text").hidden = false;
     $("viewkey-toggle").textContent = "Hide";
   } catch (problem) {
@@ -1211,13 +1387,13 @@ $("erase").addEventListener("click", async () => {
   try {
     await askKeys("Erase everything on this PC?",
       "The wallet's 24 words, the history and settings are removed from this PC. Without the 24 words on paper, the Zcash in this wallet cannot be recovered. Go Max's node data stays.",
-      { danger: true, action: "Erase everything" });
+      { danger: true, action: "Erase everything", keys: false });
   } catch {
     return;
   }
   try {
-    const passphrase = await askKeys("Confirm it's you", "Erasing asks your keys, whatever you chose.", { danger: true, action: "Erase" });
-    await invoke("wallet_erase", { passphrase });
+    const typed = await askKeys("Confirm it's you", "Erasing asks your keys, whatever you chose.", { danger: true, action: "Erase" });
+    await invoke("wallet_erase", { typed: typedOnly(typed) });
     closeSheet();
     overview = null;
     activity = [];
@@ -1236,6 +1412,7 @@ for (const el of document.querySelectorAll("#sheet-settings [data-go]")) el.addE
 
 $("open-settings").addEventListener("click", async () => {
   await loadSettings();
+  rules = await invoke("lock_rules").catch(() => rules);
   openSheet("settings");
   goSettings("overview");
   refreshGoMaxRow();
@@ -1248,6 +1425,111 @@ async function refreshGoMaxRow() {
       : v.status && v.status.estimated_height > 0 && v.status.height + 2 >= v.status.estimated_height ? "Yours, up to date"
       : v.status && v.status.estimated_height > 0 ? `Catching up · ${Math.floor((v.status.height / v.status.estimated_height) * 100)}%` : "On";
   } catch { $("row-gomax").textContent = ""; }
+}
+
+async function refreshRules() {
+  rules = await invoke("lock_rules").catch(() => rules);
+  overview = await invoke("wallet_overview").catch(() => overview);
+  renderSettings();
+}
+
+for (const chip of document.querySelectorAll("[data-hours]")) {
+  chip.addEventListener("click", async () => {
+    const hours = Number(chip.dataset.hours);
+    if (!rules || hours === rules.hours) return;
+    say($("timelock-note"), "");
+    const longer = hours > rules.hours;
+    const title = hours === 0 ? "Turn the time lock off?" : longer ? `Set a ${hoursLabel(hours).toLowerCase()} time lock?` : `Shorten the time lock to ${hoursLabel(hours).toLowerCase()}?`;
+    const from = Date.now() / 1000 + rules.hours * 3600;
+    const text = longer
+      ? `From now on, opening the lock has to be asked ${hoursLabel(hours).toLowerCase()} ahead. Turning it off or shorter later also takes ${hoursLabel(hours).toLowerCase()}. In an emergency you can break the glass. The new rule is sealed into the lock, so your keys are asked.`
+      : `This takes effect on ${dateTime(from)}, after the current ${hoursLabel(rules.hours).toLowerCase()}. Until then the time lock stays as it is. Your keys are asked.`;
+    try {
+      const typed = await askKeys(title, text, { action: hours === 0 ? "Turn off" : longer ? "Set time lock" : "Shorten" });
+      await invoke("time_lock_choose", { hours, typed: typedOnly(typed) });
+      await refreshRules();
+    } catch (problem) {
+      if (problem && problem.message !== "cancelled") say($("timelock-note"), describe(problem) || "Not confirmed, so nothing changed.");
+    }
+  });
+}
+
+$("timelock-keep").addEventListener("click", async () => {
+  try {
+    const typed = await askKeys("Keep the time lock?", `The ${hoursLabel(rules.hours).toLowerCase()} time lock stays, and the shorter one is dropped. Your keys are asked.`, { action: "Keep it" });
+    await invoke("time_lock_keep", { typed: typedOnly(typed) });
+    await refreshRules();
+  } catch (problem) {
+    if (problem && problem.message !== "cancelled") say($("timelock-note"), describe(problem));
+  }
+});
+
+$("ask-on-start").addEventListener("change", async (event) => {
+  const on = event.target.checked;
+  say($("ask-on-start-message"), "");
+  try {
+    const typed = on ? {} : (rules && rules.start_with_hello ? {} : await askKeys("Confirm it's you", "Not asking when Lock it opens weakens a key, so you are asked first."));
+    await invoke("set_ask_on_start", { on, typed: typedOnly(typed) });
+    await refreshRules();
+  } catch (problem) {
+    event.target.checked = !on;
+    if (problem && problem.message !== "cancelled") say($("ask-on-start-message"), describe(problem) || "Not confirmed, so nothing changed.");
+  }
+});
+
+$("code-set").addEventListener("click", async () => {
+  say($("code-note"), "");
+  try {
+    const typed = await askKeys(rules && rules.code ? "Change the code" : "Set a Zecky code",
+      "Six digits, asked with your other keys every time the lock opens. Keep it somewhere safe: without it the lock does not open, though your 24 words still restore the wallet.",
+      { action: rules && rules.code ? "Change code" : "Set code", newCode: true });
+    await invoke("code_set", { newCode: typed.newCode, typed: typedOnly(typed) });
+    say($("code-note"), "Done. The code is asked from now on.", true);
+    await refreshRules();
+  } catch (problem) {
+    if (problem && problem.message !== "cancelled") say($("code-note"), describe(problem) || "Not confirmed, so nothing changed.");
+  }
+});
+
+$("code-remove").addEventListener("click", async () => {
+  say($("code-note"), "");
+  try {
+    const typed = await askKeys("Remove the code", "The lock opens with your other keys only. Your current code is asked one last time.", { action: "Remove code" });
+    await invoke("code_remove", { typed: typedOnly(typed) });
+    say($("code-note"), "Removed.", true);
+    await refreshRules();
+  } catch (problem) {
+    if (problem && problem.message !== "cancelled") say($("code-note"), describe(problem) || "Not confirmed, so nothing changed.");
+  }
+});
+
+// Activity › The lock
+let activityTab = "payments";
+$("tab-payments").addEventListener("click", () => { activityTab = "payments"; renderActivity(); });
+$("tab-lock").addEventListener("click", () => { activityTab = "lock"; renderActivity(); });
+
+async function renderLockLog() {
+  const list = $("activity-list");
+  const entries = await invoke("lock_log").catch(() => []);
+  list.textContent = "";
+  if (!entries.length) {
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = "No changes to the lock yet.";
+    list.append(empty);
+    return;
+  }
+  for (const e of entries) {
+    const line = document.createElement("li");
+    const what = document.createElement("span");
+    what.className = "what";
+    what.textContent = e.text;
+    const when = document.createElement("span");
+    when.className = "when";
+    when.textContent = new Date(e.at * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    line.append(what, when);
+    list.append(line);
+  }
 }
 
 // How Zecky works: the Mac's chapters, as they are on Windows.
@@ -1282,11 +1564,13 @@ const CHAPTERS = [
     "To remove everything, use Settings › Security › Erase everything.",
   ]],
   ["Keys to the lock", "Checks before Zcash leaves. You choose.", [
-    "The keys are chosen when the wallet is made: This PC (Windows Hello), a passphrase, and a security key. Every key you chose is needed.",
-    "Really open the lock? adds a pause with a reminder. Showing your 24 words, the viewing key and erasing always ask your keys.",
+    "The keys are chosen when the wallet is made: This PC (Windows Hello), a passphrase, and a security key. Every key you chose is needed. A six-digit Zecky code can be added on top.",
+    "Really open the lock? adds a pause with a reminder. Showing your 24 words, the viewing key and erasing always ask your keys. Making a key stricter goes straight through; weakening one asks you first.",
   ], [
     "Windows Hello keeps its key in this PC's security chip (TPM) and asks for your face, fingerprint or PIN.",
     "A security key, such as a YubiKey, signs a fresh challenge each time and Lock it checks the signature itself; nothing goes over the internet. It always comes together with Windows Hello or a passphrase.",
+    "With a time lock, opening has to be asked for 24 hours, 3 or 7 days ahead. In an emergency, Break the glass opens straight away and stays on record. The time lock is sealed inside the lock itself, so it cannot be removed by editing files. It does not stop someone who has your 24 words.",
+    "Every change is listed in Activity › The lock.",
   ]],
   ["Private by default", "Amounts, senders and addresses stay hidden.", [
     "Lock it only hands out shielded addresses, so amounts, senders and receivers stay private on the blockchain.",
@@ -1499,6 +1783,11 @@ $("go-max-coin").addEventListener("click", () => openSheet("gomax"));
 async function start() {
   const first = await invoke("wallet_overview");
   showView(first.exists ? "home" : "welcome");
+  if (first.exists) {
+    overview = first;
+    rules = await invoke("lock_rules").catch(() => null);
+    if (rules && rules.ask_on_start) showAppLocked();
+  }
 }
 
 start().catch((problem) => {

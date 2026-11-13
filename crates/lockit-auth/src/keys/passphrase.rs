@@ -28,6 +28,7 @@ pub struct PassphraseKey {
     passphrase: Zeroizing<String>,
     memory_kib: u32,
     passes: u32,
+    kind: KeyKind,
 }
 
 impl PassphraseKey {
@@ -37,7 +38,14 @@ impl PassphraseKey {
             passphrase: Zeroizing::new(passphrase.into()),
             memory_kib: DEFAULT_MEMORY_KIB,
             passes: DEFAULT_PASSES,
+            kind: KeyKind::Passphrase,
         }
+    }
+
+    /// A six-digit Zecky code, stretched the same way. It always sits on
+    /// top of Windows Hello or a passphrase, so the code alone opens nothing.
+    pub fn code(code: impl Into<String>) -> Self {
+        Self { kind: KeyKind::Code, ..Self::new(code) }
     }
 
     /// Lowers the stretching cost. For tests only: real locks use the default.
@@ -62,14 +70,18 @@ impl PassphraseKey {
 
 impl KeySource for PassphraseKey {
     fn kind(&self) -> KeyKind {
-        KeyKind::Passphrase
+        self.kind
     }
 
     fn enroll(&mut self, label: &str) -> Result<(KeyDescriptor, Secret)> {
-        if self.passphrase.chars().count() < MIN_PASSPHRASE_CHARS {
+        if self.kind == KeyKind::Code {
+            if self.passphrase.len() != 6 || !self.passphrase.chars().all(|c| c.is_ascii_digit()) {
+                return Err(Error::CodeNotSixDigits);
+            }
+        } else if self.passphrase.chars().count() < MIN_PASSPHRASE_CHARS {
             return Err(Error::PassphraseTooShort { min: MIN_PASSPHRASE_CHARS });
         }
-        let mut descriptor = KeyDescriptor::new(KeyKind::Passphrase, label)?;
+        let mut descriptor = KeyDescriptor::new(self.kind, label)?;
         descriptor.params.insert("kdf".into(), "argon2id-v19".into());
         descriptor.params.insert("memory_kib".into(), self.memory_kib.to_string());
         descriptor.params.insert("passes".into(), self.passes.to_string());
