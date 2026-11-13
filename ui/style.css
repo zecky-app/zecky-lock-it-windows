@@ -834,3 +834,24 @@ select.input { appearance: auto; }
 .send-saved-note { margin: -4px 0 0; }
 #send-saved:empty { display: none; }
 .receipt-to.grouped { word-spacing: 4px; }
+.move-line { position: relative; z-index: 3; margin-top: 2px; font-size: 12px; color: var(--gold); }
+.move-line strong { font-weight: 600; }
+.move-line:hover { text-decoration: underline; }
+
+/* ---------- Light (Theme.swift's paper and deeper gold) ---------- */
+:root[data-theme="light"] {
+  --ink: #f6f2ea;
+  --surface: #ffffff;
+  --line: #e0d9cb;
+  --gold: #a9792b;
+  --text: #1b1d24;
+  --muted: #6a6d78;
+  --green: #3c7a50;
+  --red: #b4472f;
+  --scrim: rgba(0, 0, 0, 0.35);
+}
+:root[data-theme="light"] .lock-area::before { background: radial-gradient(circle, rgba(212, 166, 87, 0.28) 0%, rgba(169, 121, 43, 0.06) 50%, transparent 100%); }
+:root[data-theme="light"] .sheet, :root[data-theme="light"] .prompt { box-shadow: 0 12px 30px rgba(0, 0, 0, 0.12); }
+:root[data-theme="light"] .plate-text { fill: #d4a657; }
+:root[data-theme="light"] ::-webkit-scrollbar-thumb { background: #d6cfc0; }
+.value-line { position: relative; z-index: 3; margin: -4px 0 0; font-size: 13px; color: var(--muted); }

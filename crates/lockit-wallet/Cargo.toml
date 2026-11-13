@@ -20,6 +20,7 @@ zip32 = "0.3"
 async-trait = "0.1"
 bip0039 = "0.14"
 futures-util = "0.3"
+orchard = "0.16"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 rand = "0.10"
 rusqlite = "0.37"

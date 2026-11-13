@@ -686,10 +686,81 @@ pub async fn wallet_send_again(app: AppHandle, slot: State<'_, WalletSlot>, over
     broadcast(&app, &slot, signed, over_tor).await
 }
 
+/// Works out an internal move: "ironwood" (Orchard into Ironwood) or
+/// "lock_in" (transparent Zcash into the lock). Nothing leaves the wallet.
+#[tauri::command]
+pub async fn wallet_plan_move(app: AppHandle, slot: State<'_, WalletSlot>, kind: String) -> CommandResult<Prepared> {
+    if slot.unsent.lock().map(|u| u.is_some()).unwrap_or(false) {
+        return Err(problem("a payment is still waiting to be handed to the network; send that one first"));
+    }
+    let wallet = wallet(&app)?;
+    let payment = tauri::async_runtime::spawn_blocking(move || match kind.as_str() {
+        "ironwood" => wallet.prepare_ironwood_move(),
+        "lock_in" => wallet.prepare_lock_in(),
+        _ => Err(lockit_wallet::Error::Other("unknown move".into())),
+    })
+    .await
+    .map_err(|e| problem(e.to_string()))??;
+    let view = Prepared { to: payment.to.clone(), amount: payment.amount, fee: payment.fee, total: payment.amount + payment.fee };
+    *slot.prepared.lock().map_err(|_| problem("the app is in an unknown state"))? = Some(payment);
+    Ok(view)
+}
+
+/// Signs the worked-out internal move after the keys and hands it over.
+/// The time lock does not apply: nothing leaves the wallet (as on Lock it
+/// Mac), but the keys are still asked, because it is signed with the words.
+#[tauri::command]
+pub async fn wallet_do_move(app: AppHandle, window: WebviewWindow, slot: State<'_, WalletSlot>, typed: Typed) -> CommandResult<Sent> {
+    let over_tor = load_settings(&app).tor;
+    let payment = slot.prepared.lock().map_err(|_| problem("the app is in an unknown state"))?.take()
+        .ok_or_else(|| problem("work out the move again"))?;
+    let opened = match open_fully(&app, &window, typed).await {
+        Ok(opened) => opened,
+        Err(error) => {
+            if let Ok(mut prepared) = slot.prepared.lock() {
+                *prepared = Some(payment);
+            }
+            return Err(error);
+        }
+    };
+    let params = sapling_params(&app)?;
+    let wallet = wallet(&app)?;
+    step(&app, "Signing on this PC");
+    let phrase = opened.phrase;
+    let signed = tauri::async_runtime::spawn_blocking(move || -> CommandResult<SignedPayment> {
+        let seed = lockit_wallet::phrase_to_seed(&phrase)?;
+        Ok(wallet.sign(&payment, &seed, &params)?)
+    })
+    .await
+    .map_err(|e| problem(format!("signing stopped unexpectedly: {e}")))??;
+    step(&app, if over_tor { "Connecting over Tor" } else { "Handing it to the network" });
+    broadcast(&app, &slot, signed, over_tor).await
+}
+
 /// Reads a payment request ("zcash:..."): address, amount and note.
 #[tauri::command]
 pub fn wallet_parse_request(text: String) -> CommandResult<lockit_wallet::PaymentRequest> {
     Ok(lockit_wallet::parse_payment_request(&text)?)
+}
+
+/// The price of 1 ZEC in USD, EUR and BTC, from CoinGecko. Only asked when
+/// the owner chose a currency (Settings › Display); CoinGecko sees this PC's
+/// internet address and a price request, never anything about the wallet.
+#[tauri::command]
+pub async fn price_get() -> CommandResult<std::collections::HashMap<String, f64>> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(20)).build();
+        let json: serde_json::Value = agent
+            .get("https://api.coingecko.com/api/v3/simple/price?ids=zcash&vs_currencies=usd,eur,btc")
+            .call()
+            .map_err(|e| problem(format!("the price could not be fetched: {e}")))?
+            .into_json()
+            .map_err(|e| problem(format!("the price could not be read: {e}")))?;
+        let zcash = json.get("zcash").and_then(|z| z.as_object()).ok_or_else(|| problem("the price could not be read"))?;
+        Ok(zcash.iter().filter_map(|(k, v)| v.as_f64().map(|f| (k.clone(), f))).collect())
+    })
+    .await
+    .map_err(|e| problem(e.to_string()))?
 }
 
 /// Looks for new blocks now.

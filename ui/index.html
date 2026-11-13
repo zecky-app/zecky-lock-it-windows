@@ -136,7 +136,10 @@
         <span class="balance-number" id="balance-number">…</span>
         <span class="balance-unit" id="balance-unit">ZEC</span>
       </button>
+      <p class="value-line" id="value-line" hidden></p>
       <button type="button" class="held-line" id="held-line"></button>
+      <button type="button" class="move-line" id="move-ironwood" hidden></button>
+      <button type="button" class="move-line" id="move-lockin" hidden></button>
 
       <div class="actions" id="actions-locked">
         <button type="button" class="brass brass-big" id="home-receive">
@@ -236,6 +239,31 @@
       <div class="sheet-actions" id="send-buttons">
         <button type="button" class="quiet-button" id="send-back">Change</button>
         <button type="button" class="brass" id="send-next">Check before sending</button>
+      </div>
+    </section>
+
+    <!-- Moves inside the wallet: Orchard into Ironwood, or Lock it in (IronwoodSheet) -->
+    <section class="sheet" id="sheet-move" hidden>
+      <div class="sheet-head">
+        <div><p class="eyebrow">ZECKY</p><h2 class="sheet-title" id="move-title">Move to Ironwood</h2>
+        <p class="sheet-sub" id="move-sub">Once, inside your own wallet.</p></div>
+        <button type="button" class="done" id="move-close">Cancel</button>
+      </div>
+      <p class="small quiet" id="move-text"></p>
+      <div class="receipt" id="move-receipt" hidden>
+        <div class="receipt-row"><span id="move-held-label">In Orchard now</span><strong id="move-held"></strong></div>
+        <div class="receipt-row"><span>Network fee</span><strong id="move-fee"></strong></div>
+        <div class="receipt-row total"><span id="move-arrives-label">Arrives in Ironwood</span><strong id="move-arrives"></strong></div>
+      </div>
+      <div class="send-progress" id="move-progress" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <p id="move-step">Signing on this PC</p>
+        <p class="quiet">This can take a minute. Keep Lock it open.</p>
+      </div>
+      <p class="message" id="move-message" role="status" aria-live="polite"></p>
+      <div class="sheet-actions" id="move-buttons">
+        <button type="button" class="quiet-button" id="move-cancel">Cancel</button>
+        <button type="button" class="brass" id="move-go">Move to Ironwood</button>
       </div>
     </section>
 
@@ -364,6 +392,24 @@
 
         <!-- Display -->
         <div class="page" data-page="display" hidden>
+          <div class="card pad">
+            <p class="card-title">Appearance</p>
+            <div class="chips">
+              <button type="button" class="chip" data-theme-choice="dark">Dark</button>
+              <button type="button" class="chip" data-theme-choice="light">Light</button>
+              <button type="button" class="chip" data-theme-choice="auto">Same as this PC</button>
+            </div>
+          </div>
+          <div class="card pad">
+            <p class="card-title">Value</p>
+            <div class="chips">
+              <button type="button" class="chip" data-currency="none">None</button>
+              <button type="button" class="chip" data-currency="usd">USD</button>
+              <button type="button" class="chip" data-currency="eur">EUR</button>
+              <button type="button" class="chip" data-currency="btc">BTC</button>
+            </div>
+            <p class="small quiet">Shown on the lock. The price comes from CoinGecko every 5 minutes; CoinGecko sees this PC's internet address, never anything about your wallet.</p>
+          </div>
           <div class="card pad">
             <p class="card-title">Amounts</p>
             <div class="chips">
@@ -530,6 +576,15 @@
               <div><span>Wallet birthday</span><strong id="about-birthday"></strong></div>
               <div><span>Server</span><strong id="about-server"></strong></div>
               <div><span>Node (Go Max)</span><strong>Zakura 1.8.5 + Zaino 0.10.1</strong></div>
+            </div>
+          </div>
+          <div class="card pad">
+            <p class="card-title">Where your Zcash is</p>
+            <div class="about-lines">
+              <div><span>Ironwood · current since NU6.3 (28 July 2026); new Zcash goes here</span><strong id="pool-ironwood"></strong></div>
+              <div><span>Orchard · withdraw-only since NU6.3; move it to Ironwood from home</span><strong id="pool-orchard"></strong></div>
+              <div><span>Sapling</span><strong id="pool-sapling"></strong></div>
+              <div><span>Transparent · outside the lock; lock it in from home</span><strong id="pool-transparent"></strong></div>
             </div>
           </div>
         </div>

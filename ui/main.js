@@ -40,6 +40,47 @@ function localStorageSet(key, value) { try { localStorage.setItem(key, value); }
 
 const HIDDEN = "••••••";
 
+// ---------- Appearance and value (Theme.swift, PriceFeed.swift) ----------
+
+const themeMedia = window.matchMedia("(prefers-color-scheme: light)");
+function themeChoice() { return localStorageGet("theme.mode") || "dark"; }
+function applyTheme() {
+  const choice = themeChoice();
+  const light = choice === "light" || (choice === "auto" && themeMedia.matches);
+  document.documentElement.dataset.theme = light ? "light" : "dark";
+  const gold = light ? [169, 121, 43] : [212, 166, 87];
+  const medallion = document.getElementById("medallion");
+  if (medallion && typeof Lockart !== "undefined") Lockart.drawMedallion(medallion, gold);
+}
+themeMedia.addEventListener("change", applyTheme);
+
+function currency() { return localStorageGet("value.currency") || "none"; }
+let rates = {};
+let priceTimer = null;
+async function fetchPrice() {
+  if (currency() === "none") return;
+  try { rates = await invoke("price_get"); } catch { /* keep the last price */ }
+  if (typeof overview !== "undefined" && overview) renderHome();
+}
+function restartPrice() {
+  clearInterval(priceTimer);
+  rates = {};
+  if (currency() === "none") return;
+  fetchPrice();
+  priceTimer = setInterval(fetchPrice, 5 * 60 * 1000);
+}
+/// "≈ $34.12", "≈ €31.50", "≈ 0.00031200 BTC", or null when off or unknown.
+function valueOf(zats) {
+  const c = currency();
+  const rate = rates[c];
+  if (c === "none" || !rate) return null;
+  const amount = (zats / 1e8) * rate;
+  if (c === "btc") return `≈ ${amount.toLocaleString("en-US", { minimumFractionDigits: 8, maximumFractionDigits: 8 })} BTC`;
+  const symbol = c === "usd" ? "$" : "€";
+  if (amount > 0 && amount < 0.01) return `≈ <${symbol}0.01`;
+  return `≈ ${symbol}${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 function group(digits) { return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
 
 /// "1,234.567", or "<0.001" for a tiny non-zero amount.
@@ -259,7 +300,8 @@ setupForm.addEventListener("submit", async (event) => {
 
 const padlockHost = $("padlock");
 Lockart.padlock(padlockHost, { size: 212, plate: "LOCKED" });
-Lockart.drawMedallion($("medallion"));
+applyTheme();
+restartPrice();
 Lockart.padlock(document.querySelector('[data-padlock="prompt"]'), { size: 62 });
 Lockart.padlock(document.querySelector('[data-padlock="timelock"]'), { size: 62 });
 Lockart.padlock(document.querySelector('[data-padlock="applock"]'), { size: 150, plate: "LOCKED" });
@@ -326,10 +368,21 @@ function renderHome() {
   $("balance-unit").textContent = prefs.unit;
   $("balance").title = hidden ? "" : `Click to show in ${prefs.unit === "ZEC" ? "zats" : "ZEC"}`;
 
+  const value = hidden ? null : valueOf(b.total);
+  $("value-line").hidden = !value;
+  $("value-line").textContent = value || "";
   const days = heldDays();
   $("held-line").textContent = b.total > 0 ? (days === null ? "Locked on this PC" : `Locked ${Holding.heldFor(days)} ›`) : "";
   $("held-line").disabled = days === null;
   $("held-line").title = days === null ? "" : "Milestones and highlights";
+  // Moves inside the wallet, as on the Mac: only once up to date.
+  const upToDate = overview.sync.state === "up_to_date";
+  const ironwood = $("move-ironwood");
+  const lockin = $("move-lockin");
+  ironwood.hidden = !(upToDate && b.orchard > 0);
+  lockin.hidden = !(upToDate && b.transparent > 0);
+  if (!ironwood.hidden) ironwood.innerHTML = `${hidden ? "Part of your Zcash is in the old Orchard pool" : `${amountText(b.orchard)} in the old Orchard pool`} · <strong>Move it to Ironwood ›</strong>`;
+  if (!lockin.hidden) lockin.innerHTML = `${hidden ? "Zcash waiting outside the lock" : `+${amountText(b.transparent)} waiting outside the lock`} · <strong>Lock it in ›</strong>`;
   const ring = $("milestone");
   Lockart.milestone(ring, Holding.progress(days ?? 0), days !== null && Holding.reachedToday(days));
   ring.classList.toggle("dim", days === null);
@@ -821,6 +874,85 @@ $("status-text").addEventListener("click", () => {
   openSheet("sync");
 });
 
+// ---------- Moves inside the wallet (IronwoodSheet) ----------
+
+let moveKind = null;
+let moving = false;
+
+async function openMove(kind) {
+  moveKind = kind;
+  const b = overview.balance;
+  const iw = kind === "ironwood";
+  $("move-title").textContent = iw ? "Move to Ironwood" : "Lock it in";
+  $("move-sub").textContent = iw ? "Once, inside your own wallet." : "From the transparent address into the lock.";
+  $("move-text").textContent = iw
+    ? "Since the Ironwood upgrade (28 July 2026) the Orchard pool only lets Zcash out; new Zcash goes to Ironwood. Part of yours is still in Orchard. Move it once to Ironwood, in this same wallet, and it stays as private as before. Your other Zcash is not touched."
+    : "Zcash on a transparent address is visible to everyone, like Bitcoin. Lock it in moves it into your shielded pool, in this same wallet, where it is private like the rest.";
+  $("move-held-label").textContent = iw ? "In Orchard now" : "Outside the lock";
+  $("move-arrives-label").textContent = iw ? "Arrives in Ironwood" : "Locked in";
+  $("move-go").textContent = iw ? "Move to Ironwood" : "Lock it in";
+  $("move-receipt").hidden = true;
+  $("move-progress").hidden = true;
+  $("move-buttons").hidden = false;
+  $("move-go").disabled = true;
+  $("move-close").hidden = false;
+  say($("move-message"), "Working it out…", true);
+  openSheet("move");
+  try {
+    const plan = await invoke("wallet_plan_move", { kind: iw ? "ironwood" : "lock_in" });
+    $("move-held").textContent = exact(iw ? b.orchard : b.transparent);
+    $("move-fee").textContent = exact(plan.fee);
+    $("move-arrives").textContent = exact(plan.amount);
+    $("move-receipt").hidden = false;
+    $("move-go").disabled = false;
+    say($("move-message"), "Your keys are asked to sign. Nothing leaves your wallet.", true);
+  } catch (problem) {
+    say($("move-message"), describe(problem));
+  }
+}
+
+function closeMove() { if (!moving) closeSheet(); }
+
+$("move-ironwood").addEventListener("click", () => openMove("ironwood"));
+$("move-lockin").addEventListener("click", () => openMove("lock_in"));
+$("move-close").addEventListener("click", closeMove);
+$("move-cancel").addEventListener("click", closeMove);
+$("move-go").addEventListener("click", async () => {
+  if (moving) return;
+  const iw = moveKind === "ironwood";
+  let typed = {};
+  try {
+    if (needsPassphrase() || needsCode()) typed = await askKeys("Confirm it's you", iw ? "Your keys sign the move to Ironwood." : "Your keys sign locking it in.", { action: "Continue" });
+  } catch {
+    return;
+  }
+  moving = true;
+  $("move-buttons").hidden = true;
+  $("move-close").hidden = true;
+  $("move-progress").hidden = false;
+  $("move-step").textContent = "Follow the prompts from Windows";
+  say($("move-message"), "");
+  try {
+    await invoke("wallet_do_move", { typed: typedOnly(typed) });
+    $("move-progress").hidden = true;
+    say($("move-message"), iw ? "Moved. It shows in Ironwood once it is in a block, and stays locked." : "Locking in. Once it is in a block it is locked in ✓, shielded like the rest.", true);
+    $("move-close").hidden = false;
+    $("move-close").textContent = "Done";
+    refreshHome();
+  } catch (problem) {
+    $("move-progress").hidden = true;
+    $("move-close").hidden = false;
+    if (problem && problem.unsent) {
+      say($("move-message"), `${describe(problem)}. Open Send to try again; it is the same move, so nothing is paid twice.`);
+    } else {
+      $("move-buttons").hidden = false;
+      say($("move-message"), describe(problem) || (iw ? "Nothing was moved." : "Nothing was locked in."));
+    }
+  } finally {
+    moving = false;
+  }
+});
+
 // ---------- Send (SendView.swift) ----------
 
 let sendStage = "compose"; // compose, check, sending, done, unsent
@@ -892,6 +1024,7 @@ function offerWithoutTor() {
 
 if (listen) {
   listen("send-step", (event) => {
+    if (moving) $("move-step").textContent = event.payload;
     $("send-step").textContent = event.payload;
     $("send-step-note").textContent = event.payload === "Connecting over Tor"
       ? "The first time, Tor needs a minute or two to find its way. Keep Lock it open."
@@ -1182,7 +1315,7 @@ function renderSettings() {
   $("net-block").textContent = b.chain_tip ? `Block ${numbers.format(b.chain_tip)}` : "Catching up…";
   $("net-pace").textContent = b.chain_tip ? (b.chain_tip >= NU7_HEIGHT ? "A block every 25 seconds, since NU7" : "A block every 75 seconds") : "";
   $("row-network").textContent = s.server ? `${s.server[0]}${s.server[1] === 443 ? "" : ":" + s.server[1]}` : "zec.rocks";
-  $("row-display").textContent = `${prefs.unit}${prefs.hidden ? " · hidden" : ""}`;
+  $("row-display").textContent = `${{ dark: "Dark", light: "Light", auto: "Same as this PC" }[themeChoice()]} · Value ${currency() === "none" ? "None" : currency().toUpperCase()}`;
   const keys = overview ? overview.keys.map((k) => KEY_NAMES[k.kind]) : [];
   $("row-security").textContent = keys.join(" + ");
   if (rules) {
@@ -1204,6 +1337,8 @@ function renderSettings() {
   tor.className = `small ${s.tor ? "quiet" : "gold"}`;
   // Display
   for (const chip of document.querySelectorAll("[data-unit]")) chip.classList.toggle("on", chip.dataset.unit === prefs.unit);
+  for (const chip of document.querySelectorAll("[data-theme-choice]")) chip.classList.toggle("on", chip.dataset.themeChoice === themeChoice());
+  for (const chip of document.querySelectorAll("[data-currency]")) chip.classList.toggle("on", chip.dataset.currency === currency());
   $("settings-hide").checked = prefs.hidden;
   // Keys
   const list = $("keys-list");
@@ -1250,6 +1385,7 @@ function renderSettings() {
   $("about-block").textContent = b.chain_tip ? numbers.format(b.chain_tip) : "…";
   $("about-birthday").textContent = b.birthday ? numbers.format(b.birthday) : "…";
   $("about-server").textContent = (overview && overview.sync.server) || "…";
+  for (const pool of ["ironwood", "orchard", "sapling", "transparent"]) $(`pool-${pool}`).textContent = prefs.hidden ? HIDDEN : exact(b[pool] || 0);
 }
 
 function renderServerChips() {
@@ -1314,6 +1450,13 @@ $("settings-tor").addEventListener("change", async (event) => {
   }
   renderSettings();
 });
+
+for (const chip of document.querySelectorAll("[data-theme-choice]")) {
+  chip.addEventListener("click", () => { localStorageSet("theme.mode", chip.dataset.themeChoice); applyTheme(); renderSettings(); });
+}
+for (const chip of document.querySelectorAll("[data-currency]")) {
+  chip.addEventListener("click", () => { localStorageSet("value.currency", chip.dataset.currency); restartPrice(); renderSettings(); if (overview) renderHome(); });
+}
 
 for (const chip of document.querySelectorAll("[data-unit]")) {
   chip.addEventListener("click", () => { prefs.unit = chip.dataset.unit; renderSettings(); if (overview) renderHome(); });

@@ -358,6 +358,9 @@ pub fn run() {
             rules::contacts_remove,
             rules::contacts_only_saved,
             wallet::wallet_parse_request,
+            wallet::wallet_plan_move,
+            wallet::price_get,
+            wallet::wallet_do_move,
             go_max::go_max_view,
             go_max::go_max_start,
             go_max::go_max_stop

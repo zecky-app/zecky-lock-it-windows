@@ -3897,6 +3897,7 @@ dependencies = [
  "async-trait",
  "bip0039",
  "futures-util",
+ "orchard",
  "qrcode",
  "rand 0.10.3",
  "rusqlite",
@@ -7311,7 +7312,7 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
- "webpki-roots",
+ "webpki-roots 1.0.12",
 ]
 
 [[package]]
@@ -8762,9 +8763,12 @@ dependencies = [
  "base64 0.22.1",
  "log",
  "once_cell",
+ "rustls",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "url",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -9093,6 +9097,15 @@ dependencies = [
  "pkg-config",
  "soup3-sys",
  "system-deps",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
+dependencies = [
+ "webpki-roots 1.0.12",
 ]
 
 [[package]]
@@ -9847,7 +9860,7 @@ dependencies = [
  "tower",
  "tracing",
  "trait-variant",
- "webpki-roots",
+ "webpki-roots 1.0.12",
  "which",
  "zcash_address",
  "zcash_encoding",
@@ -10124,6 +10137,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-single-instance",
  "tokio",
+ "ureq",
  "zeroize",
 ]
 
