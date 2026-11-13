@@ -82,6 +82,21 @@ pub struct Policy {
     /// When the shorter time lock takes over (Unix seconds).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_from: Option<i64>,
+    /// The address book: saved addresses the owner trusts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contacts: Vec<Contact>,
+    /// Only send to saved addresses.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub only_saved: bool,
+}
+
+/// One saved address.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Contact {
+    /// The name the owner gave it.
+    pub name: String,
+    /// The Zcash address.
+    pub address: String,
 }
 
 impl Policy {

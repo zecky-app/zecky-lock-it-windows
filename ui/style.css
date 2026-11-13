@@ -748,3 +748,89 @@ select.input { appearance: auto; }
 .seckey-row button { color: var(--red); font-size: 12px; font-weight: 500; }
 #seckey-lost { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 #seckey-lost[hidden] { display: none; }
+
+/* ---------- Go Max: the brass coin (GoMaxButton, GoMaxSwitch) ---------- */
+
+.go-max-coin { display: none; }
+.go-max-button {
+  position: absolute;
+  right: 20px;
+  bottom: 58px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 62px;
+  padding: 0 22px 0 8px;
+  border-radius: 99px;
+  background: var(--surface);
+  border: 1px solid rgba(212, 166, 87, 0.55);
+  box-shadow: 0 3px 8px rgba(212, 166, 87, 0.12);
+  transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
+}
+.go-max-button:hover { transform: scale(1.02); border-color: rgba(212, 166, 87, 0.95); }
+.go-max-button.inviting { animation: coin-breathe 4.8s ease-in-out infinite; }
+@keyframes coin-breathe { 0%, 100% { box-shadow: 0 3px 8px rgba(212, 166, 87, 0.14); } 50% { box-shadow: 0 3px 18px rgba(212, 166, 87, 0.38); } }
+.coin { position: relative; width: 52px; height: 52px; display: grid; place-items: center; flex: none; }
+.coin-face {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(#f6e2b0 0%, #d9ae5f 48%, #b88a3e 52%, #9c7330 100%);
+  border: 1px solid rgba(94, 69, 25, 0.8);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 243, 209, 0.45);
+}
+.coin-face svg { width: 20px; height: 20px; fill: none; stroke: #3a2a0c; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 1px 0 rgba(255, 243, 209, 0.6)); }
+.coin-face svg .solid { fill: #3a2a0c; stroke: none; }
+.coin-face.big { width: 54px; height: 54px; box-shadow: inset 0 0 0 1.5px rgba(255, 243, 209, 0.45), 0 2px 4px rgba(0, 0, 0, 0.35); }
+.coin-face.big svg { width: 22px; height: 22px; }
+.coin-ring { position: absolute; inset: 0; width: 52px; height: 52px; display: none; }
+.coin.checking .coin-ring { display: block; }
+.coin-ring-track { fill: none; stroke: rgba(212, 166, 87, 0.2); stroke-width: 2.5; }
+.coin-ring-fill { fill: none; stroke: var(--gold); stroke-width: 2.5; stroke-linecap: round; }
+.coin-badge { position: absolute; right: 4px; bottom: 4px; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--surface); background: var(--green); }
+.coin-badge.gold { background: var(--gold); }
+.coin-badge.red { background: var(--red); }
+.coin-text { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.coin-title { font: 500 18px var(--serif); color: var(--text); }
+.coin-sub { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.coin-sub.green { color: var(--green); }
+.coin-sub.gold { color: var(--gold); }
+.coin-sub.red { color: var(--red); }
+
+.gm-switch {
+  position: relative;
+  align-self: center;
+  width: 300px;
+  height: 64px;
+  border-radius: 99px;
+  background: var(--ink);
+  border: 1px solid rgba(212, 166, 87, 0.45);
+  transition: background 0.3s, border-color 0.2s, box-shadow 0.3s;
+  flex: none;
+}
+.gm-switch:hover { border-color: rgba(212, 166, 87, 0.7); box-shadow: 0 0 10px rgba(212, 166, 87, 0.2); }
+.gm-switch.on { background: linear-gradient(90deg, rgba(212, 166, 87, 0.18), rgba(212, 166, 87, 0.42)); border-color: rgba(212, 166, 87, 0.9); box-shadow: 0 0 16px rgba(212, 166, 87, 0.35); }
+.gm-switch:disabled { opacity: 0.6; }
+.gm-label { position: absolute; inset: 0; display: grid; place-items: center; padding-left: 62px; font: 600 12px var(--sans); letter-spacing: 2.5px; color: var(--gold); transition: padding 0.3s; }
+.gm-switch.on .gm-label { padding: 0 62px 0 0; color: var(--text); }
+.gm-knob { position: absolute; top: 4px; left: 5px; transition: left 0.42s cubic-bezier(0.34, 1.4, 0.64, 1); }
+.gm-switch.on .gm-knob { left: calc(100% - 59px); }
+
+/* ---------- Address book ---------- */
+
+.contact-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.contact-row:last-child { border-bottom: 0; }
+.contact-row .grow { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.contact-row .grow small { font: 11px ui-monospace, Consolas, monospace; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contact-row button { font-size: 12px; font-weight: 500; color: var(--muted); }
+.contact-row button:hover { color: var(--text); }
+.contact-row button.remove { color: var(--red); }
+.narrow-quiet { width: auto; padding: 0 14px; }
+.narrow-brass { width: auto; padding: 0 22px; }
+.send-saved-note:empty { display: none; }
+.send-saved-note { margin: -4px 0 0; }
+#send-saved:empty { display: none; }
+.receipt-to.grouped { word-spacing: 4px; }

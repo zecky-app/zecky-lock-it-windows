@@ -451,6 +451,11 @@ pub async fn wallet_prepare(
         return Err(problem("a payment is still waiting to be handed to the network; send that one first"));
     }
     let zats = parse_zec(&amount)?;
+    if let Some(policy) = read_lock(&app)?.map(|v| v.policy) {
+        if policy.only_saved && !policy.contacts.iter().any(|c| c.address == to.trim()) {
+            return Err(problem("only saved addresses can be used; pick one from your address book, or change the rule in Settings"));
+        }
+    }
     let wallet = wallet(&app)?;
     let payment = tauri::async_runtime::spawn_blocking(move || wallet.prepare(&to, zats, memo.as_deref()))
         .await
@@ -556,7 +561,9 @@ async fn open_lock_inner(app: &AppHandle, window: &WebviewWindow, typed: Typed, 
     let mut changed = false;
     if let (Some(hours), Some(from)) = (opened.policy.pending_hours, opened.policy.pending_from) {
         if from <= now() {
-            opened.policy = lockit_auth::Policy { time_lock_hours: hours, pending_hours: None, pending_from: None };
+            opened.policy.time_lock_hours = hours;
+            opened.policy.pending_hours = None;
+            opened.policy.pending_from = None;
             changed = true;
         }
     }
@@ -677,6 +684,12 @@ pub async fn wallet_send_again(app: AppHandle, slot: State<'_, WalletSlot>, over
     let signed = slot.unsent.lock().map_err(|_| problem("the app is in an unknown state"))?.take()
         .ok_or_else(|| problem("there is no payment waiting"))?;
     broadcast(&app, &slot, signed, over_tor).await
+}
+
+/// Reads a payment request ("zcash:..."): address, amount and note.
+#[tauri::command]
+pub fn wallet_parse_request(text: String) -> CommandResult<lockit_wallet::PaymentRequest> {
+    Ok(lockit_wallet::parse_payment_request(&text)?)
 }
 
 /// Looks for new blocks now.

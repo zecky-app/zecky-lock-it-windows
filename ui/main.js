@@ -848,7 +848,8 @@ function sendLayout() {
   $("send-back").hidden = stage !== "check";
   const next = $("send-next");
   next.textContent = { compose: "Check before sending", check: "Send", done: "Done", unsent: "Try again over Tor" }[stage] || "";
-  if (stage === "check" && overview) next.textContent = prefs.hidden ? "Send" : `Send ${amountText(plan.amount, "ZEC")}`;
+  if (stage === "check" && overview) next.textContent = prefs.hidden ? "Send" : `Send ${exact(plan.amount)}`;
+  $("send-saved").hidden = stage !== "compose";
   next.hidden = stage === "sending";
   $("send-plain")?.remove();
   if (stage === "unsent") offerWithoutTor();
@@ -862,6 +863,7 @@ function openSend() {
   $("send-tor").checked = !overview || !overview.settings || overview.settings.tor;
   plan = null;
   sendStage = overview && overview.unsent ? "unsent" : "compose";
+  renderSendSaved();
   say($("send-message"), sendStage === "unsent" ? "A signed payment did not reach a server. It is the same payment each time, so nothing is paid twice." : "");
   sendLayout();
   openSheet("send");
@@ -941,7 +943,9 @@ $("send-next").addEventListener("click", async () => {
       $("plan-amount").textContent = exact(plan.amount);
       $("plan-fee").textContent = exact(plan.fee);
       $("plan-total").textContent = exact(plan.total);
-      $("plan-to").textContent = plan.to;
+      const saved = rules && rules.contacts.find((c) => c.address === plan.to);
+      $("plan-to").textContent = (saved ? `${saved.name} · ` : "") + grouped(plan.to);
+      $("plan-to").classList.add("grouped");
       sendStage = "check";
       say($("send-message"), "");
       sendLayout();
@@ -1135,6 +1139,7 @@ const PAGE_TEXT = {
   security: ["Security", "The keys, your words, erasing."],
   keys: ["Keys to the lock", "What has to be passed before the lock opens."],
   timelock: ["Time lock", "A wait of days before the lock opens."],
+  contacts: ["Address book", "Addresses you send to often, picked by name."],
   phrase: ["Recovery phrase", "Your 24 words, sealed on this PC."],
   viewkey: ["Viewing key", "Read-only access to this wallet."],
   about: ["About", "Zecky Lock it for Windows."],
@@ -1180,6 +1185,11 @@ function renderSettings() {
   $("row-display").textContent = `${prefs.unit}${prefs.hidden ? " · hidden" : ""}`;
   const keys = overview ? overview.keys.map((k) => KEY_NAMES[k.kind]) : [];
   $("row-security").textContent = keys.join(" + ");
+  if (rules) {
+    const n = rules.contacts.length;
+    $("row-contacts").textContent = n === 0 ? "None yet" : `${n} saved${rules.only_saved ? " · only these" : ""}`;
+    renderContacts();
+  }
   $("row-keys").textContent = `${keys.length} ${keys.length === 1 ? "key" : "keys"}${s.wait ? ` · wait ${s.wait} s` : ""}`;
   $("row-about").textContent = settingsView ? `Version ${settingsView.version}` : "";
   // Network
@@ -1423,8 +1433,8 @@ async function refreshGoMaxRow() {
   try {
     const v = await invoke("go_max_view");
     $("row-gomax").textContent = v.state === "off" ? "Off" : v.state !== "on" ? (v.state === "starting" ? "Starting" : "Stopping")
-      : v.status && v.status.estimated_height > 0 && v.status.height + 2 >= v.status.estimated_height ? "Yours, up to date"
-      : v.status && v.status.estimated_height > 0 ? `Catching up · ${Math.floor((v.status.height / v.status.estimated_height) * 100)}%` : "On";
+      : v.status && nodeProgress(v.status).caughtUp ? "Yours, up to date"
+      : v.status && nodeProgress(v.status).network > 0 ? `Catching up · ${Math.floor(nodeProgress(v.status).fraction * 100)}%` : "On";
   } catch { $("row-gomax").textContent = ""; }
 }
 
@@ -1588,6 +1598,143 @@ $("seckey-removal-cancel").addEventListener("click", async () => {
   } catch (problem) {
     say($("seckey-note"), describe(problem) || "No key was used.");
   }
+});
+
+// Address book (Contacts.swift)
+/// Long addresses in groups of four, so a swapped character stands out.
+function grouped(address) { return address.replace(/(.{4})/g, "$1 ").trim(); }
+function shortAddress(a) { return a.length > 20 ? `${a.slice(0, 10)}…${a.slice(-8)}` : a; }
+
+let renaming = null;
+
+function renderContacts() {
+  const list = $("contacts-list");
+  list.textContent = "";
+  for (const contact of rules.contacts) {
+    const row = document.createElement("div");
+    row.className = "contact-row";
+    const grow = document.createElement("span");
+    grow.className = "grow";
+    const name = document.createElement("span");
+    name.textContent = contact.name;
+    const addr = document.createElement("small");
+    addr.textContent = shortAddress(contact.address);
+    addr.title = contact.address;
+    grow.append(name, addr);
+    const rename = document.createElement("button");
+    rename.type = "button";
+    rename.textContent = "Rename";
+    rename.addEventListener("click", () => openContactForm(contact));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "remove";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => contactAction("contacts_remove", { address: contact.address },
+      `Remove ${contact.name}?`, "The address is removed from the address book. Your keys are asked.", "Removed."));
+    row.append(grow, rename, remove);
+    list.append(row);
+  }
+  $("only-saved").checked = rules.only_saved;
+  $("only-saved").disabled = rules.contacts.length === 0 && !rules.only_saved;
+}
+
+function openContactForm(contact = null) {
+  renaming = contact;
+  $("contact-form").hidden = false;
+  $("contact-add").hidden = true;
+  $("contact-name").value = contact ? contact.name : "";
+  $("contact-address").value = contact ? contact.address : "";
+  $("contact-address").disabled = !!contact;
+  say($("contact-form-note"), "");
+  $("contact-name").focus();
+}
+
+function closeContactForm() {
+  renaming = null;
+  $("contact-form").hidden = true;
+  $("contact-add").hidden = false;
+  $("contact-name").value = "";
+  $("contact-address").value = "";
+}
+
+async function contactAction(command, args, title, text, done) {
+  say($("contacts-note"), "");
+  try {
+    const typed = await askKeys(title, text, { action: "Continue" });
+    say($("contacts-note"), "Follow the prompts from Windows.", true);
+    await invoke(command, { ...args, typed: typedOnly(typed) });
+    say($("contacts-note"), done, true);
+    closeContactForm();
+    await refreshRules();
+    return true;
+  } catch (problem) {
+    if (problem && problem.message !== "cancelled") say($("contacts-note"), describe(problem) || "Nothing changed.");
+    else say($("contacts-note"), "");
+    return false;
+  }
+}
+
+$("contact-add").addEventListener("click", () => openContactForm());
+$("contact-cancel").addEventListener("click", closeContactForm);
+$("contact-save").addEventListener("click", async () => {
+  const name = $("contact-name").value.trim();
+  const address = $("contact-address").value.trim();
+  if (!name) return say($("contact-form-note"), "Give the address a name.");
+  if (renaming) {
+    await contactAction("contacts_rename", { address: renaming.address, name }, "Rename this address?", "Your keys are asked.", "Renamed.");
+  } else {
+    if (!address) return say($("contact-form-note"), "Paste the address.");
+    await contactAction("contacts_add", { name, address }, `Save ${name}?`,
+      `Check the address once more, in groups of four: ${grouped(address)}. Your keys are asked.`, "Saved.");
+  }
+});
+$("only-saved").addEventListener("change", async (event) => {
+  const on = event.target.checked;
+  const ok = await contactAction("contacts_only_saved", { on },
+    on ? "Only send to saved addresses?" : "Allow any address again?",
+    on ? "From now on Lock it pays only addresses in your address book. Your keys are asked." : "Lock it can then pay any address again. Your keys are asked.",
+    on ? "Only saved addresses can be used now." : "Any address can be used again.");
+  if (!ok) event.target.checked = !on;
+});
+
+// Send: pick a saved address, or paste a payment request.
+function renderSendSaved() {
+  const box = $("send-saved");
+  box.textContent = "";
+  for (const contact of (rules && rules.contacts) || []) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.textContent = contact.name;
+    chip.title = contact.address;
+    chip.addEventListener("click", () => { $("send-to").value = contact.address; noteSaved(); });
+    box.append(chip);
+  }
+  noteSaved();
+}
+
+function noteSaved() {
+  const to = $("send-to").value.trim();
+  const saved = rules && rules.contacts.find((c) => c.address === to);
+  for (const chip of $("send-saved").children) chip.classList.toggle("on", chip.title === to);
+  $("send-saved-note").textContent = saved ? `✓ Saved as ${saved.name}`
+    : rules && rules.only_saved ? "Only saved addresses can be used. Pick one above, or change the rule in Settings." : "";
+}
+
+$("send-to").addEventListener("input", async () => {
+  const text = $("send-to").value.trim();
+  if (/^zcash:/i.test(text)) {
+    try {
+      const request = await invoke("wallet_parse_request", { text });
+      $("send-to").value = request.address;
+      if (request.amount) $("send-amount").value = (request.amount / 1e8).toFixed(8).replace(/0+$/, "").replace(/\.$/, "");
+      if (request.memo) $("send-memo").value = request.memo;
+      say($("send-message"), "Filled in from the payment request. Check it before sending.", true);
+    } catch (problem) {
+      say($("send-message"), describe(problem));
+    }
+  }
+  noteSaved();
 });
 
 // Activity › The lock
@@ -1755,17 +1902,23 @@ function setRing(state, fraction) {
   ringProgress.setAttribute("stroke-dasharray", `${Math.max(0, Math.min(100, fraction * 100))} 100`);
 }
 
+function setSwitch(on) {
+  nodeToggle.classList.toggle("on", on);
+  $("gm-label").textContent = on ? "GO MAX IS ON" : "SWITCH ON";
+  $("gm-glyph").innerHTML = GLYPHS[on ? "power" : "node"];
+}
+
 function renderGoMax(view) {
   lastView = view;
   nodeMessage.textContent = "";
   nodeToggle.disabled = false;
+  setSwitch(view.state === "on" || view.state === "starting");
   if (view.state === "off") {
     setRing("off", 0);
     nodePercent.textContent = "";
     nodeState.textContent = "Off";
     nodeLead.textContent = LEAD_OFF;
     nodeFacts.hidden = true;
-    nodeToggle.textContent = "Turn on Go Max";
     nodeToggle.disabled = !view.installed;
     if (!view.installed) say(nodeMessage, "This build has no node programs inside.", true);
     else if (view.problem) say(nodeMessage, view.problem);
@@ -1777,12 +1930,10 @@ function renderGoMax(view) {
     nodeState.textContent = view.state === "starting" ? "Starting" : "Stopping";
     nodeLead.textContent = view.state === "starting" ? `${view.step}.` : "Letting the node finish its work.";
     nodeFacts.hidden = true;
-    nodeToggle.textContent = view.state === "starting" ? "Starting…" : "Stopping…";
     nodeToggle.disabled = true;
     return;
   }
   const status = view.status;
-  nodeToggle.textContent = "Turn off Go Max";
   nodeFacts.hidden = !status;
   if (!status) {
     setRing("on", 0);
@@ -1791,8 +1942,8 @@ function renderGoMax(view) {
     nodeLead.textContent = "The node is not answering right now.";
     return;
   }
-  const caughtUp = status.estimated_height > 0 && status.height + 2 >= status.estimated_height;
-  const fraction = status.estimated_height > 0 ? status.height / status.estimated_height : status.progress;
+  const { network: netHeight, fraction: f, caughtUp } = nodeProgress(status);
+  const fraction = netHeight > 0 ? f : status.progress;
   setRing("on", caughtUp ? 1 : fraction);
   nodePercent.textContent = caughtUp ? "" : `${Math.floor(fraction * 100)}%`;
   if (status.peers === 0 && status.height === 0) {
@@ -1803,9 +1954,9 @@ function renderGoMax(view) {
     nodeLead.textContent = "Caught up. Lock it reads from your own node.";
   } else {
     nodeState.textContent = "Catching up";
-    nodeLead.textContent = "Checking every block since the beginning. You can keep using this PC.";
+    nodeLead.textContent = "Checking the blocks since the beginning. You can keep using this PC; Lock it reads from zec.rocks until the node has caught up.";
   }
-  const network = status.estimated_height > 0 ? ` of ${numbers.format(status.estimated_height)}` : "";
+  const network = netHeight > 0 ? ` of ${numbers.format(netHeight)}` : "";
   $("fact-height").textContent = `${numbers.format(status.height)}${network}`;
   $("fact-peers").textContent = numbers.format(status.peers);
   $("fact-wallet").textContent = view.wallet_ready ? "Ready" : view.wallet_note ? "Waiting for the node" : "Waiting for blocks";
@@ -1840,14 +1991,66 @@ function stopWatching() {
   watchTimer = null;
 }
 
+const GLYPHS = {
+  node: '<circle class="solid" cx="12" cy="5" r="2.6"/><circle class="solid" cx="5" cy="18" r="2.6"/><circle class="solid" cx="19" cy="18" r="2.6"/><path d="M12 5 5 18h14z"/>',
+  seal: '<path d="M12 2.5l2.4 1.8 3-.2.9 2.8 2.5 1.7-1 2.9 1 2.8-2.5 1.7-.9 2.9-3-.2L12 21.5l-2.4-1.8-3 .2-.9-2.9-2.5-1.7 1-2.8-1-2.9 2.5-1.7.9-2.8 3 .2z"/><path d="m8.5 12 2.3 2.3 4.7-4.7"/>',
+  warn: '<path d="M12 6v8"/><circle class="solid" cx="12" cy="18" r="1.4"/>',
+  power: '<path d="M12 3v8"/><path d="M6.6 6.6a7.5 7.5 0 1 0 10.8 0"/>',
+};
+
+/// The network's height: the wallet's server knows it best; the node's own
+/// estimate runs ahead while it is far behind.
+function networkHeight(status) {
+  const known = overview && overview.balance && overview.balance.chain_tip;
+  return known > 0 ? known : status && status.estimated_height > 0 ? status.estimated_height : 0;
+}
+
+function nodeProgress(status) {
+  const network = networkHeight(status);
+  if (!status || network <= 0) return { network, fraction: 0, caughtUp: false };
+  const caughtUp = status.height + 10 >= network;
+  return { network, fraction: Math.min(1, status.height / network), caughtUp };
+}
+
 async function refreshCoin() {
-  try {
-    const view = await invoke("go_max_view");
-    const dot = $("coin-dot");
-    dot.className = "coin-dot";
-    if (view.state === "on") dot.classList.add(view.status && view.status.estimated_height > 0 && view.status.height + 2 >= view.status.estimated_height ? "on" : "busy");
-    else if (view.state !== "off") dot.classList.add("busy");
-  } catch { /* the coin just stays grey */ }
+  let view;
+  try { view = await invoke("go_max_view"); } catch { return; }
+  const button = $("go-max-coin");
+  const coin = $("coin");
+  const sub = $("coin-sub");
+  const badge = $("coin-badge");
+  let glyph = "node";
+  let text = "Run your own node";
+  let tone = "";
+  let checking = false;
+  let fraction = 0;
+  badge.hidden = true;
+  badge.className = "coin-badge";
+  if (view.state === "on" && view.status) {
+    const { fraction: f, caughtUp } = nodeProgress(view.status);
+    fraction = f;
+    if (caughtUp && view.wallet_ready) {
+      glyph = "seal"; text = "Your own node"; tone = "green"; badge.hidden = false;
+    } else if (view.status.peers === 0) {
+      text = "Not connected · check connection"; tone = "gold"; checking = true; badge.hidden = false; badge.classList.add("gold");
+    } else {
+      text = caughtUp ? "Almost there" : `Checking · ${Math.floor(f * 100)}%`; checking = true;
+    }
+  } else if (view.state === "on") {
+    text = "Starting"; checking = true;
+  } else if (view.state === "starting") {
+    text = "Starting"; checking = true;
+  } else if (view.state === "stopping") {
+    text = "Stopping";
+  } else if (view.problem) {
+    glyph = "warn"; text = "Stopped · open to see why"; tone = "red"; badge.hidden = false; badge.classList.add("red");
+  }
+  $("coin-glyph").innerHTML = GLYPHS[glyph];
+  sub.textContent = text;
+  sub.className = `coin-sub ${tone}`;
+  coin.classList.toggle("checking", checking);
+  $("coin-ring").setAttribute("stroke-dasharray", `${Math.max(3, fraction * 100)} 100`);
+  button.classList.toggle("inviting", view.state === "off" && !view.problem);
 }
 
 if (listen) listen("go-max", () => { if (!$("sheet-gomax").hidden) refreshGoMax(); });

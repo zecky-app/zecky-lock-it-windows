@@ -245,7 +245,12 @@ fn a_lock_made_before_rules_existed_still_opens() {
 #[test]
 fn the_time_lock_is_inside_the_lock_and_cannot_be_edited_out() {
     let mut hello = FakeKey::new(KeyKind::DeviceHello, 0x31);
-    let policy = Policy { time_lock_hours: 72, ..Default::default() };
+    let policy = Policy {
+        time_lock_hours: 72,
+        contacts: vec![lockit_auth::Contact { name: "Me".into(), address: "u1abc".into() }],
+        only_saved: true,
+        ..Default::default()
+    };
     let vault = Vault::seal_with_policy(PHRASE, vec![hello.enroll("This PC").unwrap()], policy.clone()).unwrap();
     let json = vault.to_json().unwrap();
     let read = Vault::from_json(&json).unwrap();
@@ -255,6 +260,13 @@ fn the_time_lock_is_inside_the_lock_and_cannot_be_edited_out() {
     // Someone edits the file to switch the time lock off, or removes it.
     let mut tampered = read.clone();
     tampered.policy.time_lock_hours = 0;
+    assert!(matches!(tampered.open_with(|key| hello.unlock(key)), Err(Error::WrongKeyOrDamaged)));
+    // Or slips in an address of their own, or turns the rule off.
+    let mut tampered = read.clone();
+    tampered.policy.contacts.push(lockit_auth::Contact { name: "Me".into(), address: "u1thief".into() });
+    assert!(matches!(tampered.open_with(|key| hello.unlock(key)), Err(Error::WrongKeyOrDamaged)));
+    let mut tampered = read.clone();
+    tampered.policy.only_saved = false;
     assert!(matches!(tampered.open_with(|key| hello.unlock(key)), Err(Error::WrongKeyOrDamaged)));
     let stripped = json.replace("\"time_lock_hours\": 72", "\"time_lock_hours\": 0");
     let stripped = Vault::from_json(&stripped).unwrap();

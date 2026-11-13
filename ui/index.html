@@ -161,9 +161,13 @@
       <p class="timelock-line" id="timelock-line" hidden></p>
     </div>
 
-    <button type="button" class="go-max-coin" id="go-max-coin" title="Go Max: your own node">
-      <span class="coin-dot" id="coin-dot"></span>
-      <span class="coin-name">Go Max</span>
+    <button type="button" class="go-max-button" id="go-max-coin" title="Go Max: your own Zcash node on this PC">
+      <span class="coin" id="coin">
+        <svg class="coin-ring" viewBox="0 0 52 52" aria-hidden="true"><circle cx="26" cy="26" r="24.75" class="coin-ring-track"/><circle cx="26" cy="26" r="24.75" class="coin-ring-fill" id="coin-ring" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 26 26)"/></svg>
+        <span class="coin-face"><svg viewBox="0 0 24 24" aria-hidden="true" id="coin-glyph"></svg></span>
+        <span class="coin-badge" id="coin-badge" hidden></span>
+      </span>
+      <span class="coin-text"><span class="coin-title">Go Max</span><span class="coin-sub" id="coin-sub">Run your own node</span></span>
     </button>
 
     <footer class="status-bar">
@@ -208,7 +212,9 @@
         <button type="button" class="done" id="send-close">Cancel</button>
       </div>
       <form id="send-form" class="fields" autocomplete="off">
-        <label class="field"><span>To</span><input class="input" id="send-to" spellcheck="false" placeholder="Zcash address"></label>
+        <label class="field"><span>To</span><input class="input" id="send-to" spellcheck="false" placeholder="Zcash address or payment request"></label>
+        <div class="chips" id="send-saved"></div>
+        <p class="small quiet send-saved-note" id="send-saved-note"></p>
         <label class="field"><span>Amount</span>
           <span class="amount-row"><input class="input" id="send-amount" inputmode="decimal" placeholder="0.000"><span class="unit-chip">ZEC</span></span>
         </label>
@@ -326,6 +332,7 @@
             <button type="button" class="row" data-go="network"><span class="row-icon">◎</span><span class="row-title">Network</span><span class="row-detail" id="row-network"></span><span class="chev">›</span></button>
             <button type="button" class="row" data-go="gomax"><span class="row-icon">⌬</span><span class="row-title">Go Max</span><span class="row-detail" id="row-gomax"></span><span class="chev">›</span></button>
             <button type="button" class="row" data-go="display"><span class="row-icon">◐</span><span class="row-title">Display</span><span class="row-detail" id="row-display"></span><span class="chev">›</span></button>
+            <button type="button" class="row" data-go="contacts"><span class="row-icon">☺</span><span class="row-title">Address book</span><span class="row-detail" id="row-contacts"></span><span class="chev">›</span></button>
             <button type="button" class="row" data-go="security"><span class="row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none"/></svg></span><span class="row-title">Security</span><span class="row-detail" id="row-security"></span><span class="chev">›</span></button>
           </div>
           <div class="card list">
@@ -486,6 +493,31 @@
           </div>
         </div>
 
+        <!-- Address book -->
+        <div class="page" data-page="contacts" hidden>
+          <div class="card pad">
+            <p class="card-title">Saved addresses</p>
+            <p class="small quiet">Saved addresses you trust. Pick a name when sending instead of pasting an address, so a swapped address stands out. Kept inside the lock: every change asks your keys, so nobody can quietly add an address of their own.</p>
+            <div class="card list inner" id="contacts-list"></div>
+            <div id="contact-form" class="fields" hidden>
+              <input class="input" id="contact-name" maxlength="32" placeholder="Name, for example My exchange" spellcheck="false">
+              <input class="input mono" id="contact-address" placeholder="Zcash address" spellcheck="false">
+              <div class="inline">
+                <span class="small message" id="contact-form-note"></span>
+                <span class="buttons">
+                  <button type="button" class="quiet-button narrow-quiet" id="contact-cancel">Cancel</button>
+                  <button type="button" class="brass narrow-brass" id="contact-save">Save</button>
+                </span>
+              </div>
+            </div>
+            <div class="inline">
+              <label class="check flush"><input type="checkbox" id="only-saved"> Only send to saved addresses</label>
+              <button type="button" class="secondary narrow" id="contact-add">Add address</button>
+            </div>
+            <p class="small message" id="contacts-note"></p>
+          </div>
+        </div>
+
         <!-- About -->
         <div class="page" data-page="about" hidden>
           <div class="card pad">
@@ -536,7 +568,10 @@
           <p class="onion" id="fact-onion-address"></p>
         </div>
         <p id="node-message" class="message" role="status" aria-live="polite"></p>
-        <button type="button" class="brass" id="node-toggle">Turn on Go Max</button>
+        <button type="button" class="gm-switch" id="node-toggle" aria-label="Go Max">
+          <span class="gm-label" id="gm-label">SWITCH ON</span>
+          <span class="gm-knob"><span class="coin-face big"><svg viewBox="0 0 24 24" aria-hidden="true" id="gm-glyph"></svg></span></span>
+        </button>
         <p class="quiet center small">Private: other nodes cannot connect to this PC.</p>
       </div>
     </section>

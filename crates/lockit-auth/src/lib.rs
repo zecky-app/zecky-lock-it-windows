@@ -35,4 +35,4 @@ mod vault;
 pub use error::{Error, Result};
 pub use keys::{KeyDescriptor, KeyKind, KeySource};
 pub use secret::Secret;
-pub use vault::{Policy, Vault, MAX_KEYS, VAULT_VERSION};
+pub use vault::{Contact, Policy, Vault, MAX_KEYS, VAULT_VERSION};

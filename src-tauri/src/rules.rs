@@ -283,6 +283,10 @@ pub struct RulesView {
     security_keys_available: bool,
     /// "Lost my keys", while it runs.
     removal: Option<RemovalView>,
+    /// The address book.
+    contacts: Vec<lockit_auth::Contact>,
+    /// Only send to saved addresses.
+    only_saved: bool,
 }
 
 /// One paired security key, for the screens.
@@ -334,6 +338,8 @@ pub fn lock_rules(app: AppHandle) -> CommandResult<RulesView> {
             .map(|e| SecurityKeyView { id: e.id, role: e.role, added: e.added })
             .collect(),
         security_keys_available: security_keys_available(),
+        contacts: policy.contacts.clone(),
+        only_saved: policy.only_saved,
         removal: state.removal.map(|r| {
             let network = network_height(&app);
             let mut target = r.start_height;
@@ -360,7 +366,9 @@ pub async fn time_lock_choose(app: AppHandle, window: WebviewWindow, hours: u32,
     let mut opened = open_fully(&app, &window, typed).await?;
     let current = opened.policy.time_lock_hours;
     if hours >= current {
-        opened.policy = Policy { time_lock_hours: hours, pending_hours: None, pending_from: None };
+        opened.policy.time_lock_hours = hours;
+        opened.policy.pending_hours = None;
+        opened.policy.pending_from = None;
         log(&app, if hours == 0 { "Time lock off".into() } else { format!("Time lock on · {}", label(hours).to_lowercase()) });
     } else {
         let from = now() + current as i64 * HOUR;
@@ -414,7 +422,9 @@ pub async fn break_glass(app: AppHandle, window: WebviewWindow, slot: State<'_, 
     }
     let mut opened = open_fully(&app, &window, typed).await?;
     let was = effective(&opened.policy, now());
-    opened.policy = Policy::default();
+    opened.policy.time_lock_hours = 0;
+    opened.policy.pending_hours = None;
+    opened.policy.pending_from = None;
     reseal(&app, &opened)?;
     let mut state = load_state(&app);
     state.broken.insert(0, now());
@@ -644,6 +654,76 @@ pub async fn seckey_removal_cancel(app: AppHandle, window: WebviewWindow) -> Com
     save_state(&app, &state)
 }
 
+// ---------- Address book (Contacts.swift) ----------
+
+const MAX_NAME: usize = 32;
+
+fn clean_name(name: &str) -> CommandResult<String> {
+    let name: String = name.trim().chars().filter(|c| !c.is_control()).take(MAX_NAME).collect();
+    if name.is_empty() {
+        return Err(problem("give the address a name"));
+    }
+    Ok(name)
+}
+
+/// Saves an address. Sealed into the lock, so the keys are asked: nobody
+/// can quietly add an address of their own.
+#[tauri::command]
+pub async fn contacts_add(app: AppHandle, window: WebviewWindow, name: String, address: String, typed: Typed) -> CommandResult<()> {
+    let name = clean_name(&name)?;
+    let address = address.trim().to_owned();
+    if !lockit_wallet::is_valid_address(&address) {
+        return Err(problem("that is not a valid Zcash address"));
+    }
+    if let Some(policy) = read_lock(&app)?.map(|v| v.policy) {
+        if let Some(known) = policy.contacts.iter().find(|c| c.address == address) {
+            return Err(problem(format!("this address is already saved as {}", known.name)));
+        }
+    }
+    let mut opened = open_fully(&app, &window, typed).await?;
+    opened.policy.contacts.push(lockit_auth::Contact { name: name.clone(), address });
+    reseal(&app, &opened)?;
+    log(&app, format!("Added {name} to the address book"));
+    Ok(())
+}
+
+/// Renames a saved address.
+#[tauri::command]
+pub async fn contacts_rename(app: AppHandle, window: WebviewWindow, address: String, name: String, typed: Typed) -> CommandResult<()> {
+    let name = clean_name(&name)?;
+    let mut opened = open_fully(&app, &window, typed).await?;
+    let Some(contact) = opened.policy.contacts.iter_mut().find(|c| c.address == address) else {
+        return Err(problem("this address is not in the address book"));
+    };
+    let old = std::mem::replace(&mut contact.name, name.clone());
+    reseal(&app, &opened)?;
+    if old != name {
+        log(&app, format!("Renamed {old} to {name}"));
+    }
+    Ok(())
+}
+
+/// Removes a saved address.
+#[tauri::command]
+pub async fn contacts_remove(app: AppHandle, window: WebviewWindow, address: String, typed: Typed) -> CommandResult<()> {
+    let mut opened = open_fully(&app, &window, typed).await?;
+    let name = opened.policy.contacts.iter().find(|c| c.address == address).map(|c| c.name.clone()).unwrap_or_default();
+    opened.policy.contacts.retain(|c| c.address != address);
+    reseal(&app, &opened)?;
+    log(&app, format!("Removed {name} from the address book"));
+    Ok(())
+}
+
+/// "Only send to saved addresses", on or off.
+#[tauri::command]
+pub async fn contacts_only_saved(app: AppHandle, window: WebviewWindow, on: bool, typed: Typed) -> CommandResult<()> {
+    let mut opened = open_fully(&app, &window, typed).await?;
+    opened.policy.only_saved = on;
+    reseal(&app, &opened)?;
+    log(&app, if on { "Only send to saved addresses: on".into() } else { "Only send to saved addresses: off".into() });
+    Ok(())
+}
+
 /// Activity › The lock.
 #[tauri::command]
 pub fn lock_log(app: AppHandle) -> Vec<LogEntry> {
@@ -703,7 +783,7 @@ mod tests {
     #[test]
     fn a_shorter_time_lock_waits_for_the_current_one() {
         let t = 1_800_000_000;
-        let policy = Policy { time_lock_hours: 168, pending_hours: Some(0), pending_from: Some(t + 100) };
+        let policy = Policy { time_lock_hours: 168, pending_hours: Some(0), pending_from: Some(t + 100), ..Default::default() };
         assert_eq!(effective(&policy, t), 168);
         assert_eq!(effective(&policy, t + 100), 0);
         assert_eq!(label(72), "3 days");

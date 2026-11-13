@@ -353,6 +353,11 @@ pub fn run() {
             rules::seckey_test,
             rules::seckey_removal_start,
             rules::seckey_removal_cancel,
+            rules::contacts_add,
+            rules::contacts_rename,
+            rules::contacts_remove,
+            rules::contacts_only_saved,
+            wallet::wallet_parse_request,
             go_max::go_max_view,
             go_max::go_max_start,
             go_max::go_max_stop
