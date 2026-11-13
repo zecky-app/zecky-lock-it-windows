@@ -909,3 +909,16 @@ select.input { appearance: auto; }
 .tour-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 6px; }
 .tour-actions .tour-next { width: 140px; margin-left: auto; }
 #tour-again { margin-top: 12px; }
+
+/* ---------- Go Max notes (as Lock it Mac build 6) ---------- */
+.gm-note { margin: 0; font-size: 13px; color: var(--gold); line-height: 1.45; }
+.gm-choice, .gm-stopped { display: flex; flex-direction: column; gap: 10px; }
+.link-danger { align-self: center; font-size: 12px; color: #E07A5F; padding: 6px; }
+.link-danger:hover { text-decoration: underline; }
+.wallet-tag { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 99px; border: 1px solid rgba(212, 166, 87, 0.6); color: var(--gold); font: 600 12px var(--sans); max-width: 220px; align-self: center; }
+.wallet-tag span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wallet-tag svg { width: 10px; height: 10px; fill: currentColor; flex: none; }
+.send-available { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+.receipt-row.from span, .receipt-row.from strong { color: var(--gold); }
+.receipt-row.from { border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 4px; }
+.dot.gold { background: var(--gold); }

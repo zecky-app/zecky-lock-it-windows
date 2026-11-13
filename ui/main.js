@@ -450,7 +450,11 @@ function renderHome() {
   status.classList.remove("attention");
   const behind = b.chain_tip > 0 ? b.chain_tip - b.scanned_height : null;
   const nearly = behind !== null && behind <= 3;
-  if (sync.state === "problem" && !nearly) {
+  if (sync.state === "waiting_update") {
+    dot.classList.add("gold");
+    status.textContent = "Waiting for the Go Max update · no new blocks";
+    status.title = "Open Go Max";
+  } else if (sync.state === "problem" && !nearly) {
     dot.classList.add("red");
     status.classList.add("attention");
     status.textContent = `Can't reach ${sync.server || "the server"}`;
@@ -489,7 +493,23 @@ $("glass-seen").addEventListener("click", async () => { await invoke("seen_broke
 
 function hoursLabel(h) { return h === 0 ? "Off" : h === 24 ? "24 hours" : h % 24 === 0 ? `${h / 24} days` : `${h} hours`; }
 
+/// The wallet the lock opens for, as a small gold capsule on the prompts,
+/// when the lock holds more than one wallet.
+function showWalletTag(id) {
+  const tag = $(id);
+  const w = payingWallet();
+  tag.hidden = !w;
+  tag.textContent = "";
+  if (!w) return;
+  tag.innerHTML = w.watch_only ? ENVELOPE_ICON : LOCK_ICON;
+  const name = document.createElement("span");
+  name.textContent = walletName(w);
+  tag.append(name);
+  tag.setAttribute("aria-label", `Wallet: ${walletName(w)}`);
+}
+
 function showTimeLock() {
+  showWalletTag("tl-wallet");
   const p = rules.phase;
   $("tl-label").textContent = `TIME LOCK · ${hoursLabel(rules.hours).toUpperCase()}`;
   $("tl-asking").hidden = false;
@@ -549,6 +569,8 @@ const AWAY = 5 * 60 * 1000;
 
 function showAppLocked() {
   appLocked = true;
+  // Locking puts the wallets kept out of sight away again (as on the Mac).
+  if (showHidden) { showHidden = false; leaveIfOutOfSight(); renderKeyRing(); }
   if (lockOpen) closeLock();
   closeSheet();
   keepLocked();
@@ -668,6 +690,7 @@ function askToOpen() {
   if (sealedWallet()) return openSeal("send");
   if (rules && (rules.phase.phase === "not_asked" || rules.phase.phase === "waiting")) return showTimeLock();
   OPEN_WAIT = overview.settings ? overview.settings.wait : 10;
+  showWalletTag("prompt-wallet");
   if (OPEN_WAIT === 0) return openWithoutPause();
   const days = heldDays();
   const held = days === null ? "" : days < 1 ? "This Zcash was locked today. " : `This Zcash has been locked ${Holding.heldFor(days)}. `;
@@ -891,7 +914,7 @@ function openRingMenu(event, w) {
     { label: "Move right", disabled: index >= shown.length - 1, run: () => moveWallet(w, 1) });
   if (!w.main) {
     const out = ringLayout().hidden.includes(w.id);
-    items.push({ label: out ? "Bring back into sight" : "Keep out of sight", run: () => hideWallet(w, !out) });
+    items.push({ label: out ? "Keep in sight" : "Keep out of sight", run: () => hideWallet(w, !out) });
   }
   items.push("-", w.watch_only
     ? { label: "Remove from Lock it…", danger: true, run: () => removeWallet(w) }
@@ -1601,7 +1624,10 @@ function sendLayout() {
   $("send-back").hidden = stage !== "check";
   const next = $("send-next");
   next.textContent = { compose: "Check before sending", check: "Send", done: "Done", unsent: "Try again over Tor" }[stage] || "";
-  if (stage === "check" && overview) next.textContent = prefs.hidden ? "Send" : `Send ${exact(plan.amount)}`;
+  if (stage === "check" && overview) {
+    const payer = payingWallet();
+    next.textContent = (prefs.hidden ? "Send" : `Send ${exact(plan.amount)}`) + (payer ? ` from ${walletName(payer)}` : "");
+  }
   $("send-saved").hidden = stage !== "compose";
   next.hidden = stage === "sending";
   $("send-plain")?.remove();
@@ -1610,6 +1636,21 @@ function sendLayout() {
 
 let plan = null;
 
+/// The wallet that pays, named on the screen and the receipt when the lock
+/// holds more than one wallet (with one there is nothing to mix up).
+function payingWallet() {
+  const list = (overview && overview.wallets) || [];
+  return list.length > 1 ? currentWallet() : null;
+}
+
+/// "0.0224 ZEC available in Donations" under the amount.
+function renderSendWallet() {
+  const b = overview && overview.balance;
+  const payer = payingWallet();
+  if (!b || prefs.hidden) { $("send-available").textContent = ""; return; }
+  $("send-available").textContent = `${exact(b.spendable)} available` + (payer ? ` in ${walletName(payer)}` : "");
+}
+
 function openSend() {
   if (!lockOpen && !(overview && overview.unsent)) return askToOpen();
   $("send-form").reset();
@@ -1617,6 +1658,7 @@ function openSend() {
   plan = null;
   sendStage = overview && overview.unsent ? "unsent" : "compose";
   renderSendSaved();
+  renderSendWallet();
   say($("send-message"), sendStage === "unsent" ? "A signed payment did not reach a server. It is the same payment each time, so nothing is paid twice." : "");
   sendLayout();
   openSheet("send");
@@ -1698,6 +1740,9 @@ $("send-next").addEventListener("click", async () => {
     say($("send-message"), "Working it out…", true);
     try {
       plan = await invoke("wallet_prepare", { to: $("send-to").value, amount: $("send-amount").value, memo: $("send-memo").value || null });
+      const payer = payingWallet();
+      $("plan-from-row").hidden = !payer;
+      $("plan-from").textContent = payer ? walletName(payer) : "";
       $("plan-amount").textContent = exact(plan.amount);
       $("plan-fee").textContent = exact(plan.fee);
       $("plan-total").textContent = exact(plan.total);
@@ -2676,20 +2721,74 @@ function setSwitch(on) {
   $("gm-glyph").innerHTML = GLYPHS[on ? "power" : "node"];
 }
 
+// The words of Lock it Mac build 6.
+const GM_WORDS = {
+  stoppedWhileStarting: "The node stopped while starting. Your wallet is fine: Lock it reads from its server meanwhile.",
+  tryingAgain: "Trying again in half a minute…",
+  stillNotWorking: "Quit Lock it and open it again. If the node still stops, click \"Remove node and its data…\" below and switch Go Max on: it starts over. To help us, send the node's log with your feedback.",
+};
+
+function chosenServerLabel() {
+  const server = overview && overview.settings && overview.settings.server;
+  return server ? (server[1] === 443 ? server[0] : `${server[0]}:${server[1]}`) : "zec.rocks";
+}
+
+function showNote(id, text) {
+  $(id).hidden = !text;
+  $(id).textContent = text || "";
+}
+
+/// This node version's last block: a calm line two weeks ahead, and at the
+/// stop the choice between the server and waiting (never switched silently).
+function renderSupport(view) {
+  const support = view.support;
+  const server = chosenServerLabel();
+  showNote("gm-support", support && support.text);
+  const ended = support && support.state && support.state.state === "ended";
+  const box = $("gm-choice");
+  box.hidden = !ended;
+  if (!ended) return;
+  $("gm-use-server").textContent = `Use ${server}`;
+  if (support.choice === "wait") {
+    $("gm-choice-text").textContent = "Waiting for the update. Until then Lock it does not see new blocks, so no new payments.";
+  } else if (support.ask) {
+    $("gm-choice-text").textContent = `Until then, choose: read the chain from a public server (${server}), which sees this PC's internet address, or wait for the update. Nothing is switched without you.`;
+  } else {
+    $("gm-choice-text").textContent = `Until the update, Lock it reads the chain from ${server}.`;
+  }
+  const choosing = support.ask || support.choice === "wait";
+  $("gm-use-server").hidden = !choosing;
+  $("gm-wait").hidden = !support.ask;
+}
+
 function renderGoMax(view) {
   lastView = view;
   nodeMessage.textContent = "";
   nodeToggle.disabled = false;
   setSwitch(view.state === "on" || view.state === "starting");
+  showNote("gm-reading", view.reading_note);
+  showNote("gm-quiet", view.wallet_quiet);
+  showNote("gm-unsettled", view.unsettled);
+  renderSupport(view);
+  const stopped = view.state === "off" && (view.stopped_while_starting || view.retrying);
+  $("gm-stopped").hidden = !stopped;
+  if (stopped) {
+    $("gm-stopped-text").textContent = view.retrying ? GM_WORDS.tryingAgain : GM_WORDS.stoppedWhileStarting;
+    $("gm-stopped-actions").hidden = !!view.retrying;
+    $("gm-still").textContent = GM_WORDS.stillNotWorking;
+    if (view.retrying) $("gm-still").hidden = true;
+  }
+  $("gm-remove").hidden = !(view.state === "off" && view.has_data && !view.retrying);
   if (view.state === "off") {
     setRing("off", 0);
     nodePercent.textContent = "";
     nodeState.textContent = "Off";
     nodeLead.textContent = LEAD_OFF;
     nodeFacts.hidden = true;
-    nodeToggle.disabled = !view.installed;
+    nodeToggle.disabled = !view.installed || !!view.retrying;
     if (!view.installed) say(nodeMessage, "This build has no node programs inside.", true);
-    else if (view.problem) say(nodeMessage, view.problem);
+    // The calm line replaces the generic problem while it shows.
+    else if (view.problem && !stopped) say(nodeMessage, view.problem);
     return;
   }
   if (view.state === "starting" || view.state === "stopping") {
@@ -2722,7 +2821,7 @@ function renderGoMax(view) {
     nodeLead.textContent = "Caught up. Lock it reads from your own node.";
   } else {
     nodeState.textContent = "Catching up";
-    nodeLead.textContent = "Checking the blocks since the beginning. You can keep using this PC; Lock it reads from zec.rocks until the node has caught up.";
+    nodeLead.textContent = `Checking the blocks since the beginning. You can keep using this PC; Lock it reads from ${chosenServerLabel()} until the node has caught up.`;
   }
   const network = netHeight > 0 ? ` of ${numbers.format(netHeight)}` : "";
   $("fact-height").textContent = `${numbers.format(status.height)}${network}`;
@@ -2739,6 +2838,34 @@ function renderGoMax(view) {
     $("fact-onion-address").textContent = view.onion_problem || "";
   }
 }
+
+$("gm-try-again").addEventListener("click", async () => {
+  try { await invoke("go_max_try_again"); } catch (problem) { say(nodeMessage, describe(problem)); }
+  refreshGoMax();
+});
+$("gm-still-toggle").addEventListener("click", () => {
+  const still = $("gm-still");
+  still.hidden = !still.hidden;
+  $("gm-still-toggle").textContent = still.hidden ? "Still not working?" : "Less";
+});
+$("gm-remove").addEventListener("click", async () => {
+  try {
+    await askKeys("Remove the node and its data?", "Go Max starts over at the next switch-on: the first check takes most of a day again. Your wallet is not touched.", { danger: true, action: "Remove", keys: false });
+    await invoke("go_max_remove_data");
+    refreshGoMax();
+  } catch (problem) {
+    const text = describe(problem);
+    if (text && text !== "cancelled") say(nodeMessage, text);
+  }
+});
+$("gm-use-server").addEventListener("click", async () => {
+  await invoke("go_max_choose_at_stop", { choice: "server" }).catch((p) => say(nodeMessage, describe(p)));
+  refreshGoMax();
+});
+$("gm-wait").addEventListener("click", async () => {
+  await invoke("go_max_choose_at_stop", { choice: "wait" }).catch((p) => say(nodeMessage, describe(p)));
+  refreshGoMax();
+});
 
 async function refreshGoMax() {
   try {
@@ -2797,7 +2924,12 @@ async function refreshCoin() {
   if (view.state === "on" && view.status) {
     const { fraction: f, caughtUp } = nodeProgress(view.status);
     fraction = f;
-    if (caughtUp && view.wallet_ready) {
+    const soon = view.support && view.support.date;
+    if (view.wallet_quiet) {
+      text = "No new blocks · check connection"; tone = "gold"; badge.hidden = false; badge.classList.add("gold");
+    } else if (caughtUp && view.wallet_ready && soon) {
+      glyph = "seal"; text = `Update before ${soon}`; tone = "gold"; badge.hidden = false; badge.classList.add("gold");
+    } else if (caughtUp && view.wallet_ready) {
       glyph = "seal"; text = "Your own node"; tone = "green"; badge.hidden = false;
     } else if (view.status.peers === 0) {
       text = "Not connected · check connection"; tone = "gold"; checking = true; badge.hidden = false; badge.classList.add("gold");
@@ -2810,6 +2942,10 @@ async function refreshCoin() {
     text = "Starting"; checking = true;
   } else if (view.state === "stopping") {
     text = "Stopping";
+  } else if (view.support && view.support.state && view.support.state.state === "ended") {
+    glyph = "warn"; text = "Needs an update"; tone = "gold"; badge.hidden = false; badge.classList.add("gold");
+  } else if (view.stopped_while_starting || view.retrying) {
+    glyph = "warn"; text = view.retrying ? "Trying again" : "Stopped while starting"; tone = "gold"; badge.hidden = false; badge.classList.add("gold");
   } else if (view.problem) {
     glyph = "warn"; text = "Stopped · open to see why"; tone = "red"; badge.hidden = false; badge.classList.add("red");
   }

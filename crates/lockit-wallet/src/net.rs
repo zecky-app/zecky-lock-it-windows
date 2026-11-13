@@ -128,6 +128,21 @@ pub(crate) async fn tip(client: &mut CompactTxStreamerClient<Channel>) -> Result
     u32::try_from(block.height).map_err(|_| Error::Server("an impossible block height".into()))
 }
 
+/// Whether the server still has the block at `height`: `Some(false)` when it
+/// answers "not found" (a pruned node), `None` when it cannot be told.
+pub(crate) async fn has_block(server: &Server, height: u32) -> Option<bool> {
+    let mut client = server.connect().await.ok()?;
+    let asked = client.get_block(BlockId { height: height.into(), hash: vec![] });
+    match tokio::time::timeout(std::time::Duration::from_secs(15), asked).await {
+        Ok(Ok(_)) => Some(true),
+        Ok(Err(status)) => {
+            let text = status.message().to_lowercase();
+            (status.code() == tonic::Code::NotFound || text.contains("not found") || text.contains("pruned")).then_some(false)
+        }
+        Err(_) => None,
+    }
+}
+
 /// The note commitment trees at `height`, to start a wallet from.
 pub(crate) async fn tree_state(client: &mut CompactTxStreamerClient<Channel>, height: u32) -> Result<TreeState> {
     Ok(client

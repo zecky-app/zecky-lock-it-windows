@@ -32,6 +32,7 @@ mod error;
 mod layout;
 pub mod process;
 mod rpc;
+pub mod rules;
 mod supervisor;
 
 pub use config::{GoMaxSettings, Listening, RETENTION_AT_TIP, RETENTION_SYNCING};

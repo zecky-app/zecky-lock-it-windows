@@ -70,9 +70,12 @@ pub async fn sealit_pair(app: AppHandle, slot: State<'_, WalletSlot>, seal: Stat
         Ok(w::runtime().block_on(main.add_sealit(&name, &export, Some(birthday), &server))?)
     })
     .await
-    .map_err(|e| problem(format!("pairing stopped unexpectedly: {e}")))??;
-    w::select(&app, Some(id.clone()))?;
+    .map_err(|e| problem(format!("pairing stopped unexpectedly: {e}")))
+    .and_then(|r| r);
+    // Success or not, the sync carries on at once (as on the Mac).
     w::nudge_slot(&slot);
+    let id = id.map_err(w::adding_problem)?;
+    w::select(&app, Some(id.clone()))?;
     Ok(id)
 }
 

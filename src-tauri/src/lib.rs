@@ -382,7 +382,10 @@ pub fn run() {
             wallet::wallet_do_move,
             go_max::go_max_view,
             go_max::go_max_start,
-            go_max::go_max_stop
+            go_max::go_max_stop,
+            go_max::go_max_try_again,
+            go_max::go_max_remove_data,
+            go_max::go_max_choose_at_stop
         ])
         .build(tauri::generate_context!())
         .expect("Zecky Lock it could not start");

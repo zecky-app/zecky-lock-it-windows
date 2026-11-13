@@ -343,10 +343,12 @@
         <label class="field"><span>Amount</span>
           <span class="amount-row"><input class="input" id="send-amount" inputmode="decimal" placeholder="0.000"><span class="unit-chip">ZEC</span></span>
         </label>
+        <p class="send-available" id="send-available"></p>
         <p class="small beta-warning" id="send-beta" hidden>This is a beta. Please keep amounts small while testing (under 0.1 ZEC).</p>
         <label class="field"><span>Private note (optional)</span><input class="input" id="send-memo" maxlength="512" placeholder="Only the receiver can read this"></label>
       </form>
       <div id="send-receipt" class="receipt" hidden>
+        <div class="receipt-row from" id="plan-from-row" hidden><span>From</span><strong id="plan-from"></strong></div>
         <div class="receipt-row"><span>They receive</span><strong id="plan-amount"></strong></div>
         <div class="receipt-row"><span>Network fee</span><strong id="plan-fee"></strong></div>
         <div class="receipt-row total"><span>Leaves the lock</span><strong id="plan-total"></strong></div>
@@ -610,14 +612,14 @@
             </div>
             <p class="small message" id="wait-note"></p>
           </div>
-          <p class="small quiet">Always asked, whatever you choose: showing the recovery phrase, the viewing key and erasing. Making a key stricter needs nothing; weakening one asks your keys first. The keys themselves are chosen when the wallet is made.</p>
+          <p class="small quiet">Always asked, whatever you choose: showing the recovery phrase, the viewing key and erasing. Making a key stricter needs nothing; weakening one asks your keys first. The keys themselves are chosen when the wallet is made. The keys and the time lock apply to every wallet on this PC.</p>
         </div>
 
         <!-- Time lock -->
         <div class="page" data-page="timelock" hidden>
           <div class="card pad">
             <p class="card-title">Time lock</p>
-            <p class="small quiet">Opening the lock has to be asked for this long ahead. Why: for Zcash you mean to keep, a wait of days protects you against pressure and impulse. Turning it off or shorter waits as long as the current time lock. In an emergency you can break the glass. It does not stop someone who has your 24 words.</p>
+            <p class="small quiet">Opening the lock has to be asked for this long ahead. Why: for Zcash you mean to keep, a wait of days protects you against pressure and impulse. Turning it off or shorter waits as long as the current time lock. In an emergency you can break the glass. It does not stop someone who has your 24 words. It applies to every wallet on this PC.</p>
             <div class="chips" id="timelock-chips">
               <button type="button" class="chip" data-hours="0">Off</button>
               <button type="button" class="chip" data-hours="24">24 hours</button>
@@ -753,12 +755,32 @@
           <div class="line"><span>Phone access, over Tor</span><strong id="fact-onion"></strong></div>
           <p class="onion" id="fact-onion-address"></p>
         </div>
+        <p class="gm-note" id="gm-reading" hidden></p>
+        <p class="gm-note" id="gm-quiet" hidden></p>
+        <p class="gm-note" id="gm-unsettled" hidden></p>
+        <p class="gm-note" id="gm-support" hidden></p>
+        <div class="gm-choice" id="gm-choice" hidden>
+          <p class="small quiet" id="gm-choice-text"></p>
+          <div class="inline">
+            <button type="button" class="secondary narrow" id="gm-use-server">Use zec.rocks</button>
+            <button type="button" class="secondary narrow" id="gm-wait">Wait for the update</button>
+          </div>
+        </div>
+        <div class="gm-stopped" id="gm-stopped" hidden>
+          <p class="gm-note" id="gm-stopped-text"></p>
+          <div class="inline" id="gm-stopped-actions">
+            <button type="button" class="secondary narrow" id="gm-try-again">Try again</button>
+            <button type="button" class="link-gold" id="gm-still-toggle">Still not working?</button>
+          </div>
+          <p class="small quiet" id="gm-still" hidden></p>
+        </div>
         <p id="node-message" class="message" role="status" aria-live="polite"></p>
         <button type="button" class="gm-switch" id="node-toggle" aria-label="Go Max">
           <span class="gm-label" id="gm-label">SWITCH ON</span>
           <span class="gm-knob"><span class="coin-face big"><svg viewBox="0 0 24 24" aria-hidden="true" id="gm-glyph"></svg></span></span>
         </button>
         <p class="quiet center small">Private: other nodes cannot connect to this PC.</p>
+        <button type="button" class="link-danger" id="gm-remove" hidden>Remove node and its data…</button>
       </div>
     </section>
   </div>
@@ -768,6 +790,7 @@
     <div class="prompt">
       <div class="prompt-ring tl-ring"><div class="prompt-lock" data-padlock="timelock"></div><span class="tl-clock">◷</span></div>
       <p class="eyebrow center" id="tl-label">TIME LOCK</p>
+      <div class="wallet-tag" id="tl-wallet" hidden></div>
       <div id="tl-asking">
         <h2 class="prompt-title center" id="tl-title">Ask to open the lock</h2>
         <p class="prompt-intro" id="tl-text"></p>
@@ -803,6 +826,7 @@
         <span class="prompt-count" id="prompt-count"></span>
       </div>
       <h2 class="prompt-title">Really open the lock?</h2>
+      <div class="wallet-tag" id="prompt-wallet" hidden></div>
       <p class="prompt-intro" id="prompt-intro"></p>
       <label class="agree" id="prompt-agree-row"><input type="checkbox" id="prompt-agree"> I am opening it myself, and nobody is telling me to.</label>
       <label class="field" id="prompt-passphrase-field" hidden>

@@ -30,9 +30,9 @@ use crate::{go_max::GoMaxSlot, problem, source_for, ChosenKey, CommandResult, Ke
 const LOCK_FILE: &str = "wallet-lock.json";
 /// How often the wallet looks for new blocks by itself.
 const SYNC_EVERY: Duration = Duration::from_secs(25);
-/// Go Max keeps this many recent blocks while syncing (its smallest window),
-/// less a margin: a wallet further behind reads from a public server.
-const NODE_WINDOW: u32 = 9_000;
+/// After a failed round: try again this soon, for about a minute.
+const RETRY_EVERY: Duration = Duration::from_secs(15);
+const QUICK_RETRIES: u32 = 4;
 
 /// How the sync is doing, for the home screen.
 #[derive(Clone, Default, Serialize)]
@@ -62,6 +62,37 @@ pub struct WalletSlot {
     opened: Mutex<Option<Zeroizing<String>>>,
     /// Recent sync problems, newest first, at most 5 (as Lock it Mac).
     problems: Mutex<Vec<SyncProblem>>,
+    /// Where the last round read from, for handing payments over.
+    reading: Mutex<Option<Server>>,
+    /// Go Max notes for its page: older blocks from the server, the wallet
+    /// quiet on the node, the server not answering after Go Max.
+    notes: Mutex<NodeNotes>,
+}
+
+#[derive(Clone, Default)]
+struct NodeNotes {
+    older: Option<String>,
+    quiet: bool,
+    reconnected: bool,
+    unsettled: Option<String>,
+    /// The newest height the wallet's server told it.
+    heard: u32,
+}
+
+/// Go Max's notes from the sync: older blocks from the server, whether the
+/// wallet went quiet on the node, and a server not answering after Go Max.
+pub(crate) fn node_notes(app: &AppHandle) -> (Option<String>, bool, Option<String>) {
+    app.state::<WalletSlot>().notes.lock().map(|n| (n.older.clone(), n.quiet, n.unsettled.clone())).unwrap_or_default()
+}
+
+/// The newest network height the wallet's server told it (0: none yet).
+pub(crate) fn network_heard(app: &AppHandle) -> u32 {
+    app.state::<WalletSlot>().notes.lock().map(|n| n.heard).unwrap_or(0)
+}
+
+/// Asks the sync for a round now.
+pub(crate) fn nudge_app(app: &AppHandle) {
+    nudge(&app.state::<WalletSlot>());
 }
 
 /// One sync problem, for the sync details.
@@ -228,11 +259,31 @@ pub(crate) fn chosen_server(app: &AppHandle) -> Server {
 
 /// Where to read from now: Go Max if it has caught up and still holds the
 /// blocks this wallet needs, else the chosen server.
-fn reading_server(app: &AppHandle, wallet: &Wallet) -> Server {
-    let scanned = wallet.balance().map(|b| b.scanned_height).unwrap_or(0);
-    match app.state::<GoMaxSlot>().own_node_height() {
-        Some(node) if scanned > 0 && scanned + NODE_WINDOW >= node => Server::OwnNode { port: 8137 },
-        _ => chosen_server(app),
+/// Where payments are handed over directly (without Tor): where the last
+/// round read from, else the chosen server.
+fn reading_server(app: &AppHandle, _wallet: &Wallet) -> Server {
+    app.state::<WalletSlot>().reading.lock().ok().and_then(|r| r.clone()).unwrap_or_else(|| chosen_server(app))
+}
+
+/// Where this round reads from. The node only when it has caught up and
+/// still has the oldest block the wallet has to scan; otherwise the chosen
+/// server, and the Go Max page says why (as on Lock it Mac).
+fn choose_server(app: &AppHandle, wallet: &Wallet) -> (Server, Option<String>) {
+    use lockit_node::rules::{reading, words};
+    let chosen = chosen_server(app);
+    let Some(node) = app.state::<GoMaxSlot>().own_node_height() else { return (chosen, None) };
+    let own = Server::OwnNode { port: 8137 };
+    let oldest = wallet.oldest_to_scan().ok().flatten();
+    let has = match oldest {
+        Some(height) if height <= node => runtime().block_on(Wallet::server_has_block(&own, height)),
+        _ => None,
+    };
+    match reading::missing(oldest, node, has) {
+        Some(from) => {
+            let label = chosen.label();
+            (chosen, Some(words::older_blocks(from, &label)))
+        }
+        None => (own, None),
     }
 }
 
@@ -256,34 +307,98 @@ fn set_sync(app: &AppHandle, state: &str, server: &Server, problem: Option<Strin
 /// Starts the background sync: now, then every [`SYNC_EVERY`], and at once
 /// when nudged.
 pub fn start_syncing(app: AppHandle) {
+    use lockit_node::rules::{reading, support, words};
     let (sender, receiver) = mpsc::channel::<()>();
     if let Ok(mut nudge) = app.state::<WalletSlot>().nudge.lock() {
         *nudge = Some(sender);
     }
     std::thread::Builder::new()
         .name("lockit-sync".into())
-        .spawn(move || loop {
-            if let Ok(wallet) = wallet(&app) {
-                if wallet.exists() {
-                    let server = reading_server(&app, &wallet);
-                    set_sync(&app, "syncing", &server, None);
-                    match runtime().block_on(wallet.sync(&server)) {
-                        Ok(()) => {
-                            set_sync(&app, "up_to_date", &server, None);
-                            if let Ok(balance) = wallet.balance() {
-                                crate::rules::note_synced_height(&app, balance.chain_tip, &server);
+        .spawn(move || {
+            let mut failures = 0u32;
+            loop {
+                let mut again_soon = false;
+                if let Ok(wallet) = wallet(&app) {
+                    if wallet.exists() {
+                        let slot = app.state::<WalletSlot>();
+                        let was_on_node = slot.reading.lock().ok().and_then(|r| r.clone()).is_some_and(|s| matches!(s, Server::OwnNode { .. }));
+                        // This node version's last block: at the stop, Go Max
+                        // stops, and nothing switches without the owner.
+                        let heard = network_heard(&app);
+                        let ended = crate::go_max::support_now(&app, heard).state == support::State::Ended;
+                        if ended {
+                            crate::go_max::expire(&app, was_on_node);
+                        }
+                        let waiting = ended && matches!(crate::go_max::expired_choice(&app).as_deref(), Some("ask") | Some("wait"));
+                        if waiting {
+                            set_sync(&app, "waiting_update", &Server::OwnNode { port: 8137 }, None);
+                        } else {
+                            let (server, older) = choose_server(&app, &wallet);
+                            let on_node = matches!(server, Server::OwnNode { .. });
+                            if let Ok(mut notes) = slot.notes.lock() {
+                                notes.older = older;
+                            }
+                            set_sync(&app, "syncing", &server, None);
+                            match runtime().block_on(wallet.sync(&server)) {
+                                Ok(()) => {
+                                    failures = 0;
+                                    set_sync(&app, "up_to_date", &server, None);
+                                    if let Ok(mut reading_now) = slot.reading.lock() {
+                                        *reading_now = Some(server.clone());
+                                    }
+                                    if let Ok(balance) = wallet.balance() {
+                                        crate::rules::note_synced_height(&app, balance.chain_tip, &server);
+                                        // The wallet quiet on the node: the node is 12 or
+                                        // more blocks ahead of what the wallet heard.
+                                        let node_blocks = app.state::<GoMaxSlot>().status_now().map(|s| s.height).unwrap_or(0);
+                                        if let Ok(mut notes) = slot.notes.lock() {
+                                            notes.heard = notes.heard.max(balance.chain_tip);
+                                            notes.unsettled = None;
+                                            let quiet = on_node && reading::wallet_quiet(node_blocks, balance.chain_tip);
+                                            if quiet && !notes.reconnected {
+                                                // Connect once more (every round opens a fresh connection).
+                                                notes.reconnected = true;
+                                                again_soon = true;
+                                            }
+                                            if !quiet {
+                                                notes.reconnected = false;
+                                            }
+                                            notes.quiet = quiet;
+                                        }
+                                    }
+                                }
+                                Err(error) => {
+                                    failures += 1;
+                                    again_soon = failures <= QUICK_RETRIES;
+                                    // Go Max handed the wallet back and the server does
+                                    // not answer: keep trying for a minute, and say so.
+                                    let handed_back = was_on_node && !on_node;
+                                    let text = if handed_back { words::unsettled(&server.label()) } else { error.to_string() };
+                                    if let Ok(mut notes) = slot.notes.lock() {
+                                        notes.unsettled = handed_back.then(|| text.clone());
+                                        if !handed_back {
+                                            notes.unsettled = None;
+                                        }
+                                    }
+                                    if !handed_back {
+                                        if let Ok(mut reading_now) = slot.reading.lock() {
+                                            *reading_now = Some(server.clone());
+                                        }
+                                    }
+                                    set_sync(&app, "problem", &server, Some(text));
+                                }
                             }
                         }
-                        Err(error) => set_sync(&app, "problem", &server, Some(error.to_string())),
                     }
                 }
+                let wait = if again_soon { RETRY_EVERY } else { SYNC_EVERY };
+                match receiver.recv_timeout(wait) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                }
+                // Several nudges in a row need only one sync.
+                while receiver.try_recv().is_ok() {}
             }
-            match receiver.recv_timeout(SYNC_EVERY) {
-                Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => return,
-            }
-            // Several nudges in a row need only one sync.
-            while receiver.try_recv().is_ok() {}
         })
         .expect("the sync could not start");
 }
@@ -899,12 +1014,22 @@ pub async fn settings_set_server(app: AppHandle, slot: State<'_, WalletSlot>, ho
         }
     };
     let server = server_for(&choice);
-    let tip = tauri::async_runtime::spawn_blocking(move || {
+    let new_label = server.label();
+    let old_label = chosen_server(&app).label();
+    let answered = tauri::async_runtime::spawn_blocking(move || {
         runtime().block_on(async { tokio::time::timeout(Duration::from_secs(20), Wallet::chain_tip(&server)).await })
     })
     .await
-    .map_err(|e| problem(e.to_string()))?
-    .map_err(|_| problem("the server did not answer within 20 seconds; nothing was changed"))??;
+    .map_err(|e| problem(e.to_string()))?;
+    // Not answered in time, or refused: the old server stays the setting, and
+    // the sync carries on with it (nothing was stopped).
+    let tip = match answered {
+        Ok(Ok(tip)) => tip,
+        _ => {
+            nudge(&slot);
+            return Err(problem(lockit_node::rules::words::could_not_connect(&new_label, &old_label)));
+        }
+    };
     let mut settings = load_settings(&app);
     settings.server = choice;
     save_settings(&app, &settings)?;
@@ -1073,13 +1198,30 @@ pub async fn keyring_add(
         Ok(id)
     })
     .await
-    .map_err(|e| problem(format!("adding the wallet stopped unexpectedly: {e}")))??;
+    .map_err(|e| problem(format!("adding the wallet stopped unexpectedly: {e}")))
+    .and_then(|r| r);
+    // Success or not, the sync carries on at once (as on the Mac).
+    nudge(&slot);
+    let id = id.map_err(adding_problem)?;
     wallet_forget_words(slot.clone());
     let mut settings = load_settings(&app);
     settings.current = Some(id.clone());
     save_settings(&app, &settings)?;
     nudge(&slot);
     Ok(id)
+}
+
+/// A wallet could not be added because the connection or the wallet's files
+/// were not ready yet: said as on the Mac.
+pub(crate) fn adding_problem(error: Problem) -> Problem {
+    if still_connecting(&error.message) {
+        return problem(lockit_node::rules::words::STILL_CONNECTING);
+    }
+    error
+}
+
+fn still_connecting(text: &str) -> bool {
+    lockit_node::rules::words::still_connecting(text)
 }
 
 /// Gives a wallet of the key ring another name.
@@ -1180,6 +1322,7 @@ pub async fn keyring_remove(app: AppHandle, window: WebviewWindow, slot: State<'
 #[cfg(test)]
 mod tests {
     use super::parse_zec;
+
 
     #[test]
     fn amounts_are_read_exactly() {

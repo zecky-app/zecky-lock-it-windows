@@ -277,6 +277,19 @@ impl Wallet {
         Ok(())
     }
 
+    /// The oldest block any wallet here still has to scan; `None` when
+    /// everything is scanned.
+    pub fn oldest_to_scan(&self) -> Result<Option<u32>> {
+        let db = self.db()?;
+        Ok(db.suggest_scan_ranges().map_err(db_err)?.iter().map(|r| u32::from(r.block_range().start)).min())
+    }
+
+    /// Whether `server` still has the block at `height` (a pruned node may
+    /// not); `None` when it cannot be told.
+    pub async fn server_has_block(server: &Server, height: u32) -> Option<bool> {
+        net::has_block(server, height).await
+    }
+
     /// Whether the wallet on screen is signed on a phone with Seal it.
     pub fn is_sealit(&self) -> Result<bool> {
         let db = self.db()?;
@@ -831,6 +844,21 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert!(list[0].main && list[0].id == other);
         assert_eq!(wallet.receive_address().unwrap(), address);
+    }
+
+    #[test]
+    fn an_added_wallet_has_older_blocks_to_scan() {
+        // Item 1 (Mac build 6): after adding a wallet, the oldest block still
+        // to scan is its birthday's, the one Go Max must be asked about.
+        let (_dir, wallet, _seed) = fresh();
+        let birthday = AccountBirthday::from_parts(
+            zcash_client_backend::data_api::chain::ChainState::empty(BlockHeight::from_u32(SAPLING_ACTIVATION + 99), BlockHash([0; 32])),
+            None,
+        );
+        let seed = phrase_to_seed(&new_phrase()).unwrap();
+        wallet.add_wallet_from_birthday("Old savings", &seed, &birthday, SAPLING_ACTIVATION + 5_000).unwrap();
+        let oldest = wallet.oldest_to_scan().unwrap().expect("blocks to scan");
+        assert!(oldest <= SAPLING_ACTIVATION + 100, "the added wallet's blocks come first: {oldest}");
     }
 
     #[test]
