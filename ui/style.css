@@ -892,3 +892,20 @@ select.input { appearance: auto; }
 .beta-warning { color: var(--gold); margin: 0; }
 .first-steps { text-align: left; margin-top: 8px; }
 .first-steps ol { margin: 4px 0 0; padding-left: 18px; color: var(--muted); line-height: 1.6; }
+
+/* ---------- Before you start, and the tour ---------- */
+.terms-points { gap: 14px !important; padding: 20px 22px !important; text-align: left; }
+.terms-points p { margin: 0; display: flex; gap: 14px; font-size: 14px; line-height: 1.45; }
+.terms-icon { width: 18px; flex: none; color: var(--gold); text-align: center; }
+.terms-links { display: flex; justify-content: center; gap: 22px; }
+.tour { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); }
+.tour-card { width: 420px; max-width: calc(100vw - 40px); padding: 24px; border-radius: 16px; background: var(--surface); border: 1px solid rgba(212, 166, 87, 0.25); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4); display: flex; flex-direction: column; gap: 12px; }
+.tour-top { display: flex; justify-content: space-between; align-items: center; }
+.tour-step { font: 600 11px var(--sans); letter-spacing: 2px; color: var(--gold); }
+.tour-skip { font-size: 12px; color: var(--muted); }
+.tour-skip:hover { color: var(--text); }
+.tour-title { margin: 0; font: 500 26px var(--serif); }
+.tour-text { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.5; }
+.tour-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 6px; }
+.tour-actions .tour-next { width: 140px; margin-left: auto; }
+#tour-again { margin-top: 12px; }

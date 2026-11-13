@@ -4,7 +4,7 @@ SetCompressor /SOLID lzma
 !include "MUI2.nsh"
 
 !define NAME "Zecky Lock it"
-!define VERSION "0.1.0-beta.2"
+!define VERSION "0.1.0-beta.3"
 !define PUBLISHER "Zecky"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\ZeckyLockIt"
 
@@ -14,7 +14,7 @@ InstallDir "$LOCALAPPDATA\Programs\Zecky Lock it"
 InstallDirRegKey HKCU "Software\ZeckyLockIt" "InstallDir"
 RequestExecutionLevel user
 BrandingText "Zecky Lock it ${VERSION}"
-VIProductVersion "0.1.0.2"
+VIProductVersion "0.1.0.3"
 VIAddVersionKey "ProductName" "${NAME}"
 VIAddVersionKey "FileDescription" "${NAME} installer"
 VIAddVersionKey "FileVersion" "${VERSION}"

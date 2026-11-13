@@ -17,6 +17,7 @@
 //! * System prompts (Windows Hello, "touch your security key") block, so
 //!   they run on a worker thread and never freeze the window.
 
+mod firstrun;
 mod go_max;
 mod rules;
 mod sealit;
@@ -337,6 +338,10 @@ pub fn run() {
             wallet::keyring_add,
             wallet::keyring_remove,
             wallet::keyring_rename,
+            firstrun::first_run,
+            firstrun::terms_accept,
+            firstrun::tour_seen,
+            firstrun::open_page,
             wallet::keyring_layout,
             wallet::keyring_erase_main,
             sealit::sealit_scan_start,

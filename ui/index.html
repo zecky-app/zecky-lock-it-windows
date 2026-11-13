@@ -32,6 +32,22 @@
       <p class="quiet">One moment.</p>
     </section>
 
+    <section id="view-terms" class="view" hidden>
+      <div class="welcome-lock" data-padlock="terms"></div>
+      <h1 class="title">Before you start</h1>
+      <div class="card pad terms-points">
+        <p><span class="terms-icon">▤</span>Your 24 words are your wallet. Nobody can recover them, not even Zecky.</p>
+        <p><span class="terms-icon">✓</span>Payments are final. Check before you send.</p>
+        <p><span class="terms-icon">⚗</span>Zecky is in testing. Use amounts you can afford to lose.</p>
+        <p><span class="terms-icon">⚿</span>Zecky never holds your keys or your money.</p>
+      </div>
+      <div class="terms-links">
+        <button type="button" class="link-gold" id="terms-read">Read the terms ›</button>
+        <button type="button" class="link-gold" id="terms-privacy">Privacy ›</button>
+      </div>
+      <button type="button" class="brass" id="terms-accept">I understand</button>
+    </section>
+
     <section id="view-welcome" class="view" hidden>
       <div class="welcome-lock" data-padlock="small"></div>
       <h1 class="title">Your Zcash, locked</h1>
@@ -200,6 +216,19 @@
       </div>
     </footer>
   </section>
+
+  <!-- ===== The tour (first run, as on Lock it Mac) ===== -->
+  <div class="tour" id="tour" hidden>
+    <div class="tour-card" role="dialog" aria-modal="true" aria-labelledby="tour-title">
+      <div class="tour-top"><span class="tour-step" id="tour-step">1 OF 4</span><button type="button" class="tour-skip" id="tour-skip">Skip</button></div>
+      <h2 class="tour-title" id="tour-title"></h2>
+      <p class="tour-text" id="tour-text"></p>
+      <div class="tour-actions">
+        <button type="button" class="link-gold" id="tour-keys" hidden>Choose my keys now</button>
+        <button type="button" class="brass tour-next" id="tour-next">Next</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ===== Sheets ===== -->
   <div class="sheet-layer" id="sheet-layer" hidden>
@@ -689,6 +718,7 @@
         <!-- How Zecky works -->
         <div class="page" data-page="how" hidden>
           <div class="chapters" id="chapters"></div>
+          <button type="button" class="secondary narrow" id="tour-again">Show the tour again</button>
         </div>
       </div>
     </section>

@@ -963,6 +963,7 @@ pub async fn wallet_erase(app: AppHandle, window: WebviewWindow, slot: State<'_,
     let _ = fs::remove_dir_all(dir.join("wallet"));
     let _ = fs::remove_file(dir.join("settings.json"));
     let _ = fs::remove_file(dir.join("keyring.json"));
+    crate::firstrun::forget_tour(&app);
     crate::rules::erase(&app);
     #[cfg(windows)]
     if let Some(vault) = vault {

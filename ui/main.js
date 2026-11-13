@@ -113,7 +113,7 @@ const numbers = new Intl.NumberFormat("en-US");
 const onboarding = document.querySelector(".onboarding");
 const views = {
   loading: $("view-loading"), welcome: $("view-welcome"), words: $("view-words"),
-  check: $("view-check"), restore: $("view-restore"), setup: $("view-setup"),
+  check: $("view-check"), restore: $("view-restore"), setup: $("view-setup"), terms: $("view-terms"),
 };
 
 let busy = false;
@@ -129,6 +129,7 @@ function showView(name) {
 }
 
 Lockart.padlock(document.querySelector('[data-padlock="small"]'), { size: 150 });
+Lockart.padlock(document.querySelector('[data-padlock="terms"]'), { size: 64 });
 
 let words = [];
 let madeIn = null;
@@ -320,6 +321,7 @@ const heightSamples = [];
 
 function startHome() {
   if (homeTimer) return;
+  maybeShowTour();
   refreshHome();
   homeTimer = setInterval(refreshHome, 4000);
 }
@@ -562,6 +564,7 @@ $("app-unlock").addEventListener("click", async () => {
     $("app-locked").hidden = true;
     $("eye").hidden = false;
     refreshHome();
+    maybeShowTour();
   } catch (problem) {
     say($("app-locked-message"), describe(problem) || "Not confirmed, so Lock it stayed locked.");
   } finally {
@@ -1648,7 +1651,11 @@ function notSent(problem) {
   if (problem && problem.unsent) {
     sendStage = "unsent";
     sendLayout();
-    say($("send-message"), `${describe(problem)}. It is the same payment each time, so do not pay again.`);
+    const text = describe(problem);
+    const tor = /tor\b|onion|circuit|3 minutes/i.test(text)
+      ? " Some networks (offices, schools, public Wi-Fi) block Tor: try again without Tor, or on another network."
+      : "";
+    say($("send-message"), `${text}. It is the same payment each time, so do not pay again.${tor}`);
   } else {
     say($("send-message"), describe(problem) || "Nothing was sent.");
   }
@@ -2815,10 +2822,84 @@ nodeToggle.addEventListener("click", async () => {
 
 $("go-max-coin").addEventListener("click", () => openSheet("gomax"));
 
+// ---------- Before you start, and the tour (as on Lock it Mac) ----------
+
+let firstRun = { terms_accepted: false, tour_seen: true };
+
+$("terms-read").addEventListener("click", () => invoke("open_page", { page: "terms" }).catch(() => {}));
+$("terms-privacy").addEventListener("click", () => invoke("open_page", { page: "privacy" }).catch(() => {}));
+$("terms-accept").addEventListener("click", async () => {
+  try {
+    await invoke("terms_accept");
+    firstRun.terms_accepted = true;
+    showView("welcome");
+  } catch (problem) {
+    alert(describe(problem));
+  }
+});
+
+const TOUR = [
+  ["Receive", "Click Receive for your address. Zcash sent to it goes straight into the lock."],
+  ["Click the lock to send", "The lock opens with a deliberate click. Send takes out only what you choose; the rest stays locked. It closes again by itself."],
+  ["Go Max, if you want", "The gold coin at the bottom right starts your own Zcash node inside Lock it, so Lock it reads the chain from this PC instead of a server. Optional: it needs about 35 GB and most of a day the first time. Lock it works the same without it."],
+  ["Choose your keys", "Decide what is asked before the lock opens: Windows Hello, a Zecky code, a short pause, a security key. Settings › Security › Keys to the lock."],
+];
+let tourStep = 0;
+
+function showTourStep() {
+  const [title, text] = TOUR[tourStep];
+  const last = tourStep === TOUR.length - 1;
+  $("tour-step").textContent = `${tourStep + 1} OF ${TOUR.length}`;
+  $("tour-title").textContent = title;
+  $("tour-text").textContent = text;
+  $("tour-next").textContent = last ? "Done" : "Next";
+  $("tour-keys").hidden = !last;
+}
+
+function openTour() {
+  tourStep = 0;
+  showTourStep();
+  $("tour").hidden = false;
+  $("tour-next").focus();
+}
+
+function finishTour() {
+  $("tour").hidden = true;
+  firstRun.tour_seen = true;
+  invoke("tour_seen", { seen: true }).catch(() => {});
+}
+
+function maybeShowTour() {
+  // After the start (and Lock it's own lock, when it is asked) settles.
+  setTimeout(() => {
+    if (!firstRun.tour_seen && !appLocked && !$("view-home").hidden && $("tour").hidden) openTour();
+  }, 700);
+}
+
+$("tour-skip").addEventListener("click", finishTour);
+$("tour-next").addEventListener("click", () => {
+  if (tourStep === TOUR.length - 1) return finishTour();
+  tourStep += 1;
+  showTourStep();
+});
+$("tour-keys").addEventListener("click", async () => {
+  finishTour();
+  $("open-settings").click();
+  setTimeout(() => goSettings("keys"), 50);
+});
+$("tour-again").addEventListener("click", () => { closeSheet(); openTour(); });
+document.addEventListener("keydown", (event) => {
+  if ($("tour").hidden) return;
+  if (event.key === "Escape") finishTour();
+  if (event.key === "Enter") $("tour-next").click();
+});
+
 // ---------- Start ----------
 
 async function start() {
   const first = await invoke("wallet_overview");
+  firstRun = await invoke("first_run").catch(() => firstRun);
+  if (!first.exists && !firstRun.terms_accepted) return showView("terms");
   showView(first.exists ? "home" : "welcome");
   if (first.exists) {
     overview = first;
