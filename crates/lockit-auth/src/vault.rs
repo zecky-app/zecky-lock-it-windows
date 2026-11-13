@@ -87,6 +87,9 @@ impl Vault {
                 return Err(Error::DuplicateKind(pair[0].0.kind));
             }
         }
+        if !keys.iter().any(|(descriptor, _)| descriptor.kind.gives_secret()) {
+            return Err(Error::NeedsSecretKey);
+        }
 
         let vault_id = B64.encode(random_bytes::<16>()?);
         let kdf_salt = B64.encode(random_bytes::<32>()?);

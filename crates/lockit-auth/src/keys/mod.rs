@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result, Secret};
 
+pub mod key_check;
 pub mod passphrase;
 
 #[cfg(windows)]
@@ -38,6 +39,12 @@ impl std::fmt::Display for KeyKind {
 }
 
 impl KeyKind {
+    /// Whether this kind gives a secret. A security key is a check only (as
+    /// on Lock it Mac), so a lock must also hold one of the others.
+    pub fn gives_secret(self) -> bool {
+        !matches!(self, KeyKind::SecurityKey)
+    }
+
     /// Stable one-byte tag mixed into the vault key. Never change these.
     pub(crate) fn tag(self) -> u8 {
         match self {

@@ -124,6 +124,16 @@ fn key_count_and_kinds_are_checked() {
 }
 
 #[test]
+fn a_security_key_alone_cannot_seal_a_lock() {
+    // It checks, but gives no secret (as on Lock it Mac).
+    let mut key = FakeKey::new(KeyKind::SecurityKey, 1);
+    assert!(matches!(Vault::seal(PHRASE, vec![key.enroll("Key").unwrap()]), Err(Error::NeedsSecretKey)));
+    let mut key = FakeKey::new(KeyKind::SecurityKey, 1);
+    let mut hello = FakeKey::new(KeyKind::DeviceHello, 2);
+    Vault::seal(PHRASE, vec![key.enroll("Key").unwrap(), hello.enroll("This PC").unwrap()]).unwrap();
+}
+
+#[test]
 fn survives_a_round_trip_through_json() {
     let mut hello = FakeKey::new(KeyKind::DeviceHello, 0x11);
     let vault = Vault::seal(PHRASE, vec![hello.enroll("This PC").unwrap()]).unwrap();

@@ -20,6 +20,10 @@ pub enum Error {
         max: usize,
     },
 
+    /// Only security keys were chosen; they check, but give no secret.
+    #[error("a security key checks that it is you, but a lock also needs Windows Hello or a passphrase")]
+    NeedsSecretKey,
+
     /// The same kind of key was added twice.
     #[error("each key of a lock must be of a different kind; {0} was chosen twice")]
     DuplicateKind(KeyKind),
