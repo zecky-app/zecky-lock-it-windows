@@ -26,6 +26,17 @@ pub enum KeyKind {
     Passphrase,
 }
 
+impl std::fmt::Display for KeyKind {
+    /// The name the owner sees.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            KeyKind::DeviceHello => "This PC (Windows Hello)",
+            KeyKind::SecurityKey => "The security key",
+            KeyKind::Passphrase => "The passphrase",
+        })
+    }
+}
+
 impl KeyKind {
     /// Stable one-byte tag mixed into the vault key. Never change these.
     pub(crate) fn tag(self) -> u8 {

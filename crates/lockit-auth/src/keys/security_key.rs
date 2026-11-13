@@ -30,14 +30,15 @@
 //! Compiles for Windows. **Not yet run on a real Windows PC or tested with a
 //! real key.**
 
-use std::ffi::c_void;
+use std::{ffi::c_void, sync::OnceLock};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64URL, Engine as _};
 use windows::{
     core::{w, BOOL, HRESULT, PCWSTR},
     Win32::{
-        Foundation::HWND,
+        Foundation::{HMODULE, HWND},
         Networking::WindowsWebServices::*,
+        System::LibraryLoader::{GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32},
         UI::WindowsAndMessaging::GetForegroundWindow,
     },
 };
@@ -63,6 +64,64 @@ const TIMEOUT_MS: u32 = 120_000;
 /// `NTE_USER_CANCELLED`: the owner closed the system window.
 const NTE_USER_CANCELLED: HRESULT = HRESULT(0x8009_0036_u32 as i32);
 
+/// The parts of `webauthn.dll` this file uses, loaded when first needed.
+///
+/// Loaded at run time, not linked at start-up: on a Windows without
+/// `webauthn.dll` the app must still start, and simply report that security
+/// keys are not available here.
+struct WebAuthnApi {
+    version: unsafe extern "system" fn() -> u32,
+    make_credential: unsafe extern "system" fn(
+        HWND,
+        *const WEBAUTHN_RP_ENTITY_INFORMATION,
+        *const WEBAUTHN_USER_ENTITY_INFORMATION,
+        *const WEBAUTHN_COSE_CREDENTIAL_PARAMETERS,
+        *const WEBAUTHN_CLIENT_DATA,
+        *const WEBAUTHN_AUTHENTICATOR_MAKE_CREDENTIAL_OPTIONS,
+        *mut *mut WEBAUTHN_CREDENTIAL_ATTESTATION,
+    ) -> HRESULT,
+    get_assertion: unsafe extern "system" fn(
+        HWND,
+        PCWSTR,
+        *const WEBAUTHN_CLIENT_DATA,
+        *const WEBAUTHN_AUTHENTICATOR_GET_ASSERTION_OPTIONS,
+        *mut *mut WEBAUTHN_ASSERTION,
+    ) -> HRESULT,
+    free_attestation: unsafe extern "system" fn(*const WEBAUTHN_CREDENTIAL_ATTESTATION),
+    free_assertion: unsafe extern "system" fn(*const WEBAUTHN_ASSERTION),
+    error_name: unsafe extern "system" fn(HRESULT) -> PCWSTR,
+}
+
+impl WebAuthnApi {
+    /// The loaded API, or `None` if this Windows has no usable `webauthn.dll`.
+    fn get() -> Option<&'static Self> {
+        static API: OnceLock<Option<WebAuthnApi>> = OnceLock::new();
+        API.get_or_init(Self::load).as_ref()
+    }
+
+    fn load() -> Option<Self> {
+        // SAFETY: loads a system DLL from System32 only, and looks up
+        // functions whose signatures are fixed by webauthn.h.
+        unsafe {
+            let module: HMODULE =
+                LoadLibraryExW(w!("webauthn.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32).ok()?;
+            macro_rules! function {
+                ($name:literal) => {
+                    std::mem::transmute(GetProcAddress(module, windows::core::s!($name))?)
+                };
+            }
+            Some(Self {
+                version: function!("WebAuthNGetApiVersionNumber"),
+                make_credential: function!("WebAuthNAuthenticatorMakeCredential"),
+                get_assertion: function!("WebAuthNAuthenticatorGetAssertion"),
+                free_attestation: function!("WebAuthNFreeCredentialAttestation"),
+                free_assertion: function!("WebAuthNFreeAssertion"),
+                error_name: function!("WebAuthNGetErrorName"),
+            })
+        }
+    }
+}
+
 /// The security key source.
 pub struct SecurityKey {
     window: HWND,
@@ -84,7 +143,14 @@ impl SecurityKey {
     /// Whether this Windows can ask a security key for an `hmac-secret`.
     pub fn is_available() -> bool {
         // SAFETY: takes no arguments and only reads a version number.
-        unsafe { WebAuthNGetApiVersionNumber() >= WEBAUTHN_API_VERSION_4 }
+        WebAuthnApi::get().is_some_and(|api| unsafe { (api.version)() } >= WEBAUTHN_API_VERSION_4)
+    }
+
+    fn api() -> Result<&'static WebAuthnApi> {
+        WebAuthnApi::get().ok_or_else(|| Error::Unavailable {
+            kind: KeyKind::SecurityKey,
+            reason: "this Windows has no security-key support (webauthn.dll is missing)".into(),
+        })
     }
 
     fn window(&self) -> HWND {
@@ -97,6 +163,7 @@ impl SecurityKey {
     }
 
     fn require_available() -> Result<()> {
+        Self::api()?;
         if Self::is_available() {
             Ok(())
         } else {
@@ -162,16 +229,19 @@ impl SecurityKey {
             ..Default::default()
         };
 
+        let api = Self::api()?;
+        let mut attestation: *mut WEBAUTHN_CREDENTIAL_ATTESTATION = std::ptr::null_mut();
         // SAFETY: every pointer refers to a local that outlives the call, and
         // the structures are filled in as `webauthn.h` documents.
-        let attestation = unsafe {
-            WebAuthNAuthenticatorMakeCredential(self.window(), &rp, &user, &algorithms, &client, Some(&options))
+        unsafe {
+            (api.make_credential)(self.window(), &rp, &user, &algorithms, &client, &options, &mut attestation)
         }
-        .map_err(webauthn_error)?;
+        .ok()
+        .map_err(|e| webauthn_error(api, e))?;
         if attestation.is_null() {
             return Err(Error::Platform("Windows returned no credential".into()));
         }
-        let _free = FreeAttestation(attestation);
+        let _free = FreeAttestation(api, attestation);
 
         // SAFETY: non-null and owned by us until `_free` drops; the API
         // guarantees the fields below are valid for their stated lengths.
@@ -236,14 +306,16 @@ impl SecurityKey {
             ..Default::default()
         };
 
+        let api = Self::api()?;
+        let mut assertion: *mut WEBAUTHN_ASSERTION = std::ptr::null_mut();
         // SAFETY: every pointer refers to a local that outlives the call.
-        let assertion =
-            unsafe { WebAuthNAuthenticatorGetAssertion(self.window(), RP_ID_W, &client, Some(&options)) }
-                .map_err(webauthn_error)?;
+        unsafe { (api.get_assertion)(self.window(), RP_ID_W, &client, &options, &mut assertion) }
+            .ok()
+            .map_err(|e| webauthn_error(api, e))?;
         if assertion.is_null() {
             return Err(Error::Platform("Windows returned no answer from the key".into()));
         }
-        let _free = FreeAssertion(assertion);
+        let _free = FreeAssertion(api, assertion);
 
         // SAFETY: non-null and owned by us until `_free` drops. `pHmacSecret`
         // exists from structure version 3 on, which is checked first.
@@ -345,31 +417,31 @@ unsafe fn extension_is_true(extensions: &WEBAUTHN_EXTENSIONS, identifier: PCWSTR
     })
 }
 
-fn webauthn_error(error: windows::core::Error) -> Error {
+fn webauthn_error(api: &WebAuthnApi, error: windows::core::Error) -> Error {
     if error.code() == NTE_USER_CANCELLED {
         return Error::Cancelled;
     }
     // SAFETY: returns a pointer to a static, null-terminated name.
-    let name = unsafe { WebAuthNGetErrorName(error.code()).to_string() }.unwrap_or_default();
+    let name = unsafe { (api.error_name)(error.code()).to_string() }.unwrap_or_default();
     Error::Platform(format!("the security key request failed ({name}): {}", error.message()))
 }
 
-struct FreeAttestation(*mut WEBAUTHN_CREDENTIAL_ATTESTATION);
+struct FreeAttestation(&'static WebAuthnApi, *mut WEBAUTHN_CREDENTIAL_ATTESTATION);
 
 impl Drop for FreeAttestation {
     fn drop(&mut self) {
         // SAFETY: the pointer came from `WebAuthNAuthenticatorMakeCredential`
         // and is freed exactly once.
-        unsafe { WebAuthNFreeCredentialAttestation(Some(self.0)) }
+        unsafe { (self.0.free_attestation)(self.1) }
     }
 }
 
-struct FreeAssertion(*mut WEBAUTHN_ASSERTION);
+struct FreeAssertion(&'static WebAuthnApi, *mut WEBAUTHN_ASSERTION);
 
 impl Drop for FreeAssertion {
     fn drop(&mut self) {
         // SAFETY: the pointer came from `WebAuthNAuthenticatorGetAssertion`
         // and is freed exactly once.
-        unsafe { WebAuthNFreeAssertion(self.0) }
+        unsafe { (self.0.free_assertion)(self.1) }
     }
 }

@@ -21,7 +21,7 @@ pub enum Error {
     },
 
     /// The same kind of key was added twice.
-    #[error("each key of a lock must be of a different kind; {0:?} was given twice")]
+    #[error("each key of a lock must be of a different kind; {0} was chosen twice")]
     DuplicateKind(KeyKind),
 
     /// The keys did not open the vault: a wrong key, or a damaged file.
@@ -46,7 +46,7 @@ pub enum Error {
     Cancelled,
 
     /// This kind of key cannot be used on this computer.
-    #[error("{kind:?} is not available on this computer: {reason}")]
+    #[error("{kind} is not available on this computer: {reason}")]
     Unavailable {
         /// Which kind of key.
         kind: KeyKind,
@@ -55,7 +55,7 @@ pub enum Error {
     },
 
     /// The key answered, but not the way a usable key must.
-    #[error("the {kind:?} key cannot be used for a lock: {reason}")]
+    #[error("{kind} cannot be used for a lock: {reason}")]
     KeyUnusable {
         /// Which kind of key.
         kind: KeyKind,
