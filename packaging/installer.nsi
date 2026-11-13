@@ -4,7 +4,7 @@ SetCompressor /SOLID lzma
 !include "MUI2.nsh"
 
 !define NAME "Zecky Lock it"
-!define VERSION "0.1.0-beta.6"
+!define VERSION "0.1.0-beta.1"
 !define PUBLISHER "Zecky"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\ZeckyLockIt"
 
@@ -14,7 +14,7 @@ InstallDir "$LOCALAPPDATA\Programs\Zecky Lock it"
 InstallDirRegKey HKCU "Software\ZeckyLockIt" "InstallDir"
 RequestExecutionLevel user
 BrandingText "Zecky Lock it ${VERSION}"
-VIProductVersion "0.1.0.6"
+VIProductVersion "0.1.0.1"
 VIAddVersionKey "ProductName" "${NAME}"
 VIAddVersionKey "FileDescription" "${NAME} installer"
 VIAddVersionKey "FileVersion" "${VERSION}"
@@ -42,6 +42,30 @@ VIAddVersionKey "LegalCopyright" "Zecky"
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
+
+; Lock it's window is drawn by Microsoft Edge WebView2, present on almost every
+; Windows 10/11 PC. Without it the app cannot open: say so before installing,
+; and offer Microsoft's own download page (nothing is downloaded by us).
+!define WEBVIEW2_KEY "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+!define WEBVIEW2_PAGE "https://developer.microsoft.com/microsoft-edge/webview2/#download"
+
+Function HasWebView2
+  ; Per machine (the 32-bit view reads WOW6432Node on 64-bit Windows), then per user.
+  ReadRegStr $0 HKLM "${WEBVIEW2_KEY}" "pv"
+  StrCmp $0 "" 0 +2
+  ReadRegStr $0 HKCU "${WEBVIEW2_KEY}" "pv"
+  StrCmp $0 "0.0.0.0" 0 +2
+  StrCpy $0 ""
+FunctionEnd
+
+Function .onInit
+  Call HasWebView2
+  StrCmp $0 "" 0 done
+  MessageBox MB_YESNO|MB_ICONEXCLAMATION "Zecky Lock it needs Microsoft Edge WebView2, which is missing on this PC.$\r$\n$\r$\nOpen Microsoft's download page now? Install the Evergreen Bootstrapper there, then run this installer again.$\r$\n$\r$\n(No: install Lock it anyway.)" IDNO done
+  ExecShell "open" "${WEBVIEW2_PAGE}"
+  Quit
+  done:
+FunctionEnd
 
 Section "Install"
   ; Lock it must be closed (it may be running Go Max).

@@ -897,7 +897,7 @@ document.addEventListener("keydown", (event) => { if (event.key === "Escape") cl
 
 function openPlusMenu(event) {
   showMenu(event, [
-    { label: "Pair Seal it (offline phone)", run: () => openSeal("pair") },
+    { label: "Pair Seal it (offline phone) · experimental", run: () => openSeal("pair") },
     "-",
     { label: "New wallet on this PC", run: () => openAdd("new") },
     { label: "Restore a wallet with 24 words", run: () => openAdd("restore") },

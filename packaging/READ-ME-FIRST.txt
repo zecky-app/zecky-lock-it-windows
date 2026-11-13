@@ -30,5 +30,44 @@ Removing the app does not remove this folder.
 Your 24 words are shown once, when you create a wallet. Write them on
 paper. They are the only way back if this PC is lost.
 
+Seal it (signing on your phone) is experimental on Windows: try it with a
+tiny amount first.
+
+IF SOMETHING DOESN'T WORK
+
+"Windows protected your PC"
+  Lock it is not code-signed (that costs money every year). Click "More
+  info", then "Run anyway". Check your download first: see VERIFY.txt.
+
+Your antivirus removes or blocks a file
+  New, unsigned programs are sometimes flagged, and Go Max's node programs
+  (node\zakurad.exe, node\zainod.exe) most of all. Check the download with
+  VERIFY.txt, then allow the file in your antivirus and install again. The
+  wallet itself works without Go Max.
+
+Sending fails over Tor
+  Some networks (offices, schools, public Wi-Fi) block Tor. Press "Send
+  without Tor", or try again on another network. It is the same payment
+  each time, so nothing is paid twice.
+
+Restoring takes long
+  Lock it checks every block from when your words were made. With the exact
+  birthday block it starts right there; with only a month, a few hours for
+  an old wallet is normal. The progress shows on the home screen.
+
+Windows Hello is greyed out
+  Set up a PIN, face or fingerprint in Windows Settings > Accounts > Sign-in
+  options first. Or use a passphrase as your key.
+
+"Can't reach" the server
+  Check the PC's internet connection and clock. Or pick another server in
+  Settings > Network.
+
+Go Max stopped while starting
+  Press Try again. Still not working? Quit Lock it, open it again; if it
+  still stops, Remove node and its data and switch Go Max on again.
+
 Found a problem? In the app: Settings > About > Copy a problem report, then
-open an issue on the GitHub page you downloaded this from.
+open an issue on the GitHub page you downloaded this from:
+  https://github.com/zecky-app/zecky-lock-it-windows/issues
+The report has no words, keys, addresses or amounts.
