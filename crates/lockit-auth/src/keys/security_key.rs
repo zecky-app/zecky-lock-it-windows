@@ -140,10 +140,16 @@ impl SecurityKey {
         Self { window: HWND(raw_hwnd as *mut c_void) }
     }
 
+    /// The version of Windows' security-key interface, if it has one.
+    /// Windows 10 offers up to 3; a lock needs 4 (Windows 11).
+    pub fn api_version() -> Option<u32> {
+        // SAFETY: takes no arguments and only reads a version number.
+        WebAuthnApi::get().map(|api| unsafe { (api.version)() })
+    }
+
     /// Whether this Windows can ask a security key for an `hmac-secret`.
     pub fn is_available() -> bool {
-        // SAFETY: takes no arguments and only reads a version number.
-        WebAuthnApi::get().is_some_and(|api| unsafe { (api.version)() } >= WEBAUTHN_API_VERSION_4)
+        Self::api_version().is_some_and(|version| version >= WEBAUTHN_API_VERSION_4)
     }
 
     fn api() -> Result<&'static WebAuthnApi> {
@@ -169,7 +175,10 @@ impl SecurityKey {
         } else {
             Err(Error::Unavailable {
                 kind: KeyKind::SecurityKey,
-                reason: "this version of Windows is too old to use a security key for a lock. Install the latest Windows updates.".into(),
+                reason: format!(
+                    "this Windows offers security-key support version {}; a lock needs version 4, which comes with Windows 11",
+                    Self::api_version().unwrap_or(0)
+                ),
             })
         }
     }

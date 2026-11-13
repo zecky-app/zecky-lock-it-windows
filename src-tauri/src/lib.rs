@@ -142,20 +142,28 @@ fn source_for(
     }
 }
 
+/// Which keys this computer offers.
+///
+/// Runs on a worker thread: Windows refuses to wait for its answers on the
+/// window's own thread, and would quietly report "not available".
 #[tauri::command]
-fn availability() -> Availability {
-    #[cfg(windows)]
-    {
-        Availability {
-            device_hello: lockit_auth::keys::windows_hello::WindowsHelloKey::is_available(),
-            security_key: lockit_auth::keys::security_key::SecurityKey::is_available(),
-            passphrase: true,
+async fn availability() -> Availability {
+    tauri::async_runtime::spawn_blocking(|| {
+        #[cfg(windows)]
+        {
+            Availability {
+                device_hello: lockit_auth::keys::windows_hello::WindowsHelloKey::is_available(),
+                security_key: lockit_auth::keys::security_key::SecurityKey::is_available(),
+                passphrase: true,
+            }
         }
-    }
-    #[cfg(not(windows))]
-    {
-        Availability { device_hello: false, security_key: false, passphrase: true }
-    }
+        #[cfg(not(windows))]
+        {
+            Availability { device_hello: false, security_key: false, passphrase: true }
+        }
+    })
+    .await
+    .unwrap_or(Availability { device_hello: false, security_key: false, passphrase: true })
 }
 
 #[tauri::command]
@@ -243,7 +251,7 @@ async fn open_lock(
 ///
 /// The lock file is renamed, not erased, so a slip can be undone by hand.
 #[tauri::command]
-fn remove_practice_lock(app: AppHandle) -> CommandResult<()> {
+async fn remove_practice_lock(app: AppHandle) -> CommandResult<()> {
     let Some(vault) = read_vault(&app)? else {
         return Ok(());
     };
@@ -252,9 +260,17 @@ fn remove_practice_lock(app: AppHandle) -> CommandResult<()> {
     fs::rename(&path, &retired).map_err(|e| problem(format!("the lock file could not be set aside: {e}")))?;
 
     #[cfg(windows)]
-    for key in vault.keys.iter().filter(|key| key.kind == KeyKind::DeviceHello) {
-        // Best effort: a Hello key that is already gone is not a problem.
-        let _ = lockit_auth::keys::windows_hello::WindowsHelloKey::forget(key);
+    {
+        // On a worker thread, for the same reason as `availability`.
+        let hello_keys: Vec<_> =
+            vault.keys.iter().filter(|key| key.kind == KeyKind::DeviceHello).cloned().collect();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            for key in &hello_keys {
+                // Best effort: a Hello key that is already gone is not a problem.
+                let _ = lockit_auth::keys::windows_hello::WindowsHelloKey::forget(key);
+            }
+        })
+        .await;
     }
     #[cfg(not(windows))]
     let _ = vault;

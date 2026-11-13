@@ -11,6 +11,7 @@ fn main() {
         };
         println!("hello available: {}", WindowsHelloKey::is_available());
         println!("security key available: {}", SecurityKey::is_available());
+        println!("security key API version: {:?}", SecurityKey::api_version());
         match WindowsHelloKey::new().enroll("This PC") {
             Ok(_) => println!("hello enroll: ok"),
             Err(e) => println!("hello enroll: {e}"),

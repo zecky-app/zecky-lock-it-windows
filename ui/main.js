@@ -70,7 +70,7 @@ async function prepareSetup() {
   const available = await invoke("availability");
   const reasons = {
     device_hello: "Needs Windows Hello set up on this PC",
-    security_key: "Needs an up-to-date Windows",
+    security_key: "Needs Windows 11",
   };
   for (const row of setupForm.querySelectorAll(".key")) {
     const kind = row.dataset.kind;
