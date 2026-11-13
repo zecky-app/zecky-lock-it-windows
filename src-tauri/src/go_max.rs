@@ -89,7 +89,8 @@ fn get(slot: &Mutex<Option<String>>) -> Option<String> {
     slot.lock().ok().and_then(|guard| guard.clone())
 }
 
-/// The page's current view. Cheap enough to call every few seconds.
+/// The page's current view. Cheap enough to call every few seconds: it asks
+/// the node on this computer, with short timeouts, and never waits on a stop.
 #[tauri::command]
 pub fn go_max_view(app: AppHandle, slot: State<'_, GoMaxSlot>) -> GoMaxView {
     if slot.busy.load(Ordering::SeqCst) {
@@ -113,12 +114,18 @@ pub fn go_max_view(app: AppHandle, slot: State<'_, GoMaxSlot>) -> GoMaxView {
                 onion_problem: get(&slot.onion_problem),
             },
             Err(error) => {
-                // A program ended by itself: stop the other one and say why.
-                let mut ended = guard.take();
-                stop_onion(&slot);
-                if let Some(node) = ended.as_mut() {
-                    let _ = node.stop();
-                }
+                // A program ended by itself: stop the other one (off the
+                // window's thread, it can take a while) and say why.
+                let ended = guard.take();
+                let onion = slot.onion.lock().ok().and_then(|mut onion| onion.take());
+                std::thread::spawn(move || {
+                    if let Some(onion) = onion {
+                        onion.stop();
+                    }
+                    if let Some(mut node) = ended {
+                        let _ = node.stop();
+                    }
+                });
                 set(&slot.problem, Some(error.to_string()));
                 GoMaxView::Off { installed: installed(&app), problem: Some(error.to_string()) }
             }

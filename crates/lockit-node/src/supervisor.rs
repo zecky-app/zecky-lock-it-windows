@@ -52,9 +52,11 @@ impl NodePrograms {
 /// How a stop went.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct StopReport {
-    /// Zaino finished by itself (or was not running).
+    /// Zaino was running and finished by itself when asked (or Go Max was
+    /// not running at all).
     pub zaino_clean: bool,
-    /// Zakura finished by itself (or was not running).
+    /// Zakura was running and finished by itself when asked (or Go Max was
+    /// not running at all).
     pub zakura_clean: bool,
     /// How long the stop took, in whole seconds.
     pub seconds: u64,

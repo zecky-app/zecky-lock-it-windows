@@ -111,9 +111,11 @@ impl NodeRpc {
         let auth = format!("Basic {}", B64.encode(cookie.trim()));
         let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
 
+        // Short timeouts: the node is on this computer, and the Go Max page
+        // asks every few seconds from the window's thread.
         let agent = ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(2))
-            .timeout(Duration::from_secs(10))
+            .timeout_connect(Duration::from_secs(1))
+            .timeout(Duration::from_secs(3))
             .build();
         let response = match agent
             .post(&format!("http://{}/", self.address))

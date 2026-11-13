@@ -141,10 +141,12 @@ impl NodeProcess {
 
     /// Asks the program to stop cleanly, waits up to `grace`, then kills it.
     ///
-    /// Returns `true` if it stopped by itself.
+    /// Returns `true` only if it was running when asked and then stopped by
+    /// itself. A program that had already ended (for example after a crash)
+    /// does not count as a clean stop.
     pub fn stop(mut self, grace: Duration) -> Result<bool> {
         if let Ok(Some(_)) = self.child.try_wait() {
-            return Ok(true);
+            return Ok(false);
         }
         // A failed request is not fatal: the kill below still ends it.
         let _ = platform::request_stop(&self.child);
