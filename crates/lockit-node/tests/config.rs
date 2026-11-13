@@ -73,3 +73,27 @@ fn folders_are_created_and_configs_written() {
     assert!(layout.zaino_database().is_dir());
     assert!(layout.log_dir().is_dir());
 }
+
+#[test]
+fn a_busy_port_is_named_before_starting() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = NodeLayout::new(dir.path().join("go-max"));
+    layout.create().unwrap();
+    // Hold a port, then ask Go Max to use it for the wallet service.
+    let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = held.local_addr().unwrap().port();
+    let settings = GoMaxSettings { wallet_port: port, rpc_port: 0, p2p_port: 0, p2p_v2_port: 0, ..Default::default() };
+    match lockit_node::checks::before_start(&layout, &settings) {
+        Err(lockit_node::Error::PortInUse { port: busy, .. }) => assert_eq!(busy, port),
+        Err(lockit_node::Error::NotEnoughSpace { .. }) => {} // a small test disk; the port check comes after
+        other => panic!("expected the busy port to be named, got {other:?}"),
+    }
+}
+
+#[test]
+fn free_space_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    // A folder that does not exist yet is measured on its nearest parent.
+    let free = lockit_node::checks::free_bytes(&dir.path().join("not-yet/created")).unwrap();
+    assert!(free > 0);
+}

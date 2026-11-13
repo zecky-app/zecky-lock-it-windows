@@ -468,6 +468,20 @@ button:focus-visible {
   color: var(--text-quiet);
 }
 
+.facts .wide {
+  grid-column: 1 / -1;
+}
+
+.facts dd.onion {
+  margin-top: 4px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-quiet);
+  word-break: break-all;
+  user-select: text;
+}
+
 .facts dd {
   margin: 2px 0 0;
   font-weight: 550;

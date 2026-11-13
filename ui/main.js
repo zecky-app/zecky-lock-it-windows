@@ -297,6 +297,20 @@ function render(view) {
   $("fact-peers").textContent = numbers.format(status.peers);
   $("fact-wallet").textContent = view.wallet_ready ? "Ready" : "Waiting for blocks";
   $("fact-disk").textContent = gigabytes(status.size_on_disk);
+
+  const ONION_WORDS = {
+    starting: "Connecting to Tor",
+    reachable: "Ready",
+    degraded: "Ready, partly",
+    unreachable: "Not reachable right now",
+  };
+  if (view.onion) {
+    $("fact-onion").textContent = ONION_WORDS[view.onion.state] || view.onion.state;
+    $("fact-onion-address").textContent = view.onion.address;
+  } else {
+    $("fact-onion").textContent = view.onion_problem ? "Not available" : "Off";
+    $("fact-onion-address").textContent = view.onion_problem || "";
+  }
 }
 
 async function refreshGoMax() {

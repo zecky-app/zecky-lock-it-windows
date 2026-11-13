@@ -264,6 +264,16 @@ fn remove_practice_lock(app: AppHandle) -> CommandResult<()> {
 /// Starts the app.
 pub fn run() {
     let app = tauri::Builder::default()
+        // One Lock it at a time: a second copy would fight the first over the
+        // node, its ports and its database. Opening Lock it again just brings
+        // the running window to the front.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(go_max::GoMaxSlot::default())
         .invoke_handler(tauri::generate_handler![
             availability,

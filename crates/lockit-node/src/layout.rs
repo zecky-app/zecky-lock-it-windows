@@ -14,6 +14,8 @@ use crate::{Error, Result};
 ///   zakura\          chain state (pruned), node identity, RPC cookie
 ///   zaino\           Zaino's index
 ///   config\          zakurad.toml, zainod.toml (rewritten at every start)
+///   tor\state\       the onion service's key (keep), Tor state
+///   tor\cache\       Tor directory cache (safe to delete)
 ///   logs\            zakurad.log, zainod.log (previous run kept as *.old.log)
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,6 +73,17 @@ impl NodeLayout {
     /// Zaino's database.
     pub fn zaino_database(&self) -> PathBuf {
         self.root.join("zaino").join("db")
+    }
+
+    /// Tor's state: the onion service's key lives here and must be kept, so
+    /// the onion address stays the same across restarts.
+    pub fn tor_state(&self) -> PathBuf {
+        self.root.join("tor").join("state")
+    }
+
+    /// Tor's cache: directory information, safe to delete.
+    pub fn tor_cache(&self) -> PathBuf {
+        self.root.join("tor").join("cache")
     }
 
     /// The config folder.

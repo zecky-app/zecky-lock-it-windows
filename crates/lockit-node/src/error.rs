@@ -51,6 +51,24 @@ pub enum Error {
     #[error("the node did not answer: {0}")]
     Rpc(String),
 
+    /// Not enough free disk space for the node.
+    #[error("Go Max needs about {needed_gb} GB free on this drive; {free_gb} GB is free")]
+    NotEnoughSpace {
+        /// Gigabytes needed.
+        needed_gb: u64,
+        /// Gigabytes free.
+        free_gb: u64,
+    },
+
+    /// Another program is using one of the node's ports.
+    #[error("another program is using port {port} ({what}). Is another node or another copy of Lock it running?")]
+    PortInUse {
+        /// The port.
+        port: u16,
+        /// What Go Max needs it for.
+        what: &'static str,
+    },
+
     /// Go Max is already running.
     #[error("Go Max is already running")]
     AlreadyRunning,

@@ -6,3 +6,4 @@ node_modules/
 
 # Node programs are built by CI or copied in for a local build, never committed.
 src-tauri/node/
+_to_delete/

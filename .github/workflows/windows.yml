@@ -39,7 +39,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --locked -p lockit-auth -p lockit-node
+      - run: cargo test --locked -p lockit-auth -p lockit-node -p lockit-tor
 
   node:
     name: Node for Windows (GNU)
@@ -123,6 +123,9 @@ jobs:
           # and stopping, not syncing, and must not depend on the network.
           GO_MAX_INITIAL_PEERS: 127.0.0.1:18999
         run: |
+          # The test syncs nothing, so skip the 25 GB first-start check: a
+          # non-empty state folder makes Go Max ask only for 2 GB headroom.
+          mkdir -p "$RUNNER_TEMP/go-max/zakura/state/ci" && touch "$RUNNER_TEMP/go-max/zakura/state/ci/.keep"
           target/release/examples/go_max_smoke.exe node/zakurad.exe node/zainod.exe "$RUNNER_TEMP/go-max" 15 3 | tee smoke.txt
           grep -q "RESULT every stop was clean" smoke.txt
           grep -q "received Ctrl-C" "$RUNNER_TEMP/go-max/logs/zakurad.log"

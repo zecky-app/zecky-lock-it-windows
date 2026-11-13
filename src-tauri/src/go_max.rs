@@ -3,6 +3,9 @@
 //! The node programs ship inside the app, in its resource folder under
 //! `node\` (`zakurad.exe`, `zainod.exe`). The chain state lives in the app's
 //! local data folder under `go-max\`, never in a roaming profile.
+//!
+//! While Go Max runs, an onion service gives the wallet port a private
+//! address a paired phone can reach from anywhere (see `lockit_tor`).
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -10,8 +13,18 @@ use std::sync::{
 };
 
 use lockit_node::{GoMax, GoMaxSettings, NodeLayout, NodePrograms, NodeStatus};
+use lockit_tor::{OnionAccess, OnionState};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
+
+/// Phone access over Tor, as the page shows it.
+#[derive(Clone, Serialize)]
+pub struct OnionView {
+    /// The onion address.
+    pub address: String,
+    /// How it is doing.
+    pub state: OnionState,
+}
 
 /// What the Go Max page needs to know at a glance.
 #[derive(Clone, Serialize)]
@@ -32,6 +45,10 @@ pub enum GoMaxView {
         status: Option<NodeStatus>,
         /// Whether wallets can connect yet.
         wallet_ready: bool,
+        /// Phone access over Tor, if it started.
+        onion: Option<OnionView>,
+        /// Why phone access is missing, if it failed to start.
+        onion_problem: Option<String>,
     },
     /// Stopping.
     Stopping,
@@ -41,6 +58,8 @@ pub enum GoMaxView {
 #[derive(Default)]
 pub struct GoMaxSlot {
     node: Mutex<Option<GoMax>>,
+    onion: Mutex<Option<OnionAccess>>,
+    onion_problem: Mutex<Option<String>>,
     busy: AtomicBool,
     step: Mutex<Option<String>>,
     problem: Mutex<Option<String>>,
@@ -85,10 +104,18 @@ pub fn go_max_view(app: AppHandle, slot: State<'_, GoMaxSlot>) -> GoMaxView {
     };
     match guard.as_mut() {
         Some(node) => match node.check() {
-            Ok(()) => GoMaxView::On { status: node.status().ok(), wallet_ready: node.wallet_ready() },
+            Ok(()) => GoMaxView::On {
+                status: node.status().ok(),
+                wallet_ready: node.wallet_ready(),
+                onion: slot.onion.lock().ok().and_then(|guard| {
+                    guard.as_ref().map(|onion| OnionView { address: onion.address().to_owned(), state: onion.state() })
+                }),
+                onion_problem: get(&slot.onion_problem),
+            },
             Err(error) => {
                 // A program ended by itself: stop the other one and say why.
                 let mut ended = guard.take();
+                stop_onion(&slot);
                 if let Some(node) = ended.as_mut() {
                     let _ = node.stop();
                 }
@@ -135,6 +162,20 @@ pub fn go_max_start(app: AppHandle, slot: State<'_, GoMaxSlot>) -> Result<(), St
         });
         match started {
             Ok(()) => {
+                // Phone access over Tor. If it cannot start, Go Max still runs
+                // for this computer, and the page says why.
+                set(&slot.step, Some("Making your private address".into()));
+                let layout = node.layout().clone();
+                let port = node.settings().wallet_port;
+                match OnionAccess::start(&layout.tor_state(), &layout.tor_cache(), port) {
+                    Ok(onion) => {
+                        if let Ok(mut guard) = slot.onion.lock() {
+                            *guard = Some(onion);
+                        }
+                        set(&slot.onion_problem, None);
+                    }
+                    Err(error) => set(&slot.onion_problem, Some(error.to_string())),
+                }
                 if let Ok(mut guard) = slot.node.lock() {
                     *guard = Some(node);
                 }
@@ -163,6 +204,7 @@ pub fn go_max_stop(app: AppHandle, slot: State<'_, GoMaxSlot>) -> Result<(), Str
     let handle = app.clone();
     std::thread::spawn(move || {
         let slot = handle.state::<GoMaxSlot>();
+        stop_onion(&slot);
         match node.stop() {
             Ok(report) if !report.clean() => set(
                 &slot.problem,
@@ -178,9 +220,17 @@ pub fn go_max_stop(app: AppHandle, slot: State<'_, GoMaxSlot>) -> Result<(), Str
     Ok(())
 }
 
+fn stop_onion(slot: &GoMaxSlot) {
+    let onion = slot.onion.lock().ok().and_then(|mut guard| guard.take());
+    if let Some(onion) = onion {
+        onion.stop();
+    }
+}
+
 /// Stops Go Max as the app closes. Blocks until both programs have ended.
 pub fn stop_on_exit(app: &AppHandle) {
     if let Some(slot) = app.try_state::<GoMaxSlot>() {
+        stop_onion(&slot);
         let node = slot.node.lock().ok().and_then(|mut guard| guard.take());
         if let Some(mut node) = node {
             let _ = node.stop();

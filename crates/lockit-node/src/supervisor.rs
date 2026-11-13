@@ -107,6 +107,7 @@ impl GoMax {
             return Err(Error::AlreadyRunning);
         }
         self.layout.create()?;
+        crate::checks::before_start(&self.layout, &self.settings)?;
         self.settings.write_configs(&self.layout)?;
         // A cookie left from an earlier run is stale; Zakura writes a new one.
         let _ = std::fs::remove_file(self.layout.cookie_file());

@@ -19,12 +19,14 @@
 //! * writes both config files from a few calm choices ([`GoMaxSettings`]),
 //! * starts and stops both programs ([`GoMax`]), including the clean stop
 //!   that Windows makes awkward (see [`process`]),
+//! * checks free disk space and ports before starting ([`checks`]),
 //! * reads the node's status for the Go Max page ([`NodeStatus`]).
 //!
 //! Nothing here holds keys or wallet data.
 
 #![warn(missing_docs)]
 
+pub mod checks;
 mod config;
 mod error;
 mod layout;
