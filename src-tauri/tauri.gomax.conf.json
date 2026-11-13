@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "resources": {
+      "node/zakurad.exe": "node/zakurad.exe",
+      "node/zainod.exe": "node/zainod.exe",
+      "node/SHA256SUMS.txt": "node/SHA256SUMS.txt",
+      "node/SOURCES.txt": "node/SOURCES.txt"
+    }
+  }
+}

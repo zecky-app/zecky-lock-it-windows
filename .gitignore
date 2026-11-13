@@ -3,4 +3,6 @@ src-tauri/gen/
 node_modules/
 *.log
 .DS_Store
-_to_delete/
+
+# Node programs are built by CI or copied in for a local build, never committed.
+src-tauri/node/

@@ -91,6 +91,7 @@ main {
   flex-direction: column;
   padding: 8px 28px 28px;
   min-height: 0;
+  overflow-y: auto;
 }
 
 .view {
@@ -357,6 +358,120 @@ button:focus-visible {
   font-variant-numeric: lining-nums tabular-nums;
   color: var(--gold);
   user-select: text;
+}
+
+/* Go Max. */
+
+.go-max-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 14px 18px;
+  background: var(--ink-raised);
+  border: 1px solid var(--gold);
+  border-radius: 14px;
+  color: var(--text);
+  text-align: left;
+}
+
+.go-max-entry-name {
+  font-family: var(--serif);
+  font-size: 20px;
+  color: var(--gold);
+}
+
+.go-max-entry-note {
+  font-size: 13px;
+  color: var(--text-quiet);
+}
+
+.node-ring {
+  position: relative;
+  align-self: center;
+  width: 168px;
+  height: 168px;
+  flex: none;
+}
+
+.node-ring svg {
+  width: 100%;
+  height: 100%;
+}
+
+.ring-track {
+  fill: none;
+  stroke: var(--ink-line);
+  stroke-width: 6;
+}
+
+.ring-progress {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 6;
+  stroke-linecap: round;
+  transition: stroke-dasharray 600ms ease;
+}
+
+.node-ring[data-state="off"] .ring-progress {
+  stroke: transparent;
+}
+
+.node-ring[data-state="starting"] .ring-progress,
+.node-ring[data-state="stopping"] .ring-progress {
+  opacity: 0.5;
+}
+
+.node-percent {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--serif);
+  font-size: 34px;
+  color: var(--gold);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+#view-go-max {
+  gap: 10px;
+}
+
+#view-go-max .lead,
+.center {
+  text-align: center;
+}
+
+#view-go-max .quiet {
+  margin-top: -2px;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 4px 0 0;
+}
+
+.facts div {
+  padding: 10px 14px;
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line);
+  border-radius: 12px;
+}
+
+.facts dt {
+  font-size: 12px;
+  color: var(--text-quiet);
+}
+
+.facts dd {
+  margin: 2px 0 0;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (prefers-reduced-motion: reduce) {

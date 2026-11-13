@@ -1,0 +1,162 @@
+# Zecky Lock it for Windows: build and check.
+#
+# Runs on every push. Nothing here signs, publishes or uploads anywhere but
+# to the run's own artifacts.
+#
+#   lock            the lock and Go Max crates' tests (Linux, fast)
+#   node            Zakura and Zaino for Windows, built with MinGW (GNU) on
+#                   Linux, C++ runtime linked statically; SHA-256 of each
+#   node-msvc       the same with Microsoft's toolchain on Windows. Expected
+#                   to fail until Zakura's RocksDB fork links with MSVC; it
+#                   is here to tell us when it does. Never blocks the rest.
+#   go-max-windows  on a real Windows runner: start Zakura and Zaino, read the
+#                   status, stop them cleanly with Ctrl-C, three times
+#   app             the Lock it app for Windows (Tauri), with the node inside
+
+name: Windows
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Pinned upstream sources. Change these on purpose only.
+  ZAKURA_REPO: https://github.com/zakura-core/zakura.git
+  ZAKURA_REF: v1.8.5
+  ZAINO_REPO: https://github.com/zingolabs/zaino.git
+  ZAINO_REF: 84e115affdac40808bc141fa56c8014f4705fd95
+
+jobs:
+  lock:
+    name: Lock and Go Max tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked -p lockit-auth -p lockit-node
+
+  node:
+    name: Node for Windows (GNU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - name: MinGW with POSIX threads
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-mingw-w64-x86-64-posix gcc-mingw-w64-x86-64-posix
+      - name: Fetch pinned sources
+        run: |
+          git clone "$ZAKURA_REPO" zakura && git -C zakura checkout --detach "$ZAKURA_REF"
+          git clone "$ZAINO_REPO" zaino && git -C zaino checkout --detach "$ZAINO_REF"
+      - name: Build
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc-posix
+          CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc-posix
+          CXX_x86_64_pc_windows_gnu: x86_64-w64-mingw32-g++-posix
+          AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
+          # One copy of the C++ runtime and its thread library. Without this
+          # Zakura crashes as it opens its database (see experiment/README.md).
+          CXXSTDLIB_x86_64_pc_windows_gnu: "static:-bundle=stdc++"
+        run: |
+          (cd zakura && cargo build --release --locked -p zakura --target x86_64-pc-windows-gnu)
+          (cd zaino && cargo build --release --locked -p zainod --target x86_64-pc-windows-gnu)
+      - name: Collect
+        run: |
+          mkdir node
+          cp zakura/target/x86_64-pc-windows-gnu/release/zakurad.exe node/
+          cp zaino/target/x86_64-pc-windows-gnu/release/zainod.exe node/
+          x86_64-w64-mingw32-strip node/*.exe
+          echo "Imported DLLs (must not list libstdc++, libgcc or libwinpthread):"
+          for f in node/*.exe; do x86_64-w64-mingw32-objdump -p "$f" | grep 'DLL Name' | sort -u; done
+          if x86_64-w64-mingw32-objdump -p node/*.exe | grep -i -E 'libstdc|libgcc|libwinpthread'; then
+            echo "::error::a node program still needs a MinGW DLL"; exit 1
+          fi
+          (cd node && sha256sum *.exe > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          printf 'zakura %s\nzaino %s\n' "$ZAKURA_REF" "$ZAINO_REF" > node/SOURCES.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-windows-gnu
+          path: node/
+
+  node-msvc:
+    name: Node for Windows (MSVC, expected to fail)
+    runs-on: windows-latest
+    timeout-minutes: 120
+    continue-on-error: true
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Zakura with MSVC
+        shell: bash
+        run: |
+          git clone "$ZAKURA_REPO" zakura && git -C zakura checkout --detach "$ZAKURA_REF"
+          cd zakura && cargo build --release --locked -p zakura
+
+  go-max-windows:
+    name: Go Max start and clean stop on Windows
+    needs: node
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: node-windows-gnu
+          path: node
+      - name: Build the smoke test
+        run: cargo build --locked --release --example go_max_smoke -p lockit-node
+      - name: Three rounds of start, status and stop
+        shell: bash
+        env:
+          # A local address instead of DNS seeds: the test is about starting
+          # and stopping, not syncing, and must not depend on the network.
+          GO_MAX_INITIAL_PEERS: 127.0.0.1:18999
+        run: |
+          target/release/examples/go_max_smoke.exe node/zakurad.exe node/zainod.exe "$RUNNER_TEMP/go-max" 15 3 | tee smoke.txt
+          grep -q "RESULT every stop was clean" smoke.txt
+          grep -q "received Ctrl-C" "$RUNNER_TEMP/go-max/logs/zakurad.log"
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-max-windows-logs
+          path: ${{ runner.temp }}/go-max/logs/
+
+  app:
+    name: Lock it app for Windows
+    needs: node
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: node-windows-gnu
+          path: src-tauri/node
+      - name: Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+      - name: Build the installer, node inside
+        run: cargo tauri build --config src-tauri/tauri.gomax.conf.json
+      - name: Checksums
+        shell: bash
+        run: |
+          cd target/release/bundle/nsis
+          sha256sum *.exe | tee SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lock-it-windows-installer-unsigned
+          path: target/release/bundle/nsis/

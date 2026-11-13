@@ -1,9 +1,14 @@
 //! Zecky Lock it for Windows: the app shell.
 //!
-//! This first slice holds access and authorization only: setting up a lock
-//! with one to three keys, and opening it again. There is no wallet, no
-//! network and no funds in this build. The lock protects a random
-//! *practice secret*, so the keys can be tried on a real PC without risk.
+//! This build holds two things:
+//!
+//! * the lock: setting up a lock with one to three keys, and opening it
+//!   again. It protects a random *practice secret*, so the keys can be tried
+//!   on a real PC without risk;
+//! * Go Max: starting, watching and stopping the owner's own pruned node
+//!   (see `go_max`).
+//!
+//! There is no wallet and there are no funds in this build.
 //!
 //! Rules this file keeps:
 //!
@@ -11,6 +16,8 @@
 //!   short fingerprint, never the secret itself.
 //! * System prompts (Windows Hello, "touch your security key") block, so
 //!   they run on a worker thread and never freeze the window.
+
+mod go_max;
 
 use std::{fs, path::PathBuf};
 
@@ -256,14 +263,26 @@ fn remove_practice_lock(app: AppHandle) -> CommandResult<()> {
 
 /// Starts the app.
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
+        .manage(go_max::GoMaxSlot::default())
         .invoke_handler(tauri::generate_handler![
             availability,
             lock_state,
             create_practice_lock,
             open_lock,
-            remove_practice_lock
+            remove_practice_lock,
+            go_max::go_max_view,
+            go_max::go_max_start,
+            go_max::go_max_stop
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("Zecky Lock it could not start");
+
+    app.run(|handle, event| {
+        // Never leave the node running after the window is gone, and give it
+        // the chance to stop cleanly first.
+        if let tauri::RunEvent::Exit = event {
+            go_max::stop_on_exit(handle);
+        }
+    });
 }

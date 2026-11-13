@@ -2,15 +2,17 @@
 
 The same calm, self-custody Zcash wallet as Lock it for Mac. Savings, Safety, Dignity, Quiet.
 
-This repository is at its first step: **access and authorization**. There is no wallet, no
-node and no network code here yet.
+Two pieces are here so far: **the lock** (who may release funds) and **Go Max** (starting,
+watching and stopping your own pruned node). There is no wallet yet.
 
 ## What is here
 
 | Path | What it is |
 |---|---|
 | `crates/lockit-auth` | The lock: a sealed vault that opens only with every key the owner chose (1 to 3), and the three kinds of key: Windows Hello (TPM), a FIDO2 security key, a passphrase. |
-| `src-tauri` | The app shell (Tauri 2, Rust). Commands to set up, open and remove a *practice lock*. |
+| `crates/lockit-node` | Go Max: writes the Zakura and Zaino configs, starts both, reads the node's status, and stops both cleanly (on Windows through a small Ctrl-C helper, see `process.rs`). |
+| `src-tauri` | The app shell (Tauri 2, Rust). Commands for the *practice lock* and for Go Max. |
+| `.github/workflows/windows.yml` | Builds the node for Windows, tests the clean stop on a real Windows runner, builds the unsigned installer. Runs once the repo is pushed. |
 | `ui` | The window: plain HTML, CSS and JavaScript, no build step, no remote content. Newsreader and Inter are bundled. |
 
 ## Practice build
@@ -19,10 +21,34 @@ The app seals a random *practice secret*, not a wallet. It exists so the keys ca
 on a real Windows PC without any risk: set up a lock, close the app, open it again, and
 check that the same eight-character fingerprint comes back.
 
+## Go Max
+
+The node programs are not in this repository. CI builds them from pinned upstream
+sources (see the workflow) and the installer carries them in `node\`. For a local build,
+copy `zakurad.exe`, `zainod.exe`, `SHA256SUMS.txt` and `SOURCES.txt` into
+`src-tauri/node/` and build with:
+
+```
+cargo tauri build --config src-tauri/tauri.gomax.conf.json
+```
+
+Go Max is private by default: the node listens on this computer only, so other nodes
+cannot connect in, Windows never shows a firewall prompt, and the RPC and wallet ports
+stay on `127.0.0.1`. The chain state lives in `%LOCALAPPDATA%`, never roaming.
+
+To try the start and stop logic by itself:
+
+```
+cargo run --example go_max_smoke -p lockit-node -- zakurad.exe zainod.exe C:\go-max-test 20 3
+```
+
 ## Status, honestly
 
 - The vault, the passphrase key and the key policy are covered by tests that run anywhere:
-  `cargo test -p lockit-auth`.
+  `cargo test -p lockit-auth`. Go Max's config writing: `cargo test -p lockit-node`.
+- Go Max's start, status and clean stop have run against the real Zakura and Zaino:
+  natively on Linux, and as Windows programs under Wine. Not yet on real Windows; the
+  CI job `go-max-windows` does that once the repo is pushed.
 - The Windows Hello and security-key code type-checks for Windows, but has **never been run
   on a real Windows PC**. Do not protect funds with it until it has been tested on hardware
   and reviewed by someone independent.

@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 lockit-auth = { path = "../crates/lockit-auth" }
+lockit-node = { path = "../crates/lockit-node" }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 tauri = { version = "2", features = [] }

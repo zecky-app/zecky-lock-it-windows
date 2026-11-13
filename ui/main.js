@@ -21,6 +21,7 @@ const views = {
   setup: $("view-setup"),
   locked: $("view-locked"),
   open: $("view-open"),
+  goMax: $("view-go-max"),
 };
 
 let lockKeys = [];
@@ -30,6 +31,8 @@ function show(name) {
   for (const [key, element] of Object.entries(views)) {
     element.hidden = key !== name;
   }
+  if (name === "goMax") startWatching();
+  else stopWatching();
 }
 
 function say(element, text, calm = false) {
@@ -198,6 +201,143 @@ function showOpen(fingerprint) {
 }
 
 $("lock-again").addEventListener("click", () => refreshState());
+
+// ---------- Go Max ----------
+
+const nodeRing = $("node-ring");
+const ringProgress = $("ring-progress");
+const nodePercent = $("node-percent");
+const nodeState = $("node-state");
+const nodeLead = $("node-lead");
+const nodeFacts = $("node-facts");
+const nodeMessage = $("node-message");
+const nodeToggle = $("node-toggle");
+
+const LEAD_OFF = "Your own Zcash node, on this PC. About 20 GB, and a few hours to catch up the first time.";
+
+let watchTimer = null;
+let lastView = null;
+
+const numbers = new Intl.NumberFormat("en-US");
+
+function gigabytes(bytes) {
+  return bytes > 0 ? `${(bytes / 1e9).toFixed(1)} GB` : "Nothing yet";
+}
+
+function setRing(state, fraction) {
+  nodeRing.dataset.state = state;
+  const percent = Math.max(0, Math.min(100, fraction * 100));
+  ringProgress.setAttribute("stroke-dasharray", `${percent} 100`);
+}
+
+function render(view) {
+  lastView = view;
+  nodeMessage.textContent = "";
+  nodeToggle.disabled = false;
+
+  if (view.state === "off") {
+    setRing("off", 0);
+    nodePercent.textContent = "";
+    nodeState.textContent = "Off";
+    nodeLead.textContent = LEAD_OFF;
+    nodeFacts.hidden = true;
+    nodeToggle.textContent = "Turn on Go Max";
+    nodeToggle.disabled = !view.installed;
+    if (!view.installed) {
+      nodeMessage.textContent = "This build has no node programs inside.";
+      nodeMessage.classList.add("calm");
+    } else if (view.problem) {
+      nodeMessage.textContent = view.problem;
+      nodeMessage.classList.remove("calm");
+    }
+    return;
+  }
+
+  if (view.state === "starting" || view.state === "stopping") {
+    setRing(view.state, 1);
+    nodePercent.textContent = "";
+    nodeState.textContent = view.state === "starting" ? "Starting" : "Stopping";
+    nodeLead.textContent = view.state === "starting" ? `${view.step}.` : "Letting the node finish its work.";
+    nodeFacts.hidden = true;
+    nodeToggle.textContent = view.state === "starting" ? "Starting…" : "Stopping…";
+    nodeToggle.disabled = true;
+    return;
+  }
+
+  // Running.
+  const status = view.status;
+  nodeToggle.textContent = "Turn off Go Max";
+  nodeFacts.hidden = !status;
+  if (!status) {
+    setRing("on", 0);
+    nodePercent.textContent = "";
+    nodeState.textContent = "On";
+    nodeLead.textContent = "The node is not answering right now.";
+    return;
+  }
+
+  const caughtUp = status.estimated_height > 0 && status.height + 2 >= status.estimated_height;
+  const fraction = status.estimated_height > 0 ? status.height / status.estimated_height : status.progress;
+  setRing("on", caughtUp ? 1 : fraction);
+  nodePercent.textContent = caughtUp ? "" : `${Math.floor(fraction * 100)}%`;
+
+  if (status.peers === 0 && status.height === 0) {
+    nodeState.textContent = "Waiting";
+    nodeLead.textContent = "Looking for other Zcash nodes. Check that this PC is online.";
+  } else if (caughtUp) {
+    nodeState.textContent = "Yours";
+    nodeLead.textContent = "Caught up. Lock it reads from your own node.";
+  } else {
+    nodeState.textContent = "Catching up";
+    nodeLead.textContent = "Checking every block since the beginning. You can keep using this PC.";
+  }
+
+  const network = status.estimated_height > 0 ? ` of ${numbers.format(status.estimated_height)}` : "";
+  $("fact-height").textContent = `${numbers.format(status.height)}${network}`;
+  $("fact-peers").textContent = numbers.format(status.peers);
+  $("fact-wallet").textContent = view.wallet_ready ? "Ready" : "Waiting for blocks";
+  $("fact-disk").textContent = gigabytes(status.size_on_disk);
+}
+
+async function refreshGoMax() {
+  try {
+    render(await invoke("go_max_view"));
+  } catch (problem) {
+    nodeMessage.textContent = describe(problem);
+  }
+}
+
+function startWatching() {
+  if (watchTimer) return;
+  refreshGoMax();
+  watchTimer = setInterval(refreshGoMax, 3000);
+}
+
+function stopWatching() {
+  clearInterval(watchTimer);
+  watchTimer = null;
+}
+
+if (window.__TAURI__.event) {
+  window.__TAURI__.event.listen("go-max", () => {
+    if (!views.goMax.hidden) refreshGoMax();
+  });
+}
+
+nodeToggle.addEventListener("click", async () => {
+  nodeToggle.disabled = true;
+  const command = lastView && lastView.state === "on" ? "go_max_stop" : "go_max_start";
+  try {
+    await invoke(command);
+  } catch (problem) {
+    nodeMessage.textContent = describe(problem);
+    nodeMessage.classList.remove("calm");
+  }
+  refreshGoMax();
+});
+
+$("go-max-open").addEventListener("click", () => show("goMax"));
+$("go-max-back").addEventListener("click", showLocked);
 
 // ---------- Start ----------
 

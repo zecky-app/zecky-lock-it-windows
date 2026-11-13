@@ -12,7 +12,7 @@
     <span class="product">Lock it</span>
   </header>
 
-  <p class="practice" role="note">Practice build. No wallet, no funds, no network.</p>
+  <p class="practice" role="note">Practice build. No wallet, no funds.</p>
 
   <main>
     <!-- Shown while the app reads its state. -->
@@ -97,6 +97,12 @@
       </form>
 
       <p id="locked-message" class="message" role="status" aria-live="polite"></p>
+
+      <button type="button" class="go-max-entry" id="go-max-open">
+        <span class="go-max-entry-name">Go Max</span>
+        <span class="go-max-entry-note" id="go-max-entry-note">Your own Zcash node, on this PC</span>
+      </button>
+
       <button type="button" class="link" id="remove-lock">Remove this practice lock</button>
     </section>
 
@@ -116,6 +122,31 @@
       <p class="fingerprint"><span>Fingerprint</span> <code id="open-fingerprint"></code></p>
       <p class="quiet">You should see the same eight characters every time this lock opens.</p>
       <button type="button" class="primary" id="lock-again">Lock it again</button>
+    </section>
+    <!-- Go Max: the owner's own node. -->
+    <section id="view-go-max" class="view" hidden>
+      <div class="node-ring" id="node-ring" data-state="off" aria-hidden="true">
+        <svg viewBox="0 0 240 240">
+          <circle cx="120" cy="120" r="104" class="ring-track"/>
+          <circle cx="120" cy="120" r="104" class="ring-progress" id="ring-progress"
+                  pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 120 120)"/>
+        </svg>
+        <span class="node-percent" id="node-percent"></span>
+      </div>
+      <h1 class="state" id="node-state">Off</h1>
+      <p class="lead" id="node-lead">Your own Zcash node, on this PC. About 20 GB, and a few hours to catch up the first time.</p>
+
+      <dl class="facts" id="node-facts" hidden>
+        <div><dt>Checked up to</dt><dd id="fact-height"></dd></div>
+        <div><dt>Peers</dt><dd id="fact-peers"></dd></div>
+        <div><dt>Wallet service</dt><dd id="fact-wallet"></dd></div>
+        <div><dt>On disk</dt><dd id="fact-disk"></dd></div>
+      </dl>
+
+      <p id="node-message" class="message" role="status" aria-live="polite"></p>
+      <button type="button" class="primary" id="node-toggle">Turn on Go Max</button>
+      <p class="quiet center">Private: other nodes cannot connect to this PC.</p>
+      <button type="button" class="link" id="go-max-back">Back to the lock</button>
     </section>
   </main>
 
