@@ -1,6 +1,7 @@
-// Zecky Lock it: the window. It draws and asks; it never holds a secret.
-// The only sensitive thing that passes through here is a passphrase on its
-// way to the Rust side, and the fields are cleared as soon as it is sent.
+// Zecky Lock it: the window. It draws and asks; it never holds a key.
+// The 24 words pass through here once, to be written down (or typed in for a
+// restore), and a passphrase on its way to the Rust side. Fields are cleared
+// as soon as they are sent.
 
 "use strict";
 
@@ -18,21 +19,30 @@ const $ = (id) => document.getElementById(id);
 
 const views = {
   loading: $("view-loading"),
+  welcome: $("view-welcome"),
+  words: $("view-words"),
+  check: $("view-check"),
+  restore: $("view-restore"),
   setup: $("view-setup"),
-  locked: $("view-locked"),
-  open: $("view-open"),
+  home: $("view-home"),
+  receive: $("view-receive"),
+  send: $("view-send"),
   goMax: $("view-go-max"),
 };
 
-let lockKeys = [];
 let busy = false;
+let current = "loading";
 
 function show(name) {
+  current = name;
   for (const [key, element] of Object.entries(views)) {
     element.hidden = key !== name;
   }
   if (name === "goMax") startWatching();
   else stopWatching();
+  if (name === "home") startHome();
+  else stopHome();
+  window.scrollTo(0, 0);
 }
 
 function say(element, text, calm = false) {
@@ -47,7 +57,135 @@ function describe(problem) {
   return String(problem);
 }
 
-// ---------- Setting up ----------
+const numbers = new Intl.NumberFormat("en-US");
+
+function zec(zats) {
+  const whole = Math.floor(zats / 1e8);
+  const fraction = String(zats % 1e8).padStart(8, "0").replace(/0+$/, "");
+  return `${numbers.format(whole)}${fraction ? "." + fraction : ""} ZEC`;
+}
+
+// ---------- Creating: the words ----------
+
+let words = [];
+let madeIn = null;
+
+$("welcome-create").addEventListener("click", async () => {
+  try {
+    words = await invoke("wallet_new_words");
+    madeIn = null;
+    const list = $("words-list");
+    list.textContent = "";
+    for (const word of words) {
+      const item = document.createElement("li");
+      item.textContent = word;
+      list.append(item);
+    }
+    show("words");
+  } catch (problem) {
+    alertProblem(problem);
+  }
+});
+
+function forgetWords() {
+  words = [];
+  $("words-list").textContent = "";
+  $("check-form").textContent = "";
+  $("restore-words").value = "";
+  invoke("wallet_forget_words");
+}
+
+$("words-back").addEventListener("click", () => {
+  forgetWords();
+  show("welcome");
+});
+
+let checkPositions = [];
+
+$("words-done").addEventListener("click", () => {
+  const positions = new Set();
+  while (positions.size < 3) positions.add(Math.floor(Math.random() * 24));
+  checkPositions = [...positions].sort((a, b) => a - b);
+  const form = $("check-form");
+  form.textContent = "";
+  for (const position of checkPositions) {
+    const label = document.createElement("label");
+    label.className = "field";
+    const span = document.createElement("span");
+    span.textContent = `Word ${position + 1}`;
+    const input = document.createElement("input");
+    input.spellcheck = false;
+    input.autocomplete = "off";
+    input.dataset.position = position;
+    label.append(span, input);
+    form.append(label);
+  }
+  // The words leave the screen while checking.
+  $("words-list").textContent = "";
+  say($("check-message"), "");
+  show("check");
+  form.querySelector("input").focus();
+});
+
+$("check-back").addEventListener("click", () => {
+  const list = $("words-list");
+  for (const word of words) {
+    const item = document.createElement("li");
+    item.textContent = word;
+    list.append(item);
+  }
+  show("words");
+});
+
+$("check-submit").addEventListener("click", () => {
+  const inputs = [...$("check-form").querySelectorAll("input")];
+  const right = inputs.every((input) => input.value.trim().toLowerCase() === words[Number(input.dataset.position)]);
+  if (!right) {
+    say($("check-message"), "Not quite. Look at your paper again.");
+    return;
+  }
+  for (const input of inputs) input.value = "";
+  words = [];
+  openSetup();
+});
+
+// ---------- Restoring ----------
+
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+(function fillDates() {
+  const month = $("restore-month");
+  MONTHS.forEach((name, index) => month.append(new Option(name, index + 1)));
+  const year = $("restore-year");
+  const now = new Date();
+  for (let y = now.getFullYear(); y >= 2018; y -= 1) year.append(new Option(String(y), y));
+  month.value = String(now.getMonth() + 1);
+})();
+
+$("welcome-restore").addEventListener("click", () => {
+  $("restore-words").value = "";
+  say($("restore-message"), "");
+  show("restore");
+  $("restore-words").focus();
+});
+
+$("restore-back").addEventListener("click", () => {
+  forgetWords();
+  show("welcome");
+});
+
+$("restore-submit").addEventListener("click", async () => {
+  try {
+    await invoke("wallet_use_words", { words: $("restore-words").value });
+    $("restore-words").value = "";
+    madeIn = { year: Number($("restore-year").value), month: Number($("restore-month").value) };
+    openSetup();
+  } catch (problem) {
+    say($("restore-message"), describe(problem));
+  }
+});
+
+// ---------- Choosing the keys ----------
 
 const setupForm = $("setup-form");
 const setupSubmit = $("setup-submit");
@@ -63,28 +201,37 @@ function chosenKinds() {
 function refreshSetup() {
   const kinds = chosenKinds();
   setupPassphrase.hidden = !kinds.includes("passphrase");
-  setupSubmit.disabled = busy || kinds.length === 0;
+  // A security key checks that it is you but gives no secret (as on Lock it
+  // Mac): a lock also needs Windows Hello or a passphrase.
+  const onlyCheck = kinds.length > 0 && kinds.every((kind) => kind === "security_key");
+  setupSubmit.disabled = busy || kinds.length === 0 || onlyCheck;
+  setupSubmit.title = onlyCheck ? "Add Windows Hello or a passphrase too" : "";
 }
 
-async function prepareSetup() {
+async function openSetup() {
+  setupForm.reset();
+  say(setupMessage, "");
   const available = await invoke("availability");
   const reasons = {
     device_hello: "Needs Windows Hello set up on this PC",
-    security_key: "Needs Windows 11",
+    security_key: "Needs Windows 10 version 1903 or later",
   };
   for (const row of setupForm.querySelectorAll(".key")) {
     const kind = row.dataset.kind;
     const box = row.querySelector("input");
-    if (!available[kind]) {
-      box.checked = false;
-      box.disabled = true;
-      row.querySelector("[data-note]").textContent = reasons[kind] || "Not available here";
-    }
+    box.disabled = !available[kind];
+    if (!available[kind]) row.querySelector("[data-note]").textContent = reasons[kind] || "Not available here";
   }
   refreshSetup();
+  show("setup");
 }
 
 setupForm.addEventListener("change", refreshSetup);
+
+$("setup-back").addEventListener("click", () => {
+  forgetWords();
+  show("welcome");
+});
 
 setupForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -112,14 +259,14 @@ setupForm.addEventListener("submit", async (event) => {
 
   busy = true;
   refreshSetup();
-  say(setupMessage, "Follow the prompts from Windows. Each key is asked in turn.", true);
+  say(setupMessage, "Asking the network where to start, then each key in turn. Follow the prompts from Windows.", true);
   try {
-    const opened = await invoke("create_practice_lock", { keys });
+    await invoke("wallet_create", { keys, madeIn });
     newPassphrase.value = "";
     newPassphraseAgain.value = "";
+    madeIn = null;
     say(setupMessage, "");
-    showOpen(opened.fingerprint);
-    await refreshState(false);
+    show("home");
   } catch (problem) {
     say(setupMessage, describe(problem) || "Nothing was set up.");
   } finally {
@@ -129,78 +276,236 @@ setupForm.addEventListener("submit", async (event) => {
   }
 });
 
-// ---------- Locked ----------
+// ---------- Home ----------
 
-const lockedKeys = $("locked-keys");
-const lockedIdle = $("locked-idle");
-const lockedConfirm = $("locked-confirm");
-const lockedMessage = $("locked-message");
-const openPassphraseField = $("open-passphrase-field");
-const openPassphrase = $("open-passphrase");
-const openConfirm = $("open-confirm");
+let homeTimer = null;
+let lockKeys = [];
+let unsentWaiting = false;
 
-function showLocked() {
-  const names = lockKeys.map((key) => key.label || KEY_NAMES[key.kind]);
-  lockedKeys.textContent =
-    names.length === 1 ? `Opens with: ${names[0]}` : `Opens with all of: ${names.join(" · ")}`;
-  lockedIdle.hidden = false;
-  lockedConfirm.hidden = true;
-  openPassphrase.value = "";
-  say(lockedMessage, "");
-  show("locked");
+const SYNC_WORDS = {
+  syncing: "Checking new blocks",
+  up_to_date: "Up to date",
+  problem: "Could not reach the server",
+  starting: "Starting",
+};
+
+async function refreshHome() {
+  try {
+    const overview = await invoke("wallet_overview");
+    if (!overview.exists) return start();
+    lockKeys = overview.keys;
+    unsentWaiting = overview.unsent;
+    const balance = overview.balance;
+    if (balance) {
+      $("home-balance").textContent = zec(balance.total);
+      $("home-pending").textContent =
+        balance.pending > 0 ? `${zec(balance.spendable)} can be sent now, ${zec(balance.pending)} waiting for confirmations` : "";
+      const percent = balance.chain_tip > 0 && balance.progress < 0.999 ? ` · ${Math.floor(balance.progress * 100)}% checked` : "";
+      const sync = overview.sync;
+      const words = SYNC_WORDS[sync.state] || "Starting";
+      $("home-sync").textContent = `${words}${percent}${sync.server ? " · from " + sync.server : ""}`;
+      $("home-sync").title = sync.problem || "";
+    }
+    $("home-keys").textContent = `Opens with: ${lockKeys.map((key) => key.label || KEY_NAMES[key.kind]).join(" · ")}`;
+    if (unsentWaiting) say($("home-message"), "A signed payment is waiting to be handed to the network. Open Send to try again.");
+    refreshActivity();
+  } catch (problem) {
+    say($("home-message"), describe(problem));
+  }
 }
 
-$("open-ask").addEventListener("click", () => {
-  lockedIdle.hidden = true;
-  lockedConfirm.hidden = false;
-  const needsPassphrase = lockKeys.some((key) => key.kind === "passphrase");
-  openPassphraseField.hidden = !needsPassphrase;
-  if (needsPassphrase) openPassphrase.focus();
-  else $("open-cancel").focus();
+async function refreshActivity() {
+  const list = $("home-activity");
+  const items = await invoke("wallet_activity").catch(() => []);
+  list.textContent = "";
+  if (items.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "quiet";
+    empty.textContent = "Nothing yet.";
+    list.append(empty);
+    return;
+  }
+  for (const item of items) {
+    const line = document.createElement("li");
+    const what = document.createElement("span");
+    const when = document.createElement("span");
+    when.className = "quiet";
+    const amount = document.createElement("span");
+    amount.className = item.change < 0 ? "out" : "in";
+    what.textContent = item.change < 0 ? "Sent" : "Received";
+    when.textContent = item.expired ? "did not go through" : item.height ? new Date((item.time || 0) * 1000).toLocaleDateString() : "waiting";
+    amount.textContent = `${item.change < 0 ? "−" : "+"}${zec(Math.abs(item.change))}`;
+    line.title = item.txid;
+    line.append(what, when, amount);
+    list.append(line);
+  }
+}
+
+function startHome() {
+  if (homeTimer) return;
+  refreshHome();
+  homeTimer = setInterval(refreshHome, 5000);
+}
+
+function stopHome() {
+  clearInterval(homeTimer);
+  homeTimer = null;
+}
+
+$("home-receive").addEventListener("click", async () => {
+  show("receive");
+  say($("receive-message"), "", true);
+  try {
+    const receive = await invoke("wallet_receive");
+    $("receive-address").textContent = receive.address;
+    $("receive-qr").src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(receive.qr);
+  } catch (problem) {
+    say($("receive-message"), describe(problem));
+  }
 });
 
-$("open-cancel").addEventListener("click", showLocked);
-
-lockedConfirm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (busy) return;
-  const needsPassphrase = lockKeys.some((key) => key.kind === "passphrase");
-  const passphrase = needsPassphrase ? openPassphrase.value : null;
-  openPassphrase.value = "";
-
-  busy = true;
-  openConfirm.disabled = true;
-  say(lockedMessage, "Follow the prompts from Windows.", true);
+$("receive-copy").addEventListener("click", async () => {
   try {
-    const opened = await invoke("open_lock", { passphrase });
-    showOpen(opened.fingerprint);
+    await navigator.clipboard.writeText($("receive-address").textContent);
+    say($("receive-message"), "Copied.", true);
+  } catch {
+    say($("receive-message"), "Select the address and copy it by hand.");
+  }
+});
+
+for (const button of document.querySelectorAll("[data-home]")) {
+  button.addEventListener("click", () => show("home"));
+}
+
+// ---------- Send ----------
+
+let sendStage = "form"; // form, plan, confirm, unsent, done
+const sendMessage = $("send-message");
+const sendNext = $("send-next");
+
+function sendLayout() {
+  const form = sendStage === "form";
+  for (const input of $("send-form").querySelectorAll("input")) input.disabled = !form;
+  $("send-plan").hidden = !(sendStage === "plan" || sendStage === "confirm");
+  $("send-confirm").hidden = sendStage !== "confirm";
+  $("send-cancel").textContent = sendStage === "done" ? "Back home" : "Cancel";
+  sendNext.hidden = sendStage === "done";
+  sendNext.textContent = { form: "Work it out", plan: "Send", confirm: "Open the lock and send", unsent: "Try again" }[sendStage] || "";
+  const needsPassphrase = lockKeys.some((key) => key.kind === "passphrase");
+  $("send-passphrase-field").hidden = !(sendStage === "confirm" && needsPassphrase);
+}
+
+$("home-send").addEventListener("click", () => {
+  $("send-form").reset();
+  $("send-passphrase").value = "";
+  sendStage = unsentWaiting ? "unsent" : "form";
+  say(sendMessage, unsentWaiting ? "A signed payment is waiting. Try again, or send it without Tor below." : "");
+  sendLayout();
+  show("send");
+  if (!unsentWaiting) $("send-to").focus();
+});
+
+$("send-cancel").addEventListener("click", () => {
+  $("send-passphrase").value = "";
+  show("home");
+});
+
+function sent(result) {
+  sendStage = "done";
+  sendLayout();
+  const via = result.accepted_by.length ? ` Accepted by ${result.accepted_by.join(" and ")}.` : "";
+  say(sendMessage, `Sent.${via} It counts once it is in a block, in about a minute.`, true);
+  sendMessage.title = result.txids.join(" ");
+}
+
+function notSent(problem) {
+  if (problem && problem.unsent) {
+    sendStage = "unsent";
+    sendLayout();
+    say(sendMessage, `${describe(problem)}. Nothing was paid twice: "Try again" sends the same payment.`);
+    offerWithoutTor();
+  } else {
+    say(sendMessage, describe(problem) || "Kept locked. Nothing was sent.", !describe(problem));
+  }
+}
+
+function offerWithoutTor() {
+  if ($("send-plain")) return;
+  const plain = document.createElement("button");
+  plain.type = "button";
+  plain.className = "link";
+  plain.id = "send-plain";
+  plain.textContent = "Send without Tor (the server sees your internet address)";
+  plain.addEventListener("click", () => sendAgain(false));
+  $("send-buttons").after(plain);
+}
+
+async function sendAgain(overTor) {
+  if (busy) return;
+  busy = true;
+  sendNext.disabled = true;
+  say(sendMessage, overTor ? "Connecting over Tor. This can take a minute." : "Sending.", true);
+  try {
+    sent(await invoke("wallet_send_again", { overTor }));
+    $("send-plain")?.remove();
   } catch (problem) {
-    showLocked();
-    say(lockedMessage, describe(problem) || "Kept locked.", !describe(problem));
+    notSent(problem);
   } finally {
     busy = false;
-    openConfirm.disabled = false;
+    sendNext.disabled = false;
   }
-});
-
-$("remove-lock").addEventListener("click", async () => {
-  if (busy) return;
-  try {
-    await invoke("remove_practice_lock");
-    await refreshState();
-  } catch (problem) {
-    say(lockedMessage, describe(problem));
-  }
-});
-
-// ---------- Open ----------
-
-function showOpen(fingerprint) {
-  $("open-fingerprint").textContent = fingerprint;
-  show("open");
 }
 
-$("lock-again").addEventListener("click", () => refreshState());
+sendNext.addEventListener("click", async () => {
+  if (busy) return;
+  if (sendStage === "unsent") return sendAgain($("send-tor").checked);
+  if (sendStage === "plan") {
+    sendStage = "confirm";
+    sendLayout();
+    say(sendMessage, "");
+    if (!$("send-passphrase-field").hidden) $("send-passphrase").focus();
+    return;
+  }
+  busy = true;
+  sendNext.disabled = true;
+  try {
+    if (sendStage === "form") {
+      say(sendMessage, "Working it out.", true);
+      const plan = await invoke("wallet_prepare", {
+        to: $("send-to").value,
+        amount: $("send-amount").value,
+        memo: $("send-memo").value || null,
+      });
+      $("plan-amount").textContent = zec(plan.amount);
+      $("plan-fee").textContent = zec(plan.fee);
+      $("plan-total").textContent = zec(plan.total);
+      sendStage = "plan";
+      sendLayout();
+      say(sendMessage, "");
+    } else if (sendStage === "confirm") {
+      const needsPassphrase = lockKeys.some((key) => key.kind === "passphrase");
+      const passphrase = needsPassphrase ? $("send-passphrase").value : null;
+      $("send-passphrase").value = "";
+      const overTor = $("send-tor").checked;
+      say(sendMessage, `Follow the prompts from Windows, then signing${overTor ? " and connecting over Tor" : ""}. This can take a minute.`, true);
+      sent(await invoke("wallet_send", { passphrase, overTor }));
+    }
+  } catch (problem) {
+    if (sendStage === "confirm" && !(problem && problem.unsent)) {
+      sendStage = "plan";
+      sendLayout();
+    }
+    notSent(problem);
+  } finally {
+    busy = false;
+    sendNext.disabled = false;
+  }
+});
+
+function alertProblem(problem) {
+  const text = describe(problem);
+  if (text) say($("home-message"), text);
+}
 
 // ---------- Go Max ----------
 
@@ -218,7 +523,6 @@ const LEAD_OFF = "Your own Zcash node, on this PC. About 20 GB, and a few hours 
 let watchTimer = null;
 let lastView = null;
 
-const numbers = new Intl.NumberFormat("en-US");
 
 function gigabytes(bytes) {
   return bytes > 0 ? `${(bytes / 1e9).toFixed(1)} GB` : "Nothing yet";
@@ -295,7 +599,8 @@ function render(view) {
   const network = status.estimated_height > 0 ? ` of ${numbers.format(status.estimated_height)}` : "";
   $("fact-height").textContent = `${numbers.format(status.height)}${network}`;
   $("fact-peers").textContent = numbers.format(status.peers);
-  $("fact-wallet").textContent = view.wallet_ready ? "Ready" : "Waiting for blocks";
+  $("fact-wallet").textContent = view.wallet_ready ? "Ready" : (view.wallet_note ? "Waiting for the node" : "Waiting for blocks");
+  $("fact-wallet").title = view.wallet_note || "";
   $("fact-disk").textContent = gigabytes(status.size_on_disk);
 
   const ONION_WORDS = {
@@ -350,25 +655,19 @@ nodeToggle.addEventListener("click", async () => {
   refreshGoMax();
 });
 
-$("go-max-open").addEventListener("click", () => show("goMax"));
-$("go-max-back").addEventListener("click", showLocked);
+for (const button of document.querySelectorAll("[data-go-max]")) {
+  button.addEventListener("click", () => show("goMax"));
+}
+$("go-max-back").addEventListener("click", () => start());
 
 // ---------- Start ----------
 
-async function refreshState(navigate = true) {
-  const state = await invoke("lock_state");
-  lockKeys = state.keys;
-  if (!navigate) return;
-  if (state.exists) {
-    showLocked();
-  } else {
-    setupForm.reset();
-    await prepareSetup();
-    show("setup");
-  }
+async function start() {
+  const overview = await invoke("wallet_overview");
+  show(overview.exists ? "home" : "welcome");
 }
 
-refreshState().catch((problem) => {
+start().catch((problem) => {
   show("loading");
   views.loading.querySelector("p").textContent = describe(problem) || "The app could not start.";
 });

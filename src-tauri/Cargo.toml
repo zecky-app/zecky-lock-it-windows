@@ -17,6 +17,9 @@ tauri-build = { version = "2", features = [] }
 lockit-auth = { path = "../crates/lockit-auth" }
 lockit-node = { path = "../crates/lockit-node" }
 lockit-tor = { path = "../crates/lockit-tor" }
+lockit-wallet = { path = "../crates/lockit-wallet" }
+secrecy = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 tauri = { version = "2", features = [] }

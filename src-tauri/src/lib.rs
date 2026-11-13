@@ -18,6 +18,7 @@
 //!   they run on a worker thread and never freeze the window.
 
 mod go_max;
+mod wallet;
 
 use std::{fs, path::PathBuf};
 
@@ -41,9 +42,9 @@ struct Availability {
 
 /// A key as the window shows it.
 #[derive(Serialize)]
-struct KeySummary {
-    kind: KeyKind,
-    label: String,
+pub(crate) struct KeySummary {
+    pub(crate) kind: KeyKind,
+    pub(crate) label: String,
 }
 
 /// The lock as the window shows it.
@@ -55,11 +56,11 @@ struct LockState {
 
 /// One key the owner chose while setting up.
 #[derive(Deserialize)]
-struct ChosenKey {
-    kind: KeyKind,
-    label: String,
+pub(crate) struct ChosenKey {
+    pub(crate) kind: KeyKind,
+    pub(crate) label: String,
     /// Only for a passphrase key.
-    passphrase: Option<String>,
+    pub(crate) passphrase: Option<String>,
 }
 
 /// What the window gets back after the lock opened.
@@ -72,9 +73,12 @@ struct Opened {
 
 /// An error as the window shows it.
 #[derive(Serialize)]
-struct Problem {
+pub(crate) struct Problem {
     cancelled: bool,
     message: String,
+    /// A payment was signed but not handed to the network yet; it can be
+    /// handed over again without paying twice.
+    unsent: bool,
 }
 
 impl From<lockit_auth::Error> for Problem {
@@ -82,15 +86,22 @@ impl From<lockit_auth::Error> for Problem {
         Self {
             cancelled: matches!(error, lockit_auth::Error::Cancelled),
             message: error.to_string(),
+            unsent: false,
         }
     }
 }
 
-fn problem(message: impl Into<String>) -> Problem {
-    Problem { cancelled: false, message: message.into() }
+pub(crate) fn problem(message: impl Into<String>) -> Problem {
+    Problem { cancelled: false, message: message.into(), unsent: false }
 }
 
-type CommandResult<T> = Result<T, Problem>;
+impl From<lockit_wallet::Error> for Problem {
+    fn from(error: lockit_wallet::Error) -> Self {
+        problem(error.to_string())
+    }
+}
+
+pub(crate) type CommandResult<T> = Result<T, Problem>;
 
 fn vault_path(app: &AppHandle) -> CommandResult<PathBuf> {
     let dir = app
@@ -116,12 +127,12 @@ fn fingerprint(secret: &[u8]) -> String {
 
 /// The raw handle of the app window, so system prompts appear above it.
 #[cfg(windows)]
-fn raw_window_handle(window: &WebviewWindow) -> isize {
+pub(crate) fn raw_window_handle(window: &WebviewWindow) -> isize {
     window.hwnd().map(|hwnd| hwnd.0 as isize).unwrap_or(0)
 }
 
 /// Builds the source that answers for one kind of key.
-fn source_for(
+pub(crate) fn source_for(
     kind: KeyKind,
     passphrase: Option<&str>,
     #[allow(unused_variables)] window_handle: isize,
@@ -291,12 +302,28 @@ pub fn run() {
             }
         }))
         .manage(go_max::GoMaxSlot::default())
+        .manage(wallet::WalletSlot::default())
+        .setup(|app| {
+            wallet::start_syncing(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             availability,
             lock_state,
             create_practice_lock,
             open_lock,
             remove_practice_lock,
+            wallet::wallet_overview,
+            wallet::wallet_new_words,
+            wallet::wallet_use_words,
+            wallet::wallet_forget_words,
+            wallet::wallet_create,
+            wallet::wallet_receive,
+            wallet::wallet_activity,
+            wallet::wallet_prepare,
+            wallet::wallet_send,
+            wallet::wallet_send_again,
+            wallet::wallet_sync_now,
             go_max::go_max_view,
             go_max::go_max_start,
             go_max::go_max_stop

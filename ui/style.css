@@ -493,3 +493,146 @@ button:focus-visible {
     transition: none !important;
   }
 }
+
+/* ---------- The wallet ---------- */
+
+.words {
+  list-style: none;
+  counter-reset: word;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+}
+
+.words li {
+  counter-increment: word;
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 15px;
+  user-select: none;
+}
+
+.words li::before {
+  content: counter(word);
+  color: var(--text-quiet);
+  font-size: 11px;
+  margin-right: 8px;
+}
+
+.words-input,
+select {
+  width: 100%;
+  background: var(--ink-raised);
+  color: var(--text);
+  border: 1px solid var(--ink-line);
+  border-radius: 10px;
+  padding: 12px;
+  font: 15px/1.5 var(--sans);
+}
+
+.words-input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 1px;
+}
+
+.balance-label {
+  margin: 8px 0 0;
+  text-align: center;
+  color: var(--gold);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.balance {
+  margin: 0;
+  text-align: center;
+  font-family: var(--serif);
+  font-size: 40px;
+  color: var(--text);
+}
+
+.sync-line {
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-quiet);
+}
+
+h2.section {
+  margin: 12px 0 0;
+  font: 500 13px var(--sans);
+  color: var(--text-quiet);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.activity {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.activity li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line);
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+.activity li.quiet {
+  display: block;
+}
+
+.activity .in {
+  color: var(--gold);
+}
+
+.activity .out {
+  color: var(--text);
+}
+
+.qr {
+  display: block;
+  width: 240px;
+  height: 240px;
+  margin: 0 auto;
+  border-radius: 12px;
+}
+
+.address {
+  margin: 0;
+  font: 13px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  word-break: break-all;
+  user-select: all;
+  color: var(--text);
+  background: var(--ink-raised);
+  border: 1px solid var(--ink-line);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 14px;
+  color: var(--text-quiet);
+  margin-top: 10px;
+}
+
+.check input {
+  accent-color: var(--gold);
+  margin-top: 3px;
+}

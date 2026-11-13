@@ -12,18 +12,72 @@
     <span class="product">Lock it</span>
   </header>
 
-  <p class="practice" role="note">Practice build. No wallet, no funds.</p>
+  <p class="practice" role="note">Test build. Use a small amount only.</p>
 
   <main>
-    <!-- Shown while the app reads its state. -->
     <section id="view-loading" class="view">
       <p class="quiet">One moment.</p>
     </section>
 
-    <!-- No lock yet: choose the keys. -->
+    <!-- No wallet yet. -->
+    <section id="view-welcome" class="view" hidden>
+      <div class="lock" aria-hidden="true">
+        <svg viewBox="0 0 240 240" class="lock-art">
+          <circle cx="120" cy="120" r="104" class="ring"/>
+          <path class="shackle" d="M92 112 V88 a28 28 0 0 1 56 0 V112"/>
+          <rect class="body" x="78" y="108" width="84" height="66" rx="10"/>
+          <circle class="hole" cx="120" cy="134" r="8"/>
+          <rect class="hole" x="116.500" y="134" width="7" height="22" rx="3"/>
+        </svg>
+      </div>
+      <h1 class="state">Your Zcash, locked</h1>
+      <p class="lead">A calm wallet that keeps your savings yours. Only your keys open it.</p>
+      <button type="button" class="primary" id="welcome-create">Create a new wallet</button>
+      <button type="button" class="secondary" id="welcome-restore">Restore with 24 words</button>
+      <button type="button" class="go-max-entry" data-go-max>
+        <span class="go-max-entry-name">Go Max</span>
+        <span class="go-max-entry-note">Your own Zcash node, on this PC</span>
+      </button>
+    </section>
+
+    <!-- The 24 words of a new wallet. -->
+    <section id="view-words" class="view" hidden>
+      <h1>Your 24 words</h1>
+      <p class="lead">Write them on paper, in order. With them anyone can take your Zcash, and without them nobody can get it back. Never type them into a website or a photo.</p>
+      <ol class="words" id="words-list"></ol>
+      <button type="button" class="primary" id="words-done">I wrote them down</button>
+      <button type="button" class="link" id="words-back">Back</button>
+    </section>
+
+    <!-- Checking three of the words. -->
+    <section id="view-check" class="view" hidden>
+      <h1>Check three words</h1>
+      <p class="lead">From your paper, not from memory.</p>
+      <form id="check-form" class="fields" autocomplete="off"></form>
+      <p id="check-message" class="message" role="status" aria-live="polite"></p>
+      <button type="button" class="primary" id="check-submit">Check</button>
+      <button type="button" class="link" id="check-back">Show the words again</button>
+    </section>
+
+    <!-- Restoring. -->
+    <section id="view-restore" class="view" hidden>
+      <h1>Restore your wallet</h1>
+      <p class="lead">Type your 24 words, with spaces between them.</p>
+      <textarea id="restore-words" class="words-input" rows="6" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      <p class="lead">When were these words made? A rough guess is fine: earlier is safer.</p>
+      <div class="row">
+        <select id="restore-month" aria-label="Month"></select>
+        <select id="restore-year" aria-label="Year"></select>
+      </div>
+      <p id="restore-message" class="message" role="status" aria-live="polite"></p>
+      <button type="button" class="primary" id="restore-submit">Continue</button>
+      <button type="button" class="link" id="restore-back">Back</button>
+    </section>
+
+    <!-- Choosing the keys that seal the words. -->
     <section id="view-setup" class="view" hidden>
       <h1>Choose your keys</h1>
-      <p class="lead">Pick one, two or three. Every key you pick will be needed to open the lock.</p>
+      <p class="lead">Every key you pick will be needed to open the lock and send.</p>
 
       <form id="setup-form" autocomplete="off">
         <label class="key" data-kind="device_hello">
@@ -38,7 +92,7 @@
           <input type="checkbox" name="kind" value="security_key">
           <span class="key-text">
             <span class="key-name">Security key</span>
-            <span class="key-note" data-note>A YubiKey or other FIDO2 key, with its PIN</span>
+            <span class="key-note" data-note>A YubiKey or other FIDO2 key: touch it. Together with Hello or a passphrase</span>
           </span>
         </label>
 
@@ -64,65 +118,70 @@
         <p id="setup-message" class="message" role="status" aria-live="polite"></p>
         <button type="submit" class="primary" id="setup-submit" disabled>Lock it</button>
       </form>
+      <button type="button" class="link" id="setup-back">Back</button>
     </section>
 
-    <!-- A lock exists and is closed. -->
-    <section id="view-locked" class="view" hidden>
-      <div class="lock" aria-hidden="true">
-        <svg viewBox="0 0 240 240" class="lock-art">
-          <circle cx="120" cy="120" r="104" class="ring"/>
-          <path class="shackle" d="M92 112 V88 a28 28 0 0 1 56 0 V112"/>
-          <rect class="body" x="78" y="108" width="84" height="66" rx="10"/>
-          <circle class="hole" cx="120" cy="134" r="8"/>
-          <rect class="hole" x="116.500" y="134" width="7" height="22" rx="3"/>
-        </svg>
+    <!-- Home. -->
+    <section id="view-home" class="view" hidden>
+      <p class="balance-label">Locked</p>
+      <p class="balance" id="home-balance">…</p>
+      <p class="quiet center" id="home-pending"></p>
+      <p class="sync-line" id="home-sync"></p>
+      <div class="row">
+        <button type="button" class="secondary" id="home-receive">Receive</button>
+        <button type="button" class="primary" id="home-send">Send</button>
       </div>
-      <h1 class="state">Locked</h1>
-      <p class="lead" id="locked-keys"></p>
-
-      <div id="locked-idle">
-        <button type="button" class="primary" id="open-ask">Open the lock</button>
-      </div>
-
-      <form id="locked-confirm" autocomplete="off" hidden>
-        <p class="confirm">Really open the lock?</p>
-        <label class="field" id="open-passphrase-field" hidden>
-          <span>Passphrase</span>
-          <input type="password" id="open-passphrase" autocomplete="current-password" spellcheck="false">
-        </label>
-        <div class="row">
-          <button type="button" class="secondary" id="open-cancel">Keep it locked</button>
-          <button type="submit" class="primary" id="open-confirm">Open the lock</button>
-        </div>
-      </form>
-
-      <p id="locked-message" class="message" role="status" aria-live="polite"></p>
-
-      <button type="button" class="go-max-entry" id="go-max-open">
+      <p id="home-message" class="message" role="status" aria-live="polite"></p>
+      <h2 class="section">Activity</h2>
+      <ul class="activity" id="home-activity"></ul>
+      <button type="button" class="go-max-entry" data-go-max>
         <span class="go-max-entry-name">Go Max</span>
         <span class="go-max-entry-note" id="go-max-entry-note">Your own Zcash node, on this PC</span>
       </button>
-
-      <button type="button" class="link" id="remove-lock">Remove this practice lock</button>
+      <p class="quiet center" id="home-keys"></p>
     </section>
 
-    <!-- The lock just opened. -->
-    <section id="view-open" class="view" hidden>
-      <div class="lock" aria-hidden="true">
-        <svg viewBox="0 0 240 240" class="lock-art">
-          <circle cx="120" cy="120" r="104" class="ring"/>
-          <path class="shackle" d="M92 112 V80 a28 28 0 0 1 56 0 V88"/>
-          <rect class="body" x="78" y="108" width="84" height="66" rx="10"/>
-          <circle class="hole" cx="120" cy="134" r="8"/>
-          <rect class="hole" x="116.500" y="134" width="7" height="22" rx="3"/>
-        </svg>
+    <!-- Receive. -->
+    <section id="view-receive" class="view" hidden>
+      <h1>Receive</h1>
+      <p class="lead">Your shielded address. Payments to it stay private.</p>
+      <img id="receive-qr" class="qr" alt="QR code of your address">
+      <p class="address" id="receive-address"></p>
+      <button type="button" class="secondary" id="receive-copy">Copy address</button>
+      <p id="receive-message" class="message calm" role="status" aria-live="polite"></p>
+      <button type="button" class="link" data-home>Back</button>
+    </section>
+
+    <!-- Send. -->
+    <section id="view-send" class="view" hidden>
+      <h1>Send</h1>
+      <form id="send-form" class="fields" autocomplete="off">
+        <label class="field"><span>To</span><input id="send-to" spellcheck="false" placeholder="u1… or zs… or t1…"></label>
+        <label class="field"><span>Amount in ZEC</span><input id="send-amount" inputmode="decimal" placeholder="0.01"></label>
+        <label class="field"><span>Note, only the receiver sees it (optional)</span><input id="send-memo" maxlength="512"></label>
+      </form>
+      <div id="send-plan" hidden>
+        <dl class="facts">
+          <div><dt>They get</dt><dd id="plan-amount"></dd></div>
+          <div><dt>Network fee</dt><dd id="plan-fee"></dd></div>
+          <div class="wide"><dt>Total</dt><dd id="plan-total"></dd></div>
+        </dl>
+        <label class="check"><input type="checkbox" id="send-tor" checked> Send over Tor, so servers cannot see where it came from</label>
       </div>
-      <h1 class="state">Open</h1>
-      <p class="lead">Every key answered. The practice secret came back.</p>
-      <p class="fingerprint"><span>Fingerprint</span> <code id="open-fingerprint"></code></p>
-      <p class="quiet">You should see the same eight characters every time this lock opens.</p>
-      <button type="button" class="primary" id="lock-again">Lock it again</button>
+      <form id="send-confirm" autocomplete="off" hidden>
+        <p class="confirm">Really open the lock?</p>
+        <label class="field" id="send-passphrase-field" hidden>
+          <span>Passphrase</span>
+          <input type="password" id="send-passphrase" autocomplete="current-password" spellcheck="false">
+        </label>
+      </form>
+      <p id="send-message" class="message" role="status" aria-live="polite"></p>
+      <div class="row" id="send-buttons">
+        <button type="button" class="secondary" id="send-cancel">Cancel</button>
+        <button type="button" class="primary" id="send-next">Work it out</button>
+      </div>
     </section>
+
     <!-- Go Max: the owner's own node. -->
     <section id="view-go-max" class="view" hidden>
       <div class="node-ring" id="node-ring" data-state="off" aria-hidden="true">
@@ -147,7 +206,7 @@
       <p id="node-message" class="message" role="status" aria-live="polite"></p>
       <button type="button" class="primary" id="node-toggle">Turn on Go Max</button>
       <p class="quiet center">Private: other nodes cannot connect to this PC.</p>
-      <button type="button" class="link" id="go-max-back">Back to the lock</button>
+      <button type="button" class="link" id="go-max-back">Back</button>
     </section>
   </main>
 

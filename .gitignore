@@ -7,3 +7,7 @@ node_modules/
 # Node programs are built by CI or copied in for a local build, never committed.
 src-tauri/node/
 _to_delete/
+pc-test/
+
+# The Sapling proving files (51 MB) come from Lock it Mac or zcash fetch-params; never committed.
+src-tauri/params/

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/lockit-auth", "crates/lockit-node", "crates/lockit-tor", "src-tauri"]
+members = ["crates/lockit-auth", "crates/lockit-node", "crates/lockit-tor", "crates/lockit-wallet", "src-tauri"]
 
 [workspace.package]
 version = "0.0.1"
