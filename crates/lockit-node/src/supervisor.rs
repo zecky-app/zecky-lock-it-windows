@@ -23,6 +23,28 @@ const NODE_READY_TIMEOUT: Duration = Duration::from_secs(600);
 /// running. A bad config makes it exit within a second or two.
 const ZAINO_SETTLE: Duration = Duration::from_secs(5);
 
+/// The first pause before Zaino is started again after it stopped by itself.
+///
+/// During the first sync Zaino gives up when the node is busy or has not
+/// stored the block Zaino wants to start from ("chain head could not
+/// anchor"). That is expected: as on Lock it Mac, Zaino is started again as
+/// long as the node answers, and the node keeps syncing either way.
+const ZAINO_RETRY_FIRST: Duration = Duration::from_secs(15);
+/// The longest pause between tries.
+const ZAINO_RETRY_MAX: Duration = Duration::from_secs(120);
+/// Zaino counts as settled once it has run this long; the pause starts over.
+const ZAINO_SETTLED: Duration = Duration::from_secs(300);
+
+/// Zaino's restart bookkeeping.
+#[derive(Debug, Default)]
+struct ZainoRetry {
+    started_at: Option<Instant>,
+    next_try: Option<Instant>,
+    pause: Duration,
+    restarts: u32,
+    last_exit: Option<String>,
+}
+
 /// Where the two node programs are.
 #[derive(Clone, Debug)]
 pub struct NodePrograms {
@@ -77,12 +99,13 @@ pub struct GoMax {
     group: Option<ProcessGroup>,
     zakura: Option<NodeProcess>,
     zaino: Option<NodeProcess>,
+    zaino_retry: ZainoRetry,
 }
 
 impl GoMax {
     /// Prepares Go Max. Nothing starts until [`GoMax::start`].
     pub fn new(layout: NodeLayout, settings: GoMaxSettings, programs: NodePrograms) -> Self {
-        Self { layout, settings, programs, group: None, zakura: None, zaino: None }
+        Self { layout, settings, programs, group: None, zakura: None, zaino: None, zaino_retry: ZainoRetry::default() }
     }
 
     /// The node's folders.
@@ -95,9 +118,9 @@ impl GoMax {
         &self.settings
     }
 
-    /// Whether both programs are running.
+    /// Whether the node is running (Zaino may be between restarts).
     pub fn is_running(&mut self) -> bool {
-        self.check().is_ok() && self.zakura.is_some() && self.zaino.is_some()
+        self.check().is_ok() && self.zakura.is_some()
     }
 
     /// Starts Zakura, waits until it answers, then starts Zaino and waits
@@ -157,10 +180,11 @@ impl GoMax {
         // Zaino opens its wallet port only once the node has blocks, which on
         // a fresh install can take a while. So "running" means both programs
         // are up; whether wallets can connect yet is `wallet_ready`.
+        // Only the node must stay up here; a Zaino that stops is started
+        // again by `check`.
         let settle = wait_until("The wallet service", ZAINO_SETTLE, || {
             zakura.check_running()?;
-            zaino.check_running()?;
-            Ok(false)
+            Ok(zaino.check_running().is_err())
         });
         if let Err(error) = settle.or_else(|error| match error {
             Error::NotReady(_) => Ok(()),
@@ -175,18 +199,79 @@ impl GoMax {
         self.group = Some(group);
         self.zakura = Some(zakura);
         self.zaino = Some(zaino);
+        self.zaino_retry = ZainoRetry { started_at: Some(Instant::now()), pause: ZAINO_RETRY_FIRST, ..Default::default() };
         Ok(())
     }
 
-    /// Checks that both programs are still running.
+    /// Checks on both programs. An error means the node itself ended, and Go
+    /// Max is over. If only Zaino ended, it is started again after a pause,
+    /// as long as the node answers; the node keeps going meanwhile.
     pub fn check(&mut self) -> Result<()> {
         if let Some(zakura) = self.zakura.as_mut() {
             zakura.check_running()?;
+        } else {
+            return Ok(());
         }
+        let now = Instant::now();
         if let Some(zaino) = self.zaino.as_mut() {
-            zaino.check_running()?;
+            if let Err(exit) = zaino.check_running() {
+                let retry = &mut self.zaino_retry;
+                let lived = retry.started_at.map(|t| now.duration_since(t)).unwrap_or_default();
+                retry.pause = if lived >= ZAINO_SETTLED {
+                    ZAINO_RETRY_FIRST
+                } else {
+                    (retry.pause.max(ZAINO_RETRY_FIRST / 2) * 2).min(ZAINO_RETRY_MAX)
+                };
+                retry.next_try = Some(now + retry.pause);
+                retry.last_exit = Some(exit.to_string());
+                self.zaino = None;
+            }
+        }
+        if self.zaino.is_none() && self.zaino_retry.next_try.is_some_and(|t| now >= t) && self.rpc().is_ready() {
+            self.zaino_retry.next_try = None;
+            let started = match self.group.as_ref() {
+                Some(group) => NodeProcess::start(
+                    group,
+                    "Zaino",
+                    &self.programs.zainod,
+                    &[OsStr::new("start"), OsStr::new("-c"), self.layout.zaino_config().as_os_str()],
+                    &self.layout.log_file("zainod"),
+                ),
+                None => return Ok(()),
+            };
+            match started {
+                Ok(zaino) => {
+                    self.zaino = Some(zaino);
+                    self.zaino_retry.started_at = Some(now);
+                    self.zaino_retry.restarts += 1;
+                }
+                Err(error) => {
+                    self.zaino_retry.last_exit = Some(error.to_string());
+                    self.zaino_retry.next_try = Some(now + ZAINO_RETRY_MAX);
+                }
+            }
+        } else if self.zaino.is_none() && self.zaino_retry.next_try.is_some_and(|t| now >= t) {
+            // The node is busy and did not answer: try again shortly.
+            self.zaino_retry.next_try = Some(now + ZAINO_RETRY_FIRST);
         }
         Ok(())
+    }
+
+    /// Why the wallet service is not running right now, if it is between
+    /// restarts. `None` while it runs.
+    pub fn wallet_service_note(&self) -> Option<String> {
+        if self.zaino.is_some() || self.zakura.is_none() {
+            return None;
+        }
+        let wait = self.zaino_retry.next_try.map(|t| t.saturating_duration_since(Instant::now()).as_secs()).unwrap_or(0);
+        Some(format!(
+            "The wallet service is waiting for the node and starts again in about {wait} s. This is normal while the node catches up."
+        ))
+    }
+
+    /// How often Zaino has been started again in this run.
+    pub fn wallet_service_restarts(&self) -> u32 {
+        self.zaino_retry.restarts
     }
 
     /// Reads the node's status.
@@ -211,6 +296,7 @@ impl GoMax {
             None => true,
         };
         self.group = None;
+        self.zaino_retry = ZainoRetry::default();
         Ok(StopReport { zaino_clean, zakura_clean, seconds: started.elapsed().as_secs() })
     }
 

@@ -45,6 +45,8 @@ pub enum GoMaxView {
         status: Option<NodeStatus>,
         /// Whether wallets can connect yet.
         wallet_ready: bool,
+        /// Why the wallet service is between restarts, if it is.
+        wallet_note: Option<String>,
         /// Phone access over Tor, if it started.
         onion: Option<OnionView>,
         /// Why phone access is missing, if it failed to start.
@@ -108,6 +110,7 @@ pub fn go_max_view(app: AppHandle, slot: State<'_, GoMaxSlot>) -> GoMaxView {
             Ok(()) => GoMaxView::On {
                 status: node.status().ok(),
                 wallet_ready: node.wallet_ready(),
+                wallet_note: node.wallet_service_note(),
                 onion: slot.onion.lock().ok().and_then(|guard| {
                     guard.as_ref().map(|onion| OnionView { address: onion.address().to_owned(), state: onion.state() })
                 }),
@@ -242,5 +245,23 @@ pub fn stop_on_exit(app: &AppHandle) {
         if let Some(mut node) = node {
             let _ = node.stop();
         }
+    }
+}
+
+impl GoMaxSlot {
+    /// The node's height, if wallets can read from it now: the wallet
+    /// service answers and the node has caught up with the network. Never
+    /// waits for a busy Go Max.
+    pub fn own_node_height(&self) -> Option<u32> {
+        if self.busy.load(Ordering::SeqCst) {
+            return None;
+        }
+        let guard = self.node.try_lock().ok()?;
+        let node = guard.as_ref()?;
+        if !node.wallet_ready() {
+            return None;
+        }
+        let status = node.status().ok()?;
+        (status.estimated_height > 0 && status.height + 2 >= status.estimated_height).then_some(status.height)
     }
 }
