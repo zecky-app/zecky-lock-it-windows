@@ -345,6 +345,11 @@ fn webauthn_error(api: &WebAuthnApi, error: windows::core::Error) -> Error {
     }
     // SAFETY: returns a pointer to a static, null-terminated name.
     let name = unsafe { (api.error_name)(error.code()).to_string() }.unwrap_or_default();
+    // Windows reports "Cancel" in its own window, or the key not touched in
+    // time, as NotAllowedError (ERROR_CANCELLED): the owner stopped it.
+    if name == "NotAllowedError" || error.code().0 as u32 == 0x8007_04C7 {
+        return Error::Cancelled;
+    }
     Error::Platform(format!("the security key request failed ({name}): {}", error.message()))
 }
 

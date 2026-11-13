@@ -8,8 +8,8 @@ authors.workspace = true
 
 [dependencies]
 # The Zcash core, pinned by Cargo.lock to the Zecky engine's exact versions.
-zcash_client_backend = { version = "0.25", features = ["lightwalletd-tonic-tls-webpki-roots", "orchard", "transparent-inputs", "tor", "sync"] }
-zcash_client_sqlite = { version = "0.23", features = ["orchard", "transparent-inputs"] }
+zcash_client_backend = { version = "0.25", features = ["lightwalletd-tonic-tls-webpki-roots", "orchard", "transparent-inputs", "tor", "sync", "pczt"] }
+zcash_client_sqlite = { version = "0.23", features = ["orchard", "transparent-inputs", "serde"] }
 zcash_keys = { version = "0.17", features = ["orchard"] }
 zcash_primitives = "0.31"
 zcash_proofs = "0.31"
@@ -20,6 +20,9 @@ zip32 = "0.3"
 async-trait = "0.1"
 bip0039 = "0.14"
 futures-util = "0.3"
+uuid = "1"
+ur = "0.5"
+pczt = { version = "0.10", features = ["orchard", "prover"] }
 orchard = "0.16"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 rand = "0.10"

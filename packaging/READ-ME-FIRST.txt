@@ -1,0 +1,34 @@
+Zecky Lock it for Windows - 0.1.0 beta 1
+
+A calm, self-custody Zcash wallet. Your 24 words stay on this PC, sealed by
+the keys you choose (Windows Hello, a passphrase, a Zecky code, a security
+key). Go Max runs your own pruned Zcash node. Seal it lets a phone sign.
+
+THIS IS A BETA. Use small amounts only (under 0.1 ZEC).
+
+Not code-signed: Windows SmartScreen will warn. Click "More info", then
+"Run anyway". Check the download first: see VERIFY.txt.
+
+Keep this folder together:
+  Zecky Lock it.exe      the app
+  WebView2Loader.dll     must stay next to the app
+  params\                the Sapling files a payment needs (from Zcash)
+  node\zakurad.exe       Zakura 1.8.5 (Go Max's node)
+  node\zainod.exe        Zaino 0.10.1 (Go Max's wallet service)
+
+Needs: Windows 10 (1903 or later) or 11, x64, internet, Microsoft Edge
+WebView2 (already on almost every Windows 10/11 PC). Go Max needs about
+35 GB free on drive C:. Seal it needs a webcam.
+
+Where your wallet is kept: %LOCALAPPDATA%\app.zecky.lockit
+  wallet-lock.json   your 24 words, sealed by your keys
+  keyring.json       extra wallets' words, sealed with the main words
+  wallet\            the wallet's own files (no words in them)
+  go-max\            Go Max's node data
+Removing the app does not remove this folder.
+
+Your 24 words are shown once, when you create a wallet. Write them on
+paper. They are the only way back if this PC is lost.
+
+Found a problem? In the app: Settings > About > Copy a problem report, then
+open an issue on the GitHub page you downloaded this from.

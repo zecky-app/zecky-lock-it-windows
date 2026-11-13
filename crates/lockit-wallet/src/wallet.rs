@@ -71,6 +71,7 @@ pub struct Balance {
 /// A payment worked out and ready to sign, with its fee.
 pub struct PreparedPayment {
     proposal: Planned,
+    account: AccountUuid,
     /// What the receiver gets.
     pub amount: u64,
     /// The network fee.
@@ -86,15 +87,53 @@ enum Planned {
     Shielding(Proposal<StandardFeeRule, Infallible>),
 }
 
+/// The Orchard circuit of the PCZT's network upgrade (Ironwood shares it).
+fn circuit_version(pczt: &pczt::Pczt) -> Result<orchard::circuit::OrchardCircuitVersion> {
+    let branch = zcash_protocol::consensus::BranchId::try_from(*pczt.global().consensus_branch_id())
+        .map_err(|_| other("the payment is for an unknown network upgrade"))?;
+    zcash_primitives::transaction::components::orchard::bundle_version_for_branch(branch, ::orchard::ValuePool::Orchard)
+        .map(|v| v.circuit_version())
+        .ok_or_else(|| other("this network upgrade has no Orchard"))
+}
+
 /// The wallet in one folder: `wallet.db` and, for sending over Tor, `tor\`.
+#[derive(Clone)]
 pub struct Wallet {
     dir: PathBuf,
+    /// The wallet on the key ring this handle works on (an account id);
+    /// `None` is the main wallet, the first one made.
+    selected: Option<String>,
 }
+
+/// One wallet on the key ring.
+#[derive(Clone, Debug, Serialize)]
+pub struct AccountInfo {
+    /// Its id (a UUID).
+    pub id: String,
+    /// The name it was added under.
+    pub name: String,
+    /// The block it starts from.
+    pub birthday: u32,
+    /// Watch-only: signed elsewhere (Seal it), never on this PC.
+    pub watch_only: bool,
+    /// The main wallet, the one whose words are sealed in the lock.
+    pub main: bool,
+}
+
+/// Key source marking extra wallets with their own words on this PC.
+pub const KEYRING_SOURCE: &str = "lockit-keyring";
+/// Key source marking Seal it wallets (watch-only on this PC).
+pub const SEALIT_SOURCE: &str = "sealit";
 
 impl Wallet {
     /// The wallet in `dir`. Nothing is created until [`Wallet::create`].
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
+        Self { dir: dir.into(), selected: None }
+    }
+
+    /// The same wallet folder, working on another wallet of the key ring.
+    pub fn for_account(&self, id: Option<&str>) -> Self {
+        Self { dir: self.dir.clone(), selected: id.map(str::to_owned) }
     }
 
     fn db_path(&self) -> PathBuf {
@@ -114,8 +153,212 @@ impl Wallet {
         Ok(WalletDb::from_connection(conn, MainNetwork, SystemClock, OsRng))
     }
 
+    fn main_account(db: &Db) -> Result<AccountUuid> {
+        let ids = db.get_account_ids().map_err(db_err)?;
+        // The main wallet is the one made without a key source; the first
+        // one if, somehow, there are several.
+        for id in &ids {
+            if let Some(account) = db.get_account(*id).map_err(db_err)? {
+                if account.source().key_source().is_none() {
+                    return Ok(*id);
+                }
+            }
+        }
+        ids.into_iter().next().ok_or(Error::NoWallet)
+    }
+
     fn account(&self, db: &Db) -> Result<AccountUuid> {
-        db.get_account_ids().map_err(db_err)?.into_iter().next().ok_or(Error::NoWallet)
+        match &self.selected {
+            None => Self::main_account(db),
+            Some(id) => {
+                let uuid = uuid::Uuid::parse_str(id).map_err(|_| Error::Other("unknown wallet".into()))?;
+                let account = AccountUuid::from_uuid(uuid);
+                if db.get_account_ids().map_err(db_err)?.contains(&account) { Ok(account) } else { Err(Error::NoWallet) }
+            }
+        }
+    }
+
+    /// Every wallet on the key ring, the main one first.
+    pub fn accounts(&self) -> Result<Vec<AccountInfo>> {
+        let db = self.db()?;
+        let main = Self::main_account(&db)?;
+        let mut list = Vec::new();
+        for id in db.get_account_ids().map_err(db_err)? {
+            let Some(account) = db.get_account(id).map_err(db_err)? else { continue };
+            let source = account.source().key_source().map(str::to_owned);
+            list.push(AccountInfo {
+                id: id.expose_uuid().to_string(),
+                name: account.name().unwrap_or("Wallet").to_owned(),
+                birthday: db.get_account_birthday(id).map(u32::from).unwrap_or(0),
+                watch_only: source.as_deref() == Some(SEALIT_SOURCE),
+                main: id == main,
+            });
+        }
+        list.sort_by_key(|a| !a.main);
+        Ok(list)
+    }
+
+    async fn birthday_from(server: &Server, birthday: Option<u32>) -> Result<(AccountBirthday, u32)> {
+        let mut client = server.connect().await?;
+        let tip = net::tip(&mut client).await?;
+        let height = birthday.unwrap_or(tip).min(tip).max(SAPLING_ACTIVATION) - 1;
+        let tree = net::tree_state(&mut client, height).await?;
+        let birthday = AccountBirthday::from_treestate(tree, None).map_err(|_| other("the server sent an unusable tree state"))?;
+        Ok((birthday, tip))
+    }
+
+    /// Adds another wallet with its own words to the key ring. Returns its id.
+    pub async fn add_wallet(&self, name: &str, seed: &Seed, birthday: Option<u32>, server: &Server) -> Result<String> {
+        let (birthday, tip) = Self::birthday_from(server, birthday).await?;
+        self.add_wallet_from_birthday(name, seed, &birthday, tip)
+    }
+
+    fn add_wallet_from_birthday(&self, name: &str, seed: &Seed, birthday: &AccountBirthday, tip: u32) -> Result<String> {
+        let mut db = self.db()?;
+        let (account, _) = db
+            .import_account_hd(name, seed, zip32::AccountId::ZERO, birthday, Some(KEYRING_SOURCE))
+            .map_err(|e| {
+                let text = e.to_string();
+                if text.to_lowercase().contains("already") || text.to_lowercase().contains("unique") {
+                    Error::Database("this wallet is already on the key ring".into())
+                } else {
+                    db_err(text)
+                }
+            })?;
+        db.update_chain_tip(BlockHeight::from_u32(tip)).map_err(db_err)?;
+        Ok(account.id().expose_uuid().to_string())
+    }
+
+    /// Pairs a Seal it phone: imports its first account's viewing key (the
+    /// spending keys stay on the phone). Returns the wallet's id; the same
+    /// phone account is never added twice.
+    pub async fn add_sealit(&self, name: &str, export: &crate::sealit::AccountsExport, birthday: Option<u32>, server: &Server) -> Result<String> {
+        use zcash_client_backend::data_api::{AccountPurpose, Zip32Derivation};
+        let account = &export.accounts[0];
+        let ufvk = zcash_keys::keys::UnifiedFullViewingKey::decode(&MainNetwork, account.ufvk.trim())
+            .map_err(|_| Error::Address("the phone sent an unusable viewing key".into()))?;
+        {
+            let db = self.db()?;
+            for id in db.get_account_ids().map_err(db_err)? {
+                if let Some(existing) = db.get_account(id).map_err(db_err)? {
+                    if existing.ufvk().map(|k| k.encode(&MainNetwork)) == Some(ufvk.encode(&MainNetwork)) {
+                        return Ok(id.expose_uuid().to_string());
+                    }
+                }
+            }
+        }
+        let index = zip32::AccountId::try_from(account.index).map_err(|_| Error::Other("the phone sent an unusable account number".into()))?;
+        let derivation = Zip32Derivation::new(zip32::fingerprint::SeedFingerprint::from_bytes(export.seed_fingerprint), index);
+        let (birthday, tip) = Self::birthday_from(server, birthday).await?;
+        let mut db = self.db()?;
+        let imported = db
+            .import_account_ufvk(name, &ufvk, &birthday, AccountPurpose::Spending { derivation: Some(derivation) }, Some(SEALIT_SOURCE))
+            .map_err(db_err)?;
+        db.update_chain_tip(BlockHeight::from_u32(tip)).map_err(db_err)?;
+        Ok(imported.id().expose_uuid().to_string())
+    }
+
+    /// Whether the wallet on screen is signed on a phone with Seal it.
+    pub fn is_sealit(&self) -> Result<bool> {
+        let db = self.db()?;
+        let account = self.account(&db)?;
+        Ok(db.get_account(account).map_err(db_err)?.and_then(|a| a.source().key_source().map(|s| s == SEALIT_SOURCE)).unwrap_or(false))
+    }
+
+    /// Seal it, step 1: the payment as a PCZT. Returns the full PCZT (kept
+    /// here, for the proofs) and the QR frames of the redacted copy for the
+    /// phone.
+    pub fn seal_start(&self, payment: &PreparedPayment) -> Result<(Vec<u8>, Vec<String>)> {
+        use pczt::roles::redactor::Redactor;
+        let Planned::Notes(proposal) = &payment.proposal else {
+            return Err(Error::Other("Seal it signs payments only".into()));
+        };
+        let mut db = self.db()?;
+        let pczt = zcash_client_backend::data_api::wallet::create_pczt_from_proposal::<_, _, Infallible, _, Infallible, _>(
+            &mut db,
+            &MainNetwork,
+            &SystemClock,
+            &mut OsRng,
+            payment.account,
+            OvkPolicy::Sender,
+            proposal,
+            None,
+            zcash_primitives::transaction::builder::BundlePadding::DEFAULT,
+        )
+        .map_err(other)?;
+        if pczt.has_data_in_pool(zcash_protocol::PoolType::SAPLING) {
+            return Err(Error::Address("Seal it can't sign to or from an old Sapling address. Use a u1… or t1… address.".into()));
+        }
+        let full = pczt.clone().serialize().map_err(|e| other(format!("{e:?}")))?;
+        let redacted = Redactor::new(pczt)
+            .redact_orchard_with(|mut r| {
+                r.redact_actions(|mut a| a.clear_spend_witness());
+                r.clear_zkproof();
+            })
+            .redact_ironwood_with(|mut r| {
+                r.redact_actions(|mut a| a.clear_spend_witness());
+                r.clear_zkproof();
+            })
+            .finish();
+        let bytes = redacted.serialize().map_err(|e| other(format!("{e:?}")))?;
+        let frames = crate::sealit::ur_frames(crate::sealit::UR_PCZT, &crate::sealit::pczt_envelope(&bytes))?;
+        Ok((full, frames))
+    }
+
+    /// Seal it, step 2 (while the phone signs): the Orchard and Ironwood
+    /// proofs, made on this PC.
+    pub fn seal_prove(full: &[u8]) -> Result<Vec<u8>> {
+        use pczt::roles::prover::Prover;
+        let pczt = pczt::Pczt::parse(full).map_err(|e| other(format!("{e:?}")))?;
+        let pk = zcash_primitives::transaction::builder::cached_orchard_proving_key(circuit_version(&pczt)?);
+        let mut prover = Prover::new(pczt);
+        if prover.requires_sapling_proofs() {
+            return Err(Error::Other("Seal it can't sign Sapling".into()));
+        }
+        if prover.requires_orchard_proof() {
+            prover = prover.create_orchard_proof(OsRng, pk).map_err(|e| other(format!("the proof failed: {e:?}")))?;
+        }
+        if prover.requires_ironwood_proof() {
+            prover = prover.create_ironwood_proof(OsRng, pk).map_err(|e| other(format!("the proof failed: {e:?}")))?;
+        }
+        prover.finish().serialize().map_err(|e| other(format!("{e:?}")))
+    }
+
+    /// Seal it, step 3: the phone's signatures and this PC's proofs
+    /// together, ready to hand to the network (and stored in the wallet).
+    pub fn seal_finish(&self, proven: &[u8], signed_message: &[u8]) -> Result<SignedPayment> {
+        use pczt::roles::combiner::Combiner;
+        let signed = crate::sealit::parse_pczt(signed_message)?;
+        let signed = pczt::Pczt::parse(&signed).map_err(|_| Error::Other("the phone's signed transaction is damaged".into()))?;
+        let proven = pczt::Pczt::parse(proven).map_err(|e| other(format!("{e:?}")))?;
+        let combined = Combiner::new(vec![proven, signed])
+            .combine()
+            .map_err(|_| Error::Other("the signature is for another payment; start again".into()))?;
+        let vk = orchard::circuit::VerifyingKey::build(circuit_version(&combined)?);
+        let mut db = self.db()?;
+        let txid = zcash_client_backend::data_api::wallet::extract_and_store_transaction_from_pczt::<_, ReceivedNoteId>(
+            &mut db,
+            &SystemClock,
+            &mut OsRng,
+            combined,
+            None,
+            Some(&vk),
+        )
+        .map_err(|e| other(format!("the signed payment did not check out: {e}")))?;
+        let tx = db.get_transaction(txid).map_err(db_err)?.ok_or_else(|| other("the signed payment was not stored"))?;
+        let mut bytes = Vec::new();
+        tx.write(&mut bytes).map_err(other)?;
+        Ok(SignedPayment { txids: vec![txid.to_string()], raw: vec![bytes] })
+    }
+
+    /// Removes the selected wallet from the key ring (never the main one).
+    pub fn remove_account(&self) -> Result<()> {
+        let mut db = self.db()?;
+        let account = self.account(&db)?;
+        if account == Self::main_account(&db)? {
+            return Err(Error::Other("the main wallet is removed with Erase everything".into()));
+        }
+        db.delete_account(account).map_err(db_err)
     }
 
     /// Whether a wallet exists here.
@@ -263,7 +506,7 @@ impl Wallet {
             if text.to_lowercase().contains("insufficient") { Error::InsufficientFunds(text) } else { other(text) }
         })?;
         let fee: u64 = proposal.steps().iter().map(|step| step.balance().fee_required().into_u64()).sum();
-        Ok(PreparedPayment { proposal: Planned::Notes(proposal), amount, fee, to: to.trim().to_owned() })
+        Ok(PreparedPayment { proposal: Planned::Notes(proposal), account, amount, fee, to: to.trim().to_owned() })
     }
 
     /// "Move it to Ironwood": everything in the old Orchard pool, to this
@@ -313,7 +556,7 @@ impl Wallet {
         })?;
         let fee: u64 = proposal.steps().iter().map(|step| step.balance().fee_required().into_u64()).sum();
         let held = self.balance()?.orchard;
-        Ok(PreparedPayment { proposal: Planned::Notes(proposal), amount: held.saturating_sub(fee), fee, to: "Ironwood".into() })
+        Ok(PreparedPayment { proposal: Planned::Notes(proposal), account, amount: held.saturating_sub(fee), fee, to: "Ironwood".into() })
     }
 
     /// "Lock it in": every transparent Zcash of this wallet into its own
@@ -352,7 +595,7 @@ impl Wallet {
         })?;
         let fee: u64 = proposal.steps().iter().map(|step| step.balance().fee_required().into_u64()).sum();
         let held = self.balance()?.transparent;
-        Ok(PreparedPayment { proposal: Planned::Shielding(proposal), amount: held.saturating_sub(fee), fee, to: "Lock it in".into() })
+        Ok(PreparedPayment { proposal: Planned::Shielding(proposal), account, amount: held.saturating_sub(fee), fee, to: "Lock it in".into() })
     }
 
     /// Signs a prepared payment with the seed. The signed payment is stored
@@ -365,8 +608,7 @@ impl Wallet {
     pub fn sign(&self, payment: &PreparedPayment, seed: &Seed, sapling_params: &Path) -> Result<SignedPayment> {
         let mut db = self.db()?;
         let usk = UnifiedSpendingKey::from_seed(&MainNetwork, seed.expose_secret(), zip32::AccountId::ZERO).map_err(other)?;
-        let account = self.account(&db)?;
-        let derived = db.get_account(account).map_err(db_err)?.ok_or(Error::NoWallet)?;
+        let derived = db.get_account(payment.account).map_err(db_err)?.ok_or(Error::NoWallet)?;
         if derived.ufvk().map(|k| k.encode(&MainNetwork)) != Some(usk.to_unified_full_viewing_key().encode(&MainNetwork)) {
             return Err(Error::Phrase("the words in the lock do not belong to this wallet".into()));
         }
@@ -415,18 +657,23 @@ impl Wallet {
 
     /// The newest payments in and out, newest first.
     pub fn activity(&self, limit: u32) -> Result<Vec<Activity>> {
+        let account = {
+            let db = self.db()?;
+            self.account(&db)?
+        };
         let conn = rusqlite::Connection::open(self.db_path()).map_err(db_err)?;
         conn.busy_timeout(std::time::Duration::from_secs(15)).map_err(db_err)?;
         let mut statement = conn
             .prepare(
                 "SELECT txid, mined_height, account_balance_delta, block_time, expired_unmined
                  FROM v_transactions
+                 WHERE account_uuid = ?2
                  ORDER BY (mined_height IS NULL) DESC, mined_height DESC
                  LIMIT ?1",
             )
             .map_err(db_err)?;
         let rows = statement
-            .query_map([limit], |row| {
+            .query_map(rusqlite::params![limit, account.expose_uuid().as_bytes().to_vec()], |row| {
                 let txid: Vec<u8> = row.get(0)?;
                 Ok(Activity {
                     // Shown the way explorers show it: bytes reversed.
@@ -534,6 +781,28 @@ mod tests {
         assert!(wallet.prepare_ironwood_move().is_err(), "nothing in Orchard to move");
         assert!(wallet.prepare_lock_in().is_err(), "nothing transparent to lock in");
         assert!(wallet.balance().is_ok(), "the wallet is unchanged");
+    }
+
+    #[test]
+    fn the_key_ring_holds_wallets_side_by_side() {
+        let (_dir, wallet, _seed) = fresh();
+        let birthday = AccountBirthday::from_parts(
+            zcash_client_backend::data_api::chain::ChainState::empty(BlockHeight::from_u32(SAPLING_ACTIVATION - 1), BlockHash([0; 32])),
+            None,
+        );
+        let second = phrase_to_seed(&new_phrase()).unwrap();
+        let id = wallet.add_wallet_from_birthday("Savings", &second, &birthday, SAPLING_ACTIVATION + 10).unwrap();
+        let list = wallet.accounts().unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list[0].main && !list[1].main, "the main wallet comes first");
+        assert_eq!(list[1].name, "Savings");
+        let extra = wallet.for_account(Some(&id));
+        assert_ne!(extra.receive_address().unwrap(), wallet.receive_address().unwrap());
+        assert!(extra.activity(10).unwrap().is_empty());
+        assert!(wallet.add_wallet_from_birthday("Again", &second, &birthday, SAPLING_ACTIVATION + 10).is_err(), "never twice");
+        assert!(wallet.remove_account().is_err(), "the main wallet is not removed this way");
+        extra.remove_account().unwrap();
+        assert_eq!(wallet.accounts().unwrap().len(), 1);
     }
 
     #[test]

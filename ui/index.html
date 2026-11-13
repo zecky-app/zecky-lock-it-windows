@@ -10,6 +10,7 @@
   <header class="top">
     <span class="brand">ZECKY</span>
     <span class="product">Lock it</span>
+    <button type="button" class="wallet-pill" id="wallet-pill" title="Your wallets" hidden><span id="wallet-pill-name">Main wallet</span><span class="pill-chev">▾</span></button>
     <button type="button" class="icon-button" id="eye" title="Hide amounts" aria-label="Hide amounts" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path class="slash" d="M4 20 20 4"/></svg>
     </button>
@@ -38,7 +39,15 @@
       <p class="lead">A calm wallet that keeps your savings yours. Only your keys open it.</p>
       <button type="button" class="brass" id="welcome-create">Create a new wallet</button>
       <button type="button" class="secondary" id="welcome-restore">Restore with 24 words</button>
-      <p class="quiet center test-note">Test build. Use a small amount only.</p>
+      <div class="card pad first-steps">
+        <p class="card-title">Testing Lock it? Three steps</p>
+        <ol class="small">
+          <li>Create a wallet and write the 24 words on paper.</li>
+          <li>Receive a small amount (under 0.1 ZEC) and wait until it shows.</li>
+          <li>Send part of it back. Something odd? Settings › About › Report a problem.</li>
+        </ol>
+      </div>
+      <p class="quiet center test-note">Beta. Use small amounts only.</p>
     </section>
 
     <section id="view-words" class="view" hidden>
@@ -146,6 +155,7 @@
           <svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none"/></svg>
           Receive
         </button>
+        <button type="button" class="secondary seal-send" id="home-seal-send" hidden>Send with Seal it</button>
       </div>
       <div class="actions" id="actions-open" hidden>
         <button type="button" class="brass brass-big" id="home-send">
@@ -192,6 +202,89 @@
 
   <!-- ===== Sheets ===== -->
   <div class="sheet-layer" id="sheet-layer" hidden>
+    <!-- Wallets: the key ring -->
+    <section class="sheet" id="sheet-wallets" hidden>
+      <div class="sheet-head">
+        <div><p class="eyebrow">ZECKY</p><h2 class="sheet-title">Your wallets</h2>
+        <p class="sheet-sub">Every wallet sits behind the same lock and the same keys.</p></div>
+        <button type="button" class="done" data-close>Done</button>
+      </div>
+      <div class="sheet-scroll">
+        <div class="card list" id="wallet-list"></div>
+        <div class="card pad" id="wallet-edit" hidden>
+          <p class="card-title" id="wallet-edit-title">Wallet</p>
+          <label class="field"><span>Name</span><input class="input" id="wallet-rename" maxlength="40" spellcheck="false" autocomplete="off"></label>
+          <div class="inline">
+            <button type="button" class="secondary narrow" id="wallet-rename-save">Save the name</button>
+            <button type="button" class="secondary narrow danger-text" id="wallet-remove">Remove from this PC</button>
+          </div>
+          <p class="small quiet" id="wallet-edit-note">Removing takes its words off this PC. Its Zcash stays on the blockchain: with the 24 words you can add it again.</p>
+          <p id="wallet-edit-message" class="message" role="status" aria-live="polite"></p>
+        </div>
+        <div class="card pad" id="wallet-add">
+          <p class="card-title">Add a wallet</p>
+          <p class="small quiet">For example savings apart from spending. It gets its own 24 words; write those down too.</p>
+          <label class="field"><span>Name</span><input class="input" id="wallet-name" maxlength="40" placeholder="Savings" spellcheck="false" autocomplete="off"></label>
+          <div class="inline">
+            <button type="button" class="secondary narrow" id="wallet-new">New words</button>
+            <button type="button" class="secondary narrow" id="wallet-restore">Restore with 24 words</button>
+          </div>
+          <button type="button" class="link-gold" id="wallet-pair">Or pair a phone with Seal it ›</button>
+          <p id="wallet-message" class="message" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Seal it: pairing a phone, and sending with its signature -->
+    <section class="sheet" id="sheet-seal" hidden>
+      <div class="sheet-head">
+        <div><p class="eyebrow">SEAL IT</p><h2 class="sheet-title" id="seal-title">Pair a phone</h2>
+        <p class="sheet-sub" id="seal-sub">The keys stay on your phone. This PC only sees the balance and builds payments.</p></div>
+        <button type="button" class="done" id="seal-close">Cancel</button>
+      </div>
+      <div class="sheet-scroll seal-body">
+        <div class="seal-stage" data-seal="form" hidden>
+          <label class="field"><span>To</span><input class="input mono" id="seal-to" spellcheck="false" autocomplete="off" placeholder="u1… or t1… address"></label>
+          <label class="field"><span>Amount (ZEC)</span><input class="input" id="seal-amount" inputmode="decimal" autocomplete="off" placeholder="0.01"></label>
+          <label class="field"><span>Note (private, optional)</span><input class="input" id="seal-memo" maxlength="500" autocomplete="off"></label>
+          <div class="card pad seal-summary" id="seal-summary" hidden></div>
+          <p class="small beta-warning" id="seal-small-note">This is a beta. Please keep amounts small while testing (under 0.1 ZEC).</p>
+          <button type="button" class="brass" id="seal-work">Work it out</button>
+          <button type="button" class="brass" id="seal-show" hidden>Show it to my phone</button>
+        </div>
+        <div class="seal-stage" data-seal="show" hidden>
+          <img id="seal-qr" class="qr seal-qr" alt="The payment as a QR code for your phone">
+          <p class="small quiet center" id="seal-frame"></p>
+          <p class="lead center">In Seal it on your phone, tap Scan and point it at this code. Check the amount and the address on the phone, then approve.</p>
+          <button type="button" class="brass" id="seal-signed">The phone signed it</button>
+        </div>
+        <div class="seal-stage" data-seal="scan" hidden>
+          <div class="camera"><video id="seal-video" playsinline muted></video><div class="camera-frame"></div></div>
+          <p class="center" id="seal-progress">Hold the phone's code in front of the camera.</p>
+          <details class="seal-paste" id="seal-paste-box">
+            <summary>No webcam? Paste the code as text</summary>
+            <textarea id="seal-paste" class="input mono" rows="3" spellcheck="false" placeholder="ur:zcash-accounts/…"></textarea>
+            <button type="button" class="secondary narrow" id="seal-paste-go">Read it</button>
+          </details>
+        </div>
+        <div class="seal-stage" data-seal="age" hidden>
+          <p class="lead">When were your phone's words made? With a new wallet, Lock it starts at today's block and is ready in a minute.</p>
+          <button type="button" class="brass" id="seal-new">It is a new phone wallet</button>
+          <p class="lead">Older? A rough guess is fine: earlier is safer.</p>
+          <div class="seal-dates">
+            <select id="seal-month" class="input" aria-label="Month"></select>
+            <select id="seal-year" class="input" aria-label="Year"></select>
+          </div>
+          <button type="button" class="secondary" id="seal-old">Pair from that month</button>
+        </div>
+        <div class="seal-stage" data-seal="done" hidden>
+          <p class="lead center" id="seal-done-text"></p>
+          <button type="button" class="brass" id="seal-done">Done</button>
+        </div>
+        <p id="seal-message" class="message" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
     <!-- Receive -->
     <section class="sheet" id="sheet-receive" hidden>
       <div class="sheet-head">
@@ -221,6 +314,7 @@
         <label class="field"><span>Amount</span>
           <span class="amount-row"><input class="input" id="send-amount" inputmode="decimal" placeholder="0.000"><span class="unit-chip">ZEC</span></span>
         </label>
+        <p class="small beta-warning" id="send-beta" hidden>This is a beta. Please keep amounts small while testing (under 0.1 ZEC).</p>
         <label class="field"><span>Private note (optional)</span><input class="input" id="send-memo" maxlength="512" placeholder="Only the receiver can read this"></label>
       </form>
       <div id="send-receipt" class="receipt" hidden>
@@ -579,6 +673,12 @@
             </div>
           </div>
           <div class="card pad">
+            <p class="card-title">Report a problem</p>
+            <p class="small quiet">Copies a short report: the version, Windows, the sync state and the recent problems. No words, keys, addresses or amounts are in it. Paste it in a new issue on the GitHub page where you downloaded Lock it.</p>
+            <button type="button" class="secondary narrow" id="report-copy">Copy a problem report</button>
+            <p id="report-message" class="message calm" role="status" aria-live="polite"></p>
+          </div>
+          <div class="card pad">
             <p class="card-title">Where your Zcash is</p>
             <div class="about-lines">
               <div><span>Ironwood · current since NU6.3 (28 July 2026); new Zcash goes here</span><strong id="pool-ironwood"></strong></div>
@@ -719,6 +819,7 @@
       </div>
     </div>
   </div>
+  <script src="vendor/jsQR.js"></script>
   <script src="padlock.js"></script>
   <script src="main.js"></script>
 </body>

@@ -19,6 +19,7 @@
 
 mod go_max;
 mod rules;
+mod sealit;
 mod wallet;
 
 use std::{fs, path::PathBuf};
@@ -306,6 +307,7 @@ pub fn run() {
         }))
         .manage(go_max::GoMaxSlot::default())
         .manage(wallet::WalletSlot::default())
+        .manage(sealit::SealSlot::default())
         .setup(|app| {
             wallet::start_syncing(app.handle().clone());
             Ok(())
@@ -331,6 +333,16 @@ pub fn run() {
             wallet::wallet_sync_now,
             wallet::wallet_show_words,
             wallet::wallet_viewing_key,
+            wallet::keyring_select,
+            wallet::keyring_add,
+            wallet::keyring_remove,
+            wallet::keyring_rename,
+            sealit::sealit_scan_start,
+            sealit::sealit_scan_push,
+            sealit::sealit_pair,
+            sealit::sealit_start,
+            sealit::sealit_finish,
+            sealit::sealit_cancel,
             wallet::wallet_erase,
             wallet::settings_get,
             wallet::settings_set_server,

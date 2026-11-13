@@ -122,6 +122,7 @@ function showView(name) {
   onboarding.hidden = name === "home";
   $("view-home").hidden = name !== "home";
   $("eye").hidden = name !== "home";
+  $("wallet-pill").hidden = name !== "home";
   for (const [key, element] of Object.entries(views)) element.hidden = key !== name;
   if (name === "home") startHome();
   else stopHome();
@@ -162,7 +163,7 @@ function forgetWords() {
   invoke("wallet_forget_words");
 }
 
-$("words-back").addEventListener("click", () => { forgetWords(); showView("welcome"); });
+$("words-back").addEventListener("click", () => { forgetWords(); leaveOnboarding(); });
 
 $("words-done").addEventListener("click", () => {
   const positions = new Set();
@@ -198,7 +199,8 @@ $("check-submit").addEventListener("click", () => {
   }
   for (const input of inputs) input.value = "";
   words = [];
-  openSetup();
+  if (adding) finishAdding();
+  else openSetup();
 });
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -217,13 +219,14 @@ $("welcome-restore").addEventListener("click", () => {
   showView("restore");
   $("restore-words").focus();
 });
-$("restore-back").addEventListener("click", () => { forgetWords(); showView("welcome"); });
+$("restore-back").addEventListener("click", () => { forgetWords(); leaveOnboarding(); });
 $("restore-submit").addEventListener("click", async () => {
   try {
     await invoke("wallet_use_words", { words: $("restore-words").value });
     $("restore-words").value = "";
     madeIn = { year: Number($("restore-year").value), month: Number($("restore-month").value) };
-    openSetup();
+    if (adding) finishAdding();
+    else openSetup();
   } catch (problem) {
     say($("restore-message"), describe(problem));
   }
@@ -356,6 +359,7 @@ function heldDays() {
 }
 
 function renderHome() {
+  renderWalletPill();
   const b = overview.balance || { total: 0, spendable: 0, pending: 0, chain_tip: 0 };
   const hidden = prefs.hidden;
   $("eye").classList.toggle("on", hidden);
@@ -396,6 +400,10 @@ function renderHome() {
   Lockart.setOpen(padlockHost, lockOpen);
   Lockart.setPlate(padlockHost, lockOpen ? "OPEN" : "LOCKED");
   padlockHost.title = lockOpen ? "" : "Open the lock";
+  const sealed = sealedWallet();
+  $("home-seal-send").hidden = !sealed;
+  if (sealed && b.total > 0 && days === null) $("held-line").textContent = "Keys on your phone (Seal it)";
+  padlockHost.title = sealed ? "Send with Seal it" : padlockHost.title;
   $("actions-locked").hidden = lockOpen;
   $("actions-open").hidden = !lockOpen;
 
@@ -642,6 +650,7 @@ async function openWithoutPause() {
 
 function askToOpen() {
   if (lockOpen || !overview) return;
+  if (sealedWallet()) return openSeal("send");
   if (rules && (rules.phase.phase === "not_asked" || rules.phase.phase === "waiting")) return showTimeLock();
   OPEN_WAIT = overview.settings ? overview.settings.wait : 10;
   if (OPEN_WAIT === 0) return openWithoutPause();
@@ -716,6 +725,464 @@ $("home-close").addEventListener("click", closeLock);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && lockOpen && !sending) closeLock();
 });
+
+// ---------- Wallets: the key ring ----------
+
+/// The wallet being added (its name) while the words are shown or typed.
+let adding = null;
+const viewTitles = {
+  words: views.words.querySelector(".title").textContent,
+  restore: views.restore.querySelector(".title").textContent,
+};
+
+function walletName(w) {
+  return w.main && w.name === "Lock it" ? "Main wallet" : w.name;
+}
+
+function currentWallet() {
+  const list = (overview && overview.wallets) || [];
+  const id = overview && overview.settings && overview.settings.current;
+  return list.find((w) => (id ? w.id === id : w.main)) || list[0] || null;
+}
+
+function renderWalletPill() {
+  const w = currentWallet();
+  $("wallet-pill-name").textContent = w ? walletName(w) : "Main wallet";
+  $("wallet-pill").classList.toggle("on", Boolean(w && !w.main));
+}
+
+let editing = null;
+
+function renderWallets() {
+  const list = $("wallet-list");
+  list.textContent = "";
+  const current = currentWallet();
+  for (const w of (overview && overview.wallets) || []) {
+    const row = document.createElement("div");
+    row.className = "row wallet-row";
+    row.classList.toggle("on", Boolean(current && current.id === w.id));
+    const pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "wallet-pick";
+    const icon = document.createElement("span");
+    icon.className = "row-icon";
+    icon.textContent = current && current.id === w.id ? "●" : "○";
+    const title = document.createElement("span");
+    title.className = "row-title";
+    title.textContent = walletName(w);
+    pick.append(icon, title);
+    if (w.main) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "main";
+      pick.append(tag);
+    }
+    if (w.watch_only) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "Seal it";
+      pick.append(tag);
+    }
+    pick.addEventListener("click", () => chooseWallet(w));
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "edit";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => editWallet(w));
+    row.append(pick, edit);
+    list.append(row);
+  }
+  $("wallet-edit").hidden = !editing;
+  $("wallet-add").hidden = Boolean(editing);
+}
+
+async function chooseWallet(w) {
+  try {
+    await invoke("keyring_select", { id: w.main ? null : w.id });
+    if (lockOpen) await invoke("wallet_close_lock");
+    closeSheet();
+    activity = [];
+    await refreshHome();
+  } catch (problem) {
+    say($("wallet-message"), describe(problem));
+  }
+}
+
+function editWallet(w) {
+  editing = w;
+  $("wallet-edit-title").textContent = walletName(w);
+  $("wallet-rename").value = walletName(w);
+  $("wallet-remove").hidden = w.main;
+  $("wallet-edit-note").textContent = w.main
+    ? "The main wallet's words are the ones sealed in the lock. It is removed only with Erase everything, in Settings › Security."
+    : "Removing takes its words off this PC. Its Zcash stays on the blockchain: with the 24 words you can add it again.";
+  say($("wallet-edit-message"), "");
+  $("wallet-edit").hidden = false;
+  $("wallet-add").hidden = true;
+  $("wallet-rename").focus();
+}
+
+$("wallet-pill").addEventListener("click", () => {
+  editing = null;
+  say($("wallet-message"), "");
+  renderWallets();
+  openSheet("wallets");
+});
+
+$("wallet-rename-save").addEventListener("click", async () => {
+  if (!editing) return;
+  try {
+    await invoke("keyring_rename", { id: editing.main ? null : editing.id, name: $("wallet-rename").value });
+    editing = null;
+    await refreshHome();
+    renderWallets();
+  } catch (problem) {
+    say($("wallet-edit-message"), describe(problem));
+  }
+});
+
+$("wallet-remove").addEventListener("click", async () => {
+  if (!editing || editing.main) return;
+  const w = editing;
+  try {
+    const typed = await askKeys(`Remove ${walletName(w)}?`, "Its words leave this PC. Make sure you have them on paper: without them, its Zcash cannot be taken out anywhere.", { danger: true, action: "Remove" });
+    await invoke("keyring_remove", { id: w.id, typed: typedOnly(typed) });
+    editing = null;
+    await refreshHome();
+    renderWallets();
+  } catch (problem) {
+    say($("wallet-edit-message"), describe(problem));
+  }
+});
+
+function newWalletName() {
+  const name = $("wallet-name").value.trim();
+  if (!name) {
+    say($("wallet-message"), "Give the wallet a name first.");
+    $("wallet-name").focus();
+    return null;
+  }
+  return name;
+}
+
+$("wallet-new").addEventListener("click", async () => {
+  const name = newWalletName();
+  if (!name) return;
+  try {
+    words = await invoke("wallet_new_words");
+    madeIn = null;
+    adding = name;
+    views.words.querySelector(".title").textContent = `Words for ${name}`;
+    listWords();
+    closeSheet();
+    showView("words");
+  } catch (problem) {
+    say($("wallet-message"), describe(problem));
+  }
+});
+
+$("wallet-restore").addEventListener("click", () => {
+  const name = newWalletName();
+  if (!name) return;
+  adding = name;
+  views.restore.querySelector(".title").textContent = `Restore ${name}`;
+  $("restore-words").value = "";
+  say($("restore-message"), "");
+  closeSheet();
+  showView("restore");
+  $("restore-words").focus();
+});
+
+function leaveOnboarding() {
+  if (adding) {
+    adding = null;
+    views.words.querySelector(".title").textContent = viewTitles.words;
+    views.restore.querySelector(".title").textContent = viewTitles.restore;
+    showView("home");
+  } else {
+    showView("welcome");
+  }
+}
+
+async function finishAdding() {
+  const name = adding;
+  const message = views.check.hidden ? $("restore-message") : $("check-message");
+  try {
+    const typed = await askKeys(`Add ${name}`, "Your keys are asked once: the new words are sealed with your main words, behind the same lock.", { action: "Add the wallet" });
+    say(message, "Adding the wallet. This takes a moment.");
+    await invoke("keyring_add", { name, madeIn, typed: typedOnly(typed) });
+    $("wallet-name").value = "";
+    say(message, "");
+    forgetWords();
+    leaveOnboarding();
+    activity = [];
+    await refreshHome();
+  } catch (problem) {
+    const text = describe(problem);
+    say(message, text || "Not confirmed, so nothing was added.");
+  }
+}
+
+// ---------- Beta: small amounts, problem reports ----------
+
+$("send-amount").addEventListener("input", () => {
+  const value = Number($("send-amount").value.replace(",", "."));
+  $("send-beta").hidden = !(value > 0.1);
+});
+
+$("report-copy").addEventListener("click", async () => {
+  const o = overview || {};
+  const b = o.balance || {};
+  const s = o.sync || {};
+  let version = "";
+  try { version = (await invoke("settings_get")).version; } catch (_) { /* not needed */ }
+  const lines = [
+    "Zecky Lock it for Windows: problem report",
+    `Version: ${version}`,
+    `Windows: ${navigator.userAgent}`,
+    `Sync: ${s.state || "?"} via ${s.server || "?"}${s.problem ? ` (${s.problem})` : ""}`,
+    `Scanned to block ${b.scanned_height || "?"} of ${b.chain_tip || "?"}`,
+    `Wallets: ${(o.wallets || []).length} (Seal it: ${(o.wallets || []).filter((w) => w.watch_only).length})`,
+    `Keys: ${(o.keys || []).map((k) => k.kind).join(", ")}`,
+    `Tor for sending: ${o.settings && o.settings.tor ? "on" : "off"}`,
+    "Recent problems:",
+    ...((o.problems || []).map((p) => `  ${new Date(p.at * 1000).toISOString()}  ${p.message}`)),
+    "",
+    "What happened (in your words):",
+    "",
+  ];
+  try {
+    await navigator.clipboard.writeText(lines.join("\n"));
+    say($("report-message"), "Copied. Paste it in a new issue on the GitHub page and add what you did.", true);
+  } catch (_) {
+    say($("report-message"), "Copying did not work. Take a screenshot of this page instead.");
+  }
+});
+
+// ---------- Seal it ----------
+
+function sealedWallet() {
+  const w = currentWallet();
+  return Boolean(w && w.watch_only);
+}
+
+const seal = { mode: null, frames: [], frameTimer: null, stream: null, scanTimer: null, kind: null };
+
+(function fillSealDates() {
+  const month = $("seal-month");
+  MONTHS.forEach((name, index) => month.append(new Option(name, index + 1)));
+  const year = $("seal-year");
+  const now = new Date();
+  for (let y = now.getFullYear(); y >= 2018; y -= 1) year.append(new Option(String(y), y));
+  month.value = String(now.getMonth() + 1);
+})();
+
+function sealStage(name) {
+  for (const stage of document.querySelectorAll("#sheet-seal .seal-stage")) stage.hidden = stage.dataset.seal !== name;
+  if (name !== "show") stopFrames();
+  if (name !== "scan") stopCamera();
+  say($("seal-message"), "");
+}
+
+function openSeal(mode) {
+  seal.mode = mode;
+  closeSheet();
+  openSheet("seal");
+  if (mode === "pair") {
+    $("seal-title").textContent = "Pair a phone";
+    $("seal-sub").textContent = "The keys stay on your phone. This PC only sees the balance and builds payments.";
+    startScan("accounts", "In Seal it on your phone, open the account QR code and hold it in front of the camera.");
+  } else {
+    const w = currentWallet();
+    $("seal-title").textContent = `Send from ${w ? walletName(w) : "Seal it"}`;
+    $("seal-sub").textContent = "Your phone signs it. Nothing that can spend is on this PC.";
+    for (const id of ["seal-to", "seal-amount", "seal-memo"]) $(id).value = "";
+    $("seal-summary").hidden = true;
+    $("seal-show").hidden = true;
+    $("seal-work").hidden = false;
+    sealStage("form");
+    $("seal-to").focus();
+  }
+}
+
+function closeSeal() {
+  stopFrames();
+  stopCamera();
+  invoke("sealit_cancel").catch(() => {});
+  closeSheet();
+}
+$("seal-close").addEventListener("click", closeSeal);
+$("home-seal-send").addEventListener("click", () => openSeal("send"));
+$("wallet-pair").addEventListener("click", () => openSeal("pair"));
+$("seal-done").addEventListener("click", closeSeal);
+
+for (const id of ["seal-to", "seal-amount", "seal-memo"]) {
+  $(id).addEventListener("input", () => { $("seal-summary").hidden = true; $("seal-show").hidden = true; $("seal-work").hidden = false; });
+}
+
+$("seal-work").addEventListener("click", async () => {
+  say($("seal-message"), "");
+  try {
+    const p = await invoke("wallet_prepare", { to: $("seal-to").value.trim(), amount: $("seal-amount").value, memo: $("seal-memo").value || null });
+    const box = $("seal-summary");
+    box.textContent = "";
+    for (const [label, value] of [["To", p.to], ["Amount", amountText(p.amount)], ["Fee", amountText(p.fee)], ["Total", amountText(p.total)]]) {
+      const line = document.createElement("p");
+      line.className = label === "To" ? "mono small" : "";
+      line.textContent = `${label}: ${value}`;
+      box.append(line);
+    }
+    box.hidden = false;
+    $("seal-work").hidden = true;
+    $("seal-show").hidden = false;
+  } catch (problem) {
+    say($("seal-message"), describe(problem));
+  }
+});
+
+$("seal-show").addEventListener("click", async () => {
+  say($("seal-message"), "Building the payment…", true);
+  $("seal-show").disabled = true;
+  try {
+    const unsigned = await invoke("sealit_start");
+    seal.frames = unsigned.frames.map((svg) => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg));
+    sealStage("show");
+    let index = 0;
+    const show = () => {
+      $("seal-qr").src = seal.frames[index % seal.frames.length];
+      $("seal-frame").textContent = seal.frames.length > 1 ? "A moving code: keep the phone on it until it is read." : "";
+      index += 1;
+    };
+    show();
+    if (seal.frames.length > 1) seal.frameTimer = setInterval(show, 250);
+  } catch (problem) {
+    say($("seal-message"), describe(problem));
+  } finally {
+    $("seal-show").disabled = false;
+  }
+});
+
+function stopFrames() {
+  clearInterval(seal.frameTimer);
+  seal.frameTimer = null;
+}
+
+$("seal-signed").addEventListener("click", () => startScan("pczt", "Now hold the phone's signed code in front of the camera."));
+
+async function startScan(kind, hint) {
+  seal.kind = kind;
+  sealStage("scan");
+  document.querySelector("#sheet-seal .camera").hidden = false;
+  $("seal-progress").textContent = hint;
+  $("seal-paste").value = "";
+  $("seal-paste").placeholder = kind === "accounts" ? "ur:zcash-accounts/…" : "ur:zcash-pczt/…";
+  try {
+    await invoke("sealit_scan_start", { kind });
+  } catch (problem) {
+    return say($("seal-message"), describe(problem));
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return noCamera("This PC has no camera that Lock it can use.");
+  try {
+    seal.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+  } catch (error) {
+    const name = error && error.name;
+    return noCamera(name === "NotAllowedError"
+      ? "Lock it was not allowed to use the camera. Allow it in Windows Settings › Privacy › Camera, then try again."
+      : name === "NotFoundError" || name === "OverconstrainedError"
+        ? "No webcam was found. Seal it reads the phone's codes with a webcam; everything else in Lock it works without one."
+        : "The camera could not start. Close other apps that use it, then try again.");
+  }
+  const video = $("seal-video");
+  video.srcObject = seal.stream;
+  await video.play().catch(() => {});
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  let last = "";
+  seal.scanTimer = setInterval(async () => {
+    if (!video.videoWidth) return;
+    const width = 640;
+    const height = Math.round((video.videoHeight / video.videoWidth) * width);
+    canvas.width = width;
+    canvas.height = height;
+    context.drawImage(video, 0, 0, width, height);
+    const found = jsQR(context.getImageData(0, 0, width, height).data, width, height, { inversionAttempts: "attemptBoth" });
+    if (!found || !found.data || found.data === last) return;
+    last = found.data;
+    await pushScanned(found.data);
+  }, 120);
+}
+
+function noCamera(text) {
+  document.querySelector("#sheet-seal .camera").hidden = true;
+  $("seal-progress").textContent = text;
+  $("seal-paste-box").open = true;
+}
+
+function stopCamera() {
+  clearInterval(seal.scanTimer);
+  seal.scanTimer = null;
+  if (seal.stream) for (const track of seal.stream.getTracks()) track.stop();
+  seal.stream = null;
+  const video = $("seal-video");
+  if (video) video.srcObject = null;
+}
+
+let pushing = false;
+async function pushScanned(text) {
+  if (pushing) return;
+  pushing = true;
+  try {
+    const progress = await invoke("sealit_scan_push", { text });
+    if (!progress.done) {
+      $("seal-progress").textContent = progress.of > 1 ? `Reading the moving code: ${Math.min(99, Math.round((progress.seen / progress.of) * 100))}%` : "Reading…";
+      return;
+    }
+    stopCamera();
+    if (seal.kind === "accounts") sealStage("age");
+    else await finishSeal();
+  } catch (problem) {
+    say($("seal-message"), describe(problem));
+  } finally {
+    pushing = false;
+  }
+}
+
+$("seal-paste-go").addEventListener("click", async () => {
+  const lines = $("seal-paste").value.split(/\s+/).filter(Boolean);
+  for (const line of lines) await pushScanned(line);
+});
+
+async function pair(madeIn) {
+  say($("seal-message"), "Pairing. This takes a moment.", true);
+  try {
+    await invoke("sealit_pair", { madeIn });
+    activity = [];
+    await refreshHome();
+    sealStage("done");
+    $("seal-done-text").textContent = "Paired. Lock it now follows this phone wallet's balance; payments from it are signed on the phone.";
+  } catch (problem) {
+    say($("seal-message"), describe(problem));
+  }
+}
+$("seal-new").addEventListener("click", () => pair(null));
+$("seal-old").addEventListener("click", () => pair({ year: Number($("seal-year").value), month: Number($("seal-month").value) }));
+
+async function finishSeal() {
+  sealStage("done");
+  $("seal-done-text").textContent = "Finishing the proofs and sending…";
+  $("seal-done").hidden = true;
+  try {
+    const over = overview && overview.settings ? overview.settings.tor : true;
+    const sent = await invoke("sealit_finish", { overTor: over });
+    $("seal-done-text").textContent = `Sent. ${sent.accepted_by.length ? "The network has it." : ""}`.trim();
+    activity = [];
+    await refreshHome();
+  } catch (problem) {
+    $("seal-done-text").textContent = describe(problem) || "It did not go through.";
+  } finally {
+    $("seal-done").hidden = false;
+  }
+}
 
 // ---------- Sheets ----------
 

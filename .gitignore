@@ -11,3 +11,6 @@ pc-test/
 
 # The Sapling proving files (51 MB) come from Lock it Mac or zcash fetch-params; never committed.
 src-tauri/params/
+
+# Built release files (installer, zip, checksums) are uploaded to GitHub releases, never committed.
+release/

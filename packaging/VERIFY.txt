@@ -1,0 +1,19 @@
+Checking your download (2 minutes, worth it for a wallet)
+
+1. The checksum. In PowerShell, in the folder with the download:
+
+     Get-FileHash .\ZeckyLockIt-0.1.0-beta.1-setup.exe
+
+   The long number must match the line for that file in SHA256SUMS.txt.
+   (Portable zip: same, with ZeckyLockIt-0.1.0-beta.1-portable.zip.)
+
+2. The signature on SHA256SUMS.txt (proves the list itself came from me).
+   With Gpg4win (gpg4win.org) or any GnuPG:
+
+     gpg --import zecky-release-key.asc
+     gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
+
+   It must say "Good signature". The key's fingerprint is published on the
+   GitHub release page and on X; compare it there.
+
+Both match? Then the file is exactly what was released.

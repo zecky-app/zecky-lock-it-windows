@@ -22,6 +22,7 @@ use lockit_auth::{KeyDescriptor, Secret, Vault};
 use lockit_wallet::{Activity, Balance, PreparedPayment, Server, SignedPayment, Wallet};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
+use secrecy::ExposeSecret;
 use zeroize::Zeroizing;
 
 use crate::{go_max::GoMaxSlot, problem, source_for, ChosenKey, CommandResult, KeySummary, Problem};
@@ -72,7 +73,7 @@ pub struct SyncProblem {
     message: String,
 }
 
-fn runtime() -> &'static tokio::runtime::Runtime {
+pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
@@ -90,8 +91,52 @@ pub(crate) fn data_dir(app: &AppHandle) -> CommandResult<PathBuf> {
     Ok(dir)
 }
 
+/// The wallet on screen (the main one, or another on the key ring).
 pub(crate) fn wallet(app: &AppHandle) -> CommandResult<Wallet> {
+    Ok(main_wallet(app)?.for_account(load_settings(app).current.as_deref()))
+}
+
+pub(crate) fn main_wallet(app: &AppHandle) -> CommandResult<Wallet> {
     Ok(Wallet::new(data_dir(app)?.join("wallet")))
+}
+
+/// One extra wallet's words, sealed with a key from the main words.
+#[derive(Clone, Serialize, Deserialize)]
+struct RingEntry {
+    id: String,
+    sealed: String,
+}
+
+fn keyring_path(app: &AppHandle) -> CommandResult<PathBuf> {
+    Ok(data_dir(app)?.join("keyring.json"))
+}
+
+fn load_keyring(app: &AppHandle) -> Vec<RingEntry> {
+    keyring_path(app)
+        .ok()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+fn save_keyring(app: &AppHandle, ring: &[RingEntry]) -> CommandResult<()> {
+    let json = serde_json::to_string_pretty(ring).map_err(|e| problem(e.to_string()))?;
+    let path = keyring_path(app)?;
+    let fresh = path.with_extension("new.json");
+    fs::write(&fresh, json).map_err(|e| problem(format!("the key ring could not be saved: {e}")))?;
+    fs::rename(&fresh, &path).map_err(|e| problem(format!("the key ring could not be saved: {e}")))
+}
+
+/// The words that sign for the wallet on screen: the main words, or an
+/// extra wallet's words opened with them.
+fn signing_phrase(app: &AppHandle, main_phrase: &Zeroizing<String>) -> CommandResult<Zeroizing<String>> {
+    let Some(current) = load_settings(app).current else { return Ok(main_phrase.clone()) };
+    let entry = load_keyring(app).into_iter().find(|entry| entry.id == current);
+    let Some(entry) = entry else {
+        return Err(problem("this wallet is watch-only here: it is signed on your phone with Seal it"));
+    };
+    let seed = lockit_wallet::phrase_to_seed(main_phrase)?;
+    Ok(lockit_auth::keyring::open_words(seed.expose_secret(), &entry.sealed)?)
 }
 
 fn lock_path(app: &AppHandle) -> CommandResult<PathBuf> {
@@ -128,11 +173,15 @@ pub struct Settings {
     /// Ask the keys when Lock it opens and after it locked itself
     /// (key 1, "Opening Zecky" on the Mac). On by default.
     pub(crate) ask_on_start: bool,
+    /// The wallet of the key ring on screen (its id); `None` is the main one.
+    current: Option<String>,
+    /// Names given to wallets after they were added (id → name).
+    names: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { server: None, tor: true, wait: 10, ask_on_start: true }
+        Self { server: None, tor: true, wait: 10, ask_on_start: true, current: None, names: Default::default() }
     }
 }
 
@@ -164,7 +213,7 @@ fn server_for(choice: &Option<(String, u16)>) -> Server {
 }
 
 /// The server chosen in Settings › Network.
-fn chosen_server(app: &AppHandle) -> Server {
+pub(crate) fn chosen_server(app: &AppHandle) -> Server {
     server_for(&load_settings(app).server)
 }
 
@@ -230,6 +279,10 @@ pub fn start_syncing(app: AppHandle) {
         .expect("the sync could not start");
 }
 
+pub(crate) fn nudge_slot(slot: &WalletSlot) {
+    nudge(slot);
+}
+
 fn nudge(slot: &WalletSlot) {
     if let Ok(nudge) = slot.nudge.lock() {
         if let Some(sender) = nudge.as_ref() {
@@ -249,6 +302,8 @@ pub struct Overview {
     lock_open: bool,
     problems: Vec<SyncProblem>,
     settings: Settings,
+    /// Every wallet on the key ring, the main one first.
+    wallets: Vec<lockit_wallet::AccountInfo>,
 }
 
 /// The wallet at a glance.
@@ -261,17 +316,25 @@ pub async fn wallet_overview(app: AppHandle, slot: State<'_, WalletSlot>) -> Com
         .unwrap_or_default();
     let wallet = wallet(&app)?;
     let exists = lock.is_some() && wallet.exists();
-    let balance = if exists {
-        tauri::async_runtime::spawn_blocking(move || wallet.balance().ok()).await.ok().flatten()
+    let (balance, wallets) = if exists {
+        tauri::async_runtime::spawn_blocking(move || (wallet.balance().ok(), wallet.accounts().unwrap_or_default()))
+            .await
+            .unwrap_or((None, Vec::new()))
     } else {
-        None
+        (None, Vec::new())
     };
     let sync = slot.sync.lock().map(|s| s.clone()).unwrap_or_default();
     let unsent = slot.unsent.lock().map(|u| u.is_some()).unwrap_or(false);
     let lock_open = slot.opened.lock().map(|o| o.is_some()).unwrap_or(false);
     let problems = slot.problems.lock().map(|p| p.clone()).unwrap_or_default();
     let settings = load_settings(&app);
-    Ok(Overview { exists, keys, balance, sync, unsent, lock_open, problems, settings })
+    let mut wallets = wallets;
+    for wallet in &mut wallets {
+        if let Some(name) = settings.names.get(&wallet.id) {
+            wallet.name = name.clone();
+        }
+    }
+    Ok(Overview { exists, keys, balance, sync, unsent, lock_open, problems, settings, wallets })
 }
 
 /// 24 new words, to be written down. Kept until sealed or forgotten.
@@ -304,8 +367,8 @@ pub fn wallet_forget_words(slot: State<'_, WalletSlot>) {
 /// For a restore: the month and year the words were made.
 #[derive(Deserialize)]
 pub struct MadeIn {
-    year: i32,
-    month: u32,
+    pub(crate) year: i32,
+    pub(crate) month: u32,
 }
 
 /// Creates the wallet from the pending words and seals them into a new lock.
@@ -472,7 +535,7 @@ pub struct Sent {
     accepted_by: Vec<String>,
 }
 
-async fn broadcast(app: &AppHandle, slot: &WalletSlot, signed: SignedPayment, over_tor: bool) -> CommandResult<Sent> {
+pub(crate) async fn broadcast(app: &AppHandle, slot: &WalletSlot, signed: SignedPayment, over_tor: bool) -> CommandResult<Sent> {
     let wallet = wallet(app)?;
     let server = reading_server(app, &wallet);
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -636,7 +699,7 @@ pub fn wallet_close_lock(slot: State<'_, WalletSlot>) {
     }
 }
 
-fn step(app: &AppHandle, text: &str) {
+pub(crate) fn step(app: &AppHandle, text: &str) {
     let _ = app.emit("send-step", text);
 }
 
@@ -648,12 +711,22 @@ pub async fn wallet_send(app: AppHandle, slot: State<'_, WalletSlot>, over_tor: 
         .ok_or_else(|| problem("the lock closed; open it again to send"))?;
     let payment = slot.prepared.lock().map_err(|_| problem("the app is in an unknown state"))?.take()
         .ok_or_else(|| problem("work out the payment again"))?;
+    let phrase = match signing_phrase(&app, &phrase) {
+        Ok(phrase) => phrase,
+        Err(error) => {
+            if let Ok(mut prepared) = slot.prepared.lock() {
+                *prepared = Some(payment);
+            }
+            return Err(error);
+        }
+    };
     let params = sapling_params(&app)?;
     let wallet = wallet(&app)?;
     step(&app, "Signing on this PC");
     let signed = tauri::async_runtime::spawn_blocking(move || -> (PreparedPayment, CommandResult<SignedPayment>) {
         let result = (|| -> CommandResult<SignedPayment> {
             let seed = lockit_wallet::phrase_to_seed(&phrase)?;
+            // (`phrase` is already the signing words of the wallet on screen.)
             Ok(wallet.sign(&payment, &seed, &params)?)
         })();
         (payment, result)
@@ -726,7 +799,7 @@ pub async fn wallet_do_move(app: AppHandle, window: WebviewWindow, slot: State<'
     let params = sapling_params(&app)?;
     let wallet = wallet(&app)?;
     step(&app, "Signing on this PC");
-    let phrase = opened.phrase;
+    let phrase = signing_phrase(&app, &opened.phrase)?;
     let signed = tauri::async_runtime::spawn_blocking(move || -> CommandResult<SignedPayment> {
         let seed = lockit_wallet::phrase_to_seed(&phrase)?;
         Ok(wallet.sign(&payment, &seed, &params)?)
@@ -847,7 +920,8 @@ pub async fn settings_set_wait(app: AppHandle, window: WebviewWindow, seconds: u
 /// The 24 words, after every key of the lock was asked. Only for showing.
 #[tauri::command]
 pub async fn wallet_show_words(app: AppHandle, window: WebviewWindow, typed: Typed) -> CommandResult<Vec<String>> {
-    let phrase = ask_the_keys(&app, &window, typed).await?;
+    let main = ask_the_keys(&app, &window, typed).await?;
+    let phrase = signing_phrase(&app, &main)?;
     let birthday = wallet(&app)?.balance().map(|b| b.birthday).unwrap_or(0);
     let mut words: Vec<String> = phrase.split(' ').map(str::to_owned).collect();
     words.push(birthday.to_string());
@@ -878,6 +952,7 @@ pub async fn wallet_erase(app: AppHandle, window: WebviewWindow, slot: State<'_,
     fs::remove_file(dir.join(LOCK_FILE)).map_err(|e| problem(format!("the lock could not be removed: {e}")))?;
     let _ = fs::remove_dir_all(dir.join("wallet"));
     let _ = fs::remove_file(dir.join("settings.json"));
+    let _ = fs::remove_file(dir.join("keyring.json"));
     crate::rules::erase(&app);
     #[cfg(windows)]
     if let Some(vault) = vault {
@@ -895,6 +970,126 @@ pub async fn wallet_erase(app: AppHandle, window: WebviewWindow, slot: State<'_,
         problems.clear();
     }
     Ok(())
+}
+
+/// Shows the wallet with this id (`None`: the main one).
+pub(crate) fn select(app: &AppHandle, id: Option<String>) -> CommandResult<()> {
+    let mut settings = load_settings(app);
+    settings.current = id;
+    save_settings(app, &settings)
+}
+
+/// The worked-out payment, taken for signing.
+pub(crate) fn take_prepared(slot: &WalletSlot) -> CommandResult<PreparedPayment> {
+    slot.prepared.lock().map_err(|_| problem("the app is in an unknown state"))?.take().ok_or_else(|| problem("work out the payment again"))
+}
+
+/// Shows another wallet of the key ring; `None` is the main one.
+#[tauri::command]
+pub async fn keyring_select(app: AppHandle, slot: State<'_, WalletSlot>, id: Option<String>) -> CommandResult<()> {
+    let main = main_wallet(&app)?;
+    let list = tauri::async_runtime::spawn_blocking(move || main.accounts()).await.map_err(|e| problem(e.to_string()))??;
+    let id = match id {
+        Some(id) if list.iter().any(|a| a.id == id && !a.main) => Some(id),
+        Some(_) if !list.is_empty() => None,
+        _ => None,
+    };
+    if let Ok(mut prepared) = slot.prepared.lock() {
+        *prepared = None;
+    }
+    let mut settings = load_settings(&app);
+    settings.current = id;
+    save_settings(&app, &settings)
+}
+
+/// Adds the pending words (new or typed) as another wallet on the key ring.
+/// Every key of the lock is asked: the words are sealed with the main ones.
+#[tauri::command]
+pub async fn keyring_add(
+    app: AppHandle,
+    window: WebviewWindow,
+    slot: State<'_, WalletSlot>,
+    name: String,
+    made_in: Option<MadeIn>,
+    typed: Typed,
+) -> CommandResult<String> {
+    let name = name.trim().to_owned();
+    if name.is_empty() || name.chars().count() > 40 {
+        return Err(problem("give the wallet a name of up to 40 letters"));
+    }
+    let phrase = slot.pending.lock().map_err(|_| problem("the app is in an unknown state"))?.clone()
+        .ok_or_else(|| problem("the words are missing; start again"))?;
+    let main = ask_the_keys(&app, &window, typed).await?;
+    if main.as_str() == phrase.as_str() {
+        return Err(problem("these are the main wallet's words"));
+    }
+    let main_wallet = main_wallet(&app)?;
+    let server = chosen_server(&app);
+    let app2 = app.clone();
+    let id = tauri::async_runtime::spawn_blocking(move || -> CommandResult<String> {
+        let main_seed = lockit_wallet::phrase_to_seed(&main)?;
+        let sealed = lockit_auth::keyring::seal_words(main_seed.expose_secret(), &phrase)?;
+        let seed = lockit_wallet::phrase_to_seed(&phrase)?;
+        let birthday = match made_in {
+            Some(made) => {
+                let tip = runtime().block_on(Wallet::chain_tip(&server))?;
+                Some(lockit_wallet::estimate_birthday(made.year, made.month, tip, now()))
+            }
+            None => None,
+        };
+        let id = runtime().block_on(main_wallet.add_wallet(&name, &seed, birthday, &server))?;
+        let mut ring = load_keyring(&app2);
+        ring.retain(|entry| entry.id != id);
+        ring.push(RingEntry { id: id.clone(), sealed });
+        if let Err(error) = save_keyring(&app2, &ring) {
+            let _ = main_wallet.for_account(Some(&id)).remove_account();
+            return Err(error);
+        }
+        Ok(id)
+    })
+    .await
+    .map_err(|e| problem(format!("adding the wallet stopped unexpectedly: {e}")))??;
+    wallet_forget_words(slot.clone());
+    let mut settings = load_settings(&app);
+    settings.current = Some(id.clone());
+    save_settings(&app, &settings)?;
+    nudge(&slot);
+    Ok(id)
+}
+
+/// Gives a wallet of the key ring another name.
+#[tauri::command]
+pub fn keyring_rename(app: AppHandle, id: Option<String>, name: String) -> CommandResult<()> {
+    let name = name.trim().to_owned();
+    if name.is_empty() || name.chars().count() > 40 {
+        return Err(problem("give the wallet a name of up to 40 letters"));
+    }
+    let mut settings = load_settings(&app);
+    let id = match id {
+        Some(id) => id,
+        None => main_wallet(&app)?.accounts()?.into_iter().find(|a| a.main).map(|a| a.id).ok_or_else(|| problem("there is no wallet"))?,
+    };
+    settings.names.insert(id, name);
+    save_settings(&app, &settings)
+}
+
+/// Removes another wallet from the key ring after every key of the lock.
+/// Its words are gone from this PC; the main wallet goes with Erase.
+#[tauri::command]
+pub async fn keyring_remove(app: AppHandle, window: WebviewWindow, slot: State<'_, WalletSlot>, id: String, typed: Typed) -> CommandResult<()> {
+    drop(ask_the_keys(&app, &window, typed).await?);
+    let target = main_wallet(&app)?.for_account(Some(&id));
+    tauri::async_runtime::spawn_blocking(move || target.remove_account()).await.map_err(|e| problem(e.to_string()))??;
+    let mut ring = load_keyring(&app);
+    ring.retain(|entry| entry.id != id);
+    save_keyring(&app, &ring)?;
+    let mut settings = load_settings(&app);
+    settings.names.remove(&id);
+    if settings.current.as_deref() == Some(id.as_str()) {
+        settings.current = None;
+        wallet_close_lock(slot.clone());
+    }
+    save_settings(&app, &settings)
 }
 
 #[cfg(test)]

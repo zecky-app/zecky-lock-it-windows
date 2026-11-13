@@ -27,6 +27,7 @@
 #![warn(missing_docs)]
 
 mod error;
+pub mod keyring;
 pub mod keys;
 pub mod protect;
 mod secret;
