@@ -80,3 +80,10 @@ On a Mac the same commands show the window; only the passphrase key works there.
 - Every key the owner picked is needed to open the lock. There is no "any one of them".
 - Nothing here talks to the network.
 - Fonts: Newsreader and Inter, SIL Open Font License (see `ui/fonts`).
+
+## License and disclaimer
+
+Zecky Lock it is free, open-source software under the Apache License 2.0 (see `LICENSE` and `NOTICE`).
+It is provided **as is, without warranty of any kind**, and you use it at your own risk. It is
+self-custody software: nobody can recover lost words, and payments are final. Beta: use small
+amounts only. Full text for users: `packaging/LICENSE-AND-DISCLAIMER.txt` (shown by the installer).

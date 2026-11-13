@@ -4,7 +4,7 @@ SetCompressor /SOLID lzma
 !include "MUI2.nsh"
 
 !define NAME "Zecky Lock it"
-!define VERSION "0.1.0-beta.4"
+!define VERSION "0.1.0-beta.5"
 !define PUBLISHER "Zecky"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\ZeckyLockIt"
 
@@ -14,7 +14,7 @@ InstallDir "$LOCALAPPDATA\Programs\Zecky Lock it"
 InstallDirRegKey HKCU "Software\ZeckyLockIt" "InstallDir"
 RequestExecutionLevel user
 BrandingText "Zecky Lock it ${VERSION}"
-VIProductVersion "0.1.0.4"
+VIProductVersion "0.1.0.5"
 VIAddVersionKey "ProductName" "${NAME}"
 VIAddVersionKey "FileDescription" "${NAME} installer"
 VIAddVersionKey "FileVersion" "${VERSION}"
@@ -33,6 +33,9 @@ VIAddVersionKey "LegalCopyright" "Zecky"
 !define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
 
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_LICENSEPAGE_TEXT_TOP "Please read the disclaimer and the license. Scroll down for the full license."
+!define MUI_LICENSEPAGE_TEXT_BOTTOM "Zecky Lock it is free software, provided as is, without warranty. Click I Agree to accept and continue."
+!insertmacro MUI_PAGE_LICENSE "stage\LICENSE-AND-DISCLAIMER.txt"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -51,6 +54,7 @@ Section "Install"
   File "stage\WebView2Loader.dll"
   File "stage\READ-ME-FIRST.txt"
   File "stage\THIRD-PARTY-NOTICES.txt"
+  File "stage\LICENSE-AND-DISCLAIMER.txt"
   SetOutPath "$INSTDIR\node"
   File "stage\node\zakurad.exe"
   File "stage\node\zainod.exe"
@@ -83,6 +87,7 @@ Section "Uninstall"
   Delete "$INSTDIR\WebView2Loader.dll"
   Delete "$INSTDIR\READ-ME-FIRST.txt"
   Delete "$INSTDIR\THIRD-PARTY-NOTICES.txt"
+  Delete "$INSTDIR\LICENSE-AND-DISCLAIMER.txt"
   RMDir /r "$INSTDIR\node"
   RMDir /r "$INSTDIR\params"
   Delete "$INSTDIR\Uninstall.exe"

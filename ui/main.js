@@ -2846,7 +2846,7 @@ $("terms-accept").addEventListener("click", async () => {
   try {
     await invoke("terms_accept");
     firstRun.terms_accepted = true;
-    showView("welcome");
+    await start();
   } catch (problem) {
     alert(describe(problem));
   }
@@ -2913,7 +2913,8 @@ document.addEventListener("keydown", (event) => {
 async function start() {
   const first = await invoke("wallet_overview");
   firstRun = await invoke("first_run").catch(() => firstRun);
-  if (!first.exists && !firstRun.terms_accepted) return showView("terms");
+  // Everyone accepts once, existing wallets too (an upgrade from a test build).
+  if (!firstRun.terms_accepted) return showView("terms");
   showView(first.exists ? "home" : "welcome");
   if (first.exists) {
     overview = first;
