@@ -14,10 +14,12 @@
 //! Everything in this file is plain parsing and arithmetic, so it is tested on
 //! any system.
 
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use p256::ecdsa::{signature::Verifier as _, Signature, VerifyingKey};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::KeyKind;
+use super::{KeyDescriptor, KeyKind};
 use crate::{Error, Result, Secret};
 
 /// The relying party keys are registered under: the same as Lock it Mac.
@@ -73,6 +75,112 @@ impl PairedKey {
         hash.update(&self.public_key);
         Secret::new(hash.finalize().into())
     }
+}
+
+// ---------- The list of paired keys, kept in the lock's descriptor ----------
+//
+// One security-key entry in the lock holds every paired key (a main key and
+// backups, as on Lock it Mac); any one of them passes. The list sits in the
+// lock's authenticated header, so nobody can add a key of their own without
+// opening the lock. Test builds 2 to 5 stored a single key in
+// `credential_id` / `public_key`; such a lock keeps working and moves to the
+// list the first time a key is added or removed.
+
+const KEYS_PARAM: &str = "keys";
+const LEGACY_ID: &str = "credential_id";
+const LEGACY_PUBLIC_KEY: &str = "public_key";
+
+/// A key's role, as on Lock it Mac.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    /// The key used day to day.
+    Main,
+    /// Kept somewhere else, in case the main key is lost.
+    Backup,
+}
+
+/// One paired key in the list.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyEntry {
+    /// Credential id, base64.
+    pub id: String,
+    /// P-256 public key (SEC1, uncompressed), base64.
+    pub public_key: String,
+    /// Main or backup.
+    pub role: Role,
+    /// When it was paired (Unix seconds; 0 for keys from test builds).
+    pub added: i64,
+}
+
+impl KeyEntry {
+    /// A new entry for a key just paired.
+    pub fn new(paired: &PairedKey, role: Role, added: i64) -> Self {
+        Self { id: B64.encode(&paired.credential_id), public_key: B64.encode(&paired.public_key), role, added }
+    }
+
+    /// Back to the form the check uses.
+    pub fn paired(&self) -> Result<PairedKey> {
+        let bad = || Error::Format("a saved security key is damaged".into());
+        Ok(PairedKey {
+            credential_id: B64.decode(&self.id).map_err(|_| bad())?,
+            public_key: B64.decode(&self.public_key).map_err(|_| bad())?,
+        })
+    }
+}
+
+fn is_legacy(descriptor: &KeyDescriptor) -> bool {
+    !descriptor.params.contains_key(KEYS_PARAM) && descriptor.params.contains_key(LEGACY_PUBLIC_KEY)
+}
+
+/// Every key paired in this lock's security-key entry.
+pub fn keys_of(descriptor: &KeyDescriptor) -> Result<Vec<KeyEntry>> {
+    if is_legacy(descriptor) {
+        let paired = PairedKey {
+            credential_id: descriptor.param_bytes(LEGACY_ID)?,
+            public_key: descriptor.param_bytes(LEGACY_PUBLIC_KEY)?,
+        };
+        return Ok(vec![KeyEntry::new(&paired, Role::Main, 0)]);
+    }
+    serde_json::from_str(descriptor.param(KEYS_PARAM)?).map_err(|_| Error::Format("the security key list is damaged".into()))
+}
+
+/// Writes the list into the entry (moving a test-build entry to the list).
+pub fn set_keys(descriptor: &mut KeyDescriptor, keys: &[KeyEntry]) -> Result<()> {
+    descriptor.params.remove(LEGACY_ID);
+    descriptor.params.remove(LEGACY_PUBLIC_KEY);
+    let json = serde_json::to_string(keys).map_err(|e| Error::Format(e.to_string()))?;
+    descriptor.params.insert(KEYS_PARAM.into(), json);
+    Ok(())
+}
+
+/// The constant this entry mixes into the lock. Public: a security key is a
+/// check, not a secret. That is also what lets "Lost my keys" take the keys
+/// off after 48 hours without one of them.
+pub fn vault_secret(descriptor: &KeyDescriptor) -> Result<Secret> {
+    if is_legacy(descriptor) {
+        let legacy = PairedKey { credential_id: vec![], public_key: descriptor.param_bytes(LEGACY_PUBLIC_KEY)? };
+        return Ok(legacy.vault_secret());
+    }
+    Ok(Secret::new(Sha256::digest(b"zecky-lockit/check-keys/v2").into()))
+}
+
+/// Checks an answer against the whole list; returns the key that answered.
+pub fn check_any(
+    keys: &[KeyEntry],
+    credential_id: &[u8],
+    auth_data: &[u8],
+    client_data_json: &[u8],
+    signature_der: &[u8],
+) -> Result<KeyEntry> {
+    for entry in keys {
+        let paired = entry.paired()?;
+        if paired.credential_id == credential_id {
+            check_assertion(&paired, credential_id, auth_data, client_data_json, signature_der)?;
+            return Ok(entry.clone());
+        }
+    }
+    Err(Error::WrongKeyOrDamaged)
 }
 
 /// Reads the pairing answer: the authenticator data from "make credential".
@@ -253,6 +361,33 @@ mod tests {
         let (auth3, sig3) = answer(&key, 0, client);
         assert!(check_assertion(&paired, id, &auth3, client, &sig3).is_err());
         assert!(check_assertion(&paired, b"another-id", &auth, client, &sig).is_err());
+    }
+
+    #[test]
+    fn any_key_in_the_list_passes_and_old_single_keys_still_read() {
+        let main = SigningKey::from_slice(&[7; 32]).unwrap();
+        let backup = SigningKey::from_slice(&[8; 32]).unwrap();
+        let p_main = read_registration(&registration(&main, b"main"), b"main").unwrap();
+        let p_backup = read_registration(&registration(&backup, b"backup"), b"backup").unwrap();
+
+        let mut d = KeyDescriptor::new(KeyKind::SecurityKey, "Security key").unwrap();
+        d.set_param_bytes(LEGACY_ID, b"main");
+        d.set_param_bytes(LEGACY_PUBLIC_KEY, &p_main.public_key);
+        let legacy = keys_of(&d).unwrap();
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(vault_secret(&d).unwrap().expose(), p_main.vault_secret().expose());
+
+        let list = vec![legacy[0].clone(), KeyEntry::new(&p_backup, Role::Backup, 1)];
+        set_keys(&mut d, &list).unwrap();
+        assert!(!d.params.contains_key(LEGACY_ID));
+        assert_eq!(keys_of(&d).unwrap(), list);
+        assert_ne!(vault_secret(&d).unwrap().expose(), p_main.vault_secret().expose());
+
+        let client = br#"{"challenge":"x"}"#;
+        let (auth, sig) = answer(&backup, USER_PRESENT, client);
+        assert_eq!(check_any(&list, b"backup", &auth, client, &sig).unwrap().role, Role::Backup);
+        assert!(check_any(&list, b"main", &auth, client, &sig).is_err(), "the backup's answer is not the main key's");
+        assert!(check_any(&list[..1], b"backup", &auth, client, &sig).is_err(), "a removed key no longer passes");
     }
 
     #[test]

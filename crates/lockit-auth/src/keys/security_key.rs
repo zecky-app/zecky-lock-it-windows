@@ -28,7 +28,7 @@ use windows::{
 };
 
 use super::{
-    key_check::{self, PairedKey, RELYING_PARTY},
+    key_check::{self, KeyEntry, PairedKey, Role, RELYING_PARTY},
     KeyDescriptor, KeyKind, KeySource,
 };
 use crate::{secret::random_bytes, Error, Result, Secret};
@@ -38,8 +38,6 @@ const RP_NAME_W: PCWSTR = w!("Zecky Lock it");
 const ORIGIN: &str = "https://zecky.app";
 const USER_NAME_W: PCWSTR = w!("Zecky Lock it");
 
-const CREDENTIAL_ID_PARAM: &str = "credential_id";
-const PUBLIC_KEY_PARAM: &str = "public_key";
 const RP_ID_PARAM: &str = "rp_id";
 
 /// How long the "touch your key" window waits, in milliseconds.
@@ -217,9 +215,13 @@ impl SecurityKey {
         key_check::read_registration(&auth_data, &credential_id)
     }
 
-    /// Asks the key to sign a fresh challenge and checks the answer.
-    fn check(&self, paired: &PairedKey) -> Result<()> {
+    /// Asks any of `keys` to sign a fresh challenge and checks the answer.
+    /// Returns the key that answered.
+    fn check(&self, keys: &[KeyEntry]) -> Result<KeyEntry> {
         let api = Self::api()?;
+        if keys.is_empty() {
+            return Err(Error::Format("no security key is paired".into()));
+        }
         let mut client_data = client_data_json("webauthn.get")?;
         let client = WEBAUTHN_CLIENT_DATA {
             dwVersion: WEBAUTHN_CLIENT_DATA_CURRENT_VERSION,
@@ -227,17 +229,20 @@ impl SecurityKey {
             pbClientDataJSON: client_data.as_mut_ptr(),
             pwszHashAlgId: WEBAUTHN_HASH_ALGORITHM_SHA_256,
         };
-        let mut credential_id = paired.credential_id.clone();
-        let mut credential = WEBAUTHN_CREDENTIAL {
-            dwVersion: WEBAUTHN_CREDENTIAL_CURRENT_VERSION,
-            cbId: credential_id.len() as u32,
-            pbId: credential_id.as_mut_ptr(),
-            pwszCredentialType: WEBAUTHN_CREDENTIAL_TYPE_PUBLIC_KEY,
-        };
+        let mut ids: Vec<Vec<u8>> = keys.iter().map(|k| k.paired().map(|p| p.credential_id)).collect::<Result<_>>()?;
+        let mut credentials: Vec<WEBAUTHN_CREDENTIAL> = ids
+            .iter_mut()
+            .map(|id| WEBAUTHN_CREDENTIAL {
+                dwVersion: WEBAUTHN_CREDENTIAL_CURRENT_VERSION,
+                cbId: id.len() as u32,
+                pbId: id.as_mut_ptr(),
+                pwszCredentialType: WEBAUTHN_CREDENTIAL_TYPE_PUBLIC_KEY,
+            })
+            .collect();
         let options = WEBAUTHN_AUTHENTICATOR_GET_ASSERTION_OPTIONS {
             dwVersion: WEBAUTHN_AUTHENTICATOR_GET_ASSERTION_OPTIONS_VERSION_1,
             dwTimeoutMilliseconds: TIMEOUT_MS,
-            CredentialList: WEBAUTHN_CREDENTIALS { cCredentials: 1, pCredentials: &mut credential },
+            CredentialList: WEBAUTHN_CREDENTIALS { cCredentials: credentials.len() as u32, pCredentials: credentials.as_mut_ptr() },
             dwAuthenticatorAttachment: WEBAUTHN_AUTHENTICATOR_ATTACHMENT_CROSS_PLATFORM,
             dwUserVerificationRequirement: WEBAUTHN_USER_VERIFICATION_REQUIREMENT_DISCOURAGED,
             ..Default::default()
@@ -261,17 +266,25 @@ impl SecurityKey {
                 copy_bytes(assertion.pbSignature, assertion.cbSignature),
             )
         };
-        key_check::check_assertion(paired, &id, &auth_data, &client_data, &signature)
+        key_check::check_any(keys, &id, &auth_data, &client_data, &signature)
     }
 
-    fn paired(descriptor: &KeyDescriptor) -> Result<PairedKey> {
+    fn keys(descriptor: &KeyDescriptor) -> Result<Vec<KeyEntry>> {
         if descriptor.param(RP_ID_PARAM)? != RELYING_PARTY {
             return Err(Error::Format("this security key was set up for a different app id".into()));
         }
-        Ok(PairedKey {
-            credential_id: descriptor.param_bytes(CREDENTIAL_ID_PARAM)?,
-            public_key: descriptor.param_bytes(PUBLIC_KEY_PARAM)?,
-        })
+        key_check::keys_of(descriptor)
+    }
+
+    /// Pairs one more key (touch it). Its entry is added to the lock by the
+    /// caller, which seals the lock again.
+    pub fn pair(&self, role: Role, now: i64) -> Result<KeyEntry> {
+        Ok(KeyEntry::new(&self.register()?, role, now))
+    }
+
+    /// "Test my key": any paired key answers correctly. Returns its role.
+    pub fn test(&self, descriptor: &KeyDescriptor) -> Result<Role> {
+        Ok(self.check(&Self::keys(descriptor)?)?.role)
     }
 }
 
@@ -292,18 +305,17 @@ impl KeySource for SecurityKey {
             Self::api()?;
         }
         let mut descriptor = KeyDescriptor::new(KeyKind::SecurityKey, label)?;
-        let paired = self.register()?;
-        descriptor.set_param_bytes(CREDENTIAL_ID_PARAM, &paired.credential_id);
-        descriptor.set_param_bytes(PUBLIC_KEY_PARAM, &paired.public_key);
         descriptor.params.insert(RP_ID_PARAM.into(), RELYING_PARTY.into());
-        Ok((descriptor, paired.vault_secret()))
+        let entry = KeyEntry::new(&self.register()?, Role::Main, 0);
+        key_check::set_keys(&mut descriptor, &[entry])?;
+        let secret = key_check::vault_secret(&descriptor)?;
+        Ok((descriptor, secret))
     }
 
-    /// Shows one system window: touch the key; its answer is checked.
+    /// Shows one system window: touch any paired key; its answer is checked.
     fn unlock(&mut self, descriptor: &KeyDescriptor) -> Result<Secret> {
-        let paired = Self::paired(descriptor)?;
-        self.check(&paired)?;
-        Ok(paired.vault_secret())
+        self.check(&Self::keys(descriptor)?)?;
+        key_check::vault_secret(descriptor)
     }
 }
 

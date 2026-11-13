@@ -90,7 +90,7 @@ pub(crate) fn data_dir(app: &AppHandle) -> CommandResult<PathBuf> {
     Ok(dir)
 }
 
-fn wallet(app: &AppHandle) -> CommandResult<Wallet> {
+pub(crate) fn wallet(app: &AppHandle) -> CommandResult<Wallet> {
     Ok(Wallet::new(data_dir(app)?.join("wallet")))
 }
 
@@ -210,7 +210,12 @@ pub fn start_syncing(app: AppHandle) {
                     let server = reading_server(&app, &wallet);
                     set_sync(&app, "syncing", &server, None);
                     match runtime().block_on(wallet.sync(&server)) {
-                        Ok(()) => set_sync(&app, "up_to_date", &server, None),
+                        Ok(()) => {
+                            set_sync(&app, "up_to_date", &server, None);
+                            if let Ok(balance) = wallet.balance() {
+                                crate::rules::note_synced_height(&app, balance.chain_tip, &server);
+                            }
+                        }
                         Err(error) => set_sync(&app, "problem", &server, Some(error.to_string())),
                     }
                 }
@@ -512,8 +517,19 @@ pub(crate) struct OpenedLock {
 }
 
 /// Asks every key of the lock and opens it. A shorter time lock whose wait
-/// has passed takes over here, sealed into the lock.
+/// has passed takes over here, sealed into the lock. When "Lost my keys" has
+/// run its 48 hours, the security key is not asked and is taken off here.
 pub(crate) async fn open_fully(app: &AppHandle, window: &WebviewWindow, typed: Typed) -> CommandResult<OpenedLock> {
+    open_lock_inner(app, window, typed, false).await
+}
+
+/// Opens the lock without asking a security key: only for starting "Lost my
+/// keys", which checks the owner with the other keys.
+pub(crate) async fn open_without_security_key(app: &AppHandle, window: &WebviewWindow, typed: Typed) -> CommandResult<OpenedLock> {
+    open_lock_inner(app, window, typed, true).await
+}
+
+async fn open_lock_inner(app: &AppHandle, window: &WebviewWindow, typed: Typed, skip_check: bool) -> CommandResult<OpenedLock> {
     let vault = read_lock(app)?.ok_or_else(|| problem("there is no wallet on this PC"))?;
     #[cfg(windows)]
     let handle = crate::raw_window_handle(window);
@@ -522,8 +538,13 @@ pub(crate) async fn open_fully(app: &AppHandle, window: &WebviewWindow, typed: T
         let _ = window;
         0
     };
+    let removal_due = crate::rules::removal_due(app);
+    let skip = skip_check || removal_due;
     let mut opened = tauri::async_runtime::spawn_blocking(move || -> CommandResult<OpenedLock> {
         let (payload, keys) = vault.open_with_secrets(|descriptor| {
+            if skip && descriptor.kind == lockit_auth::KeyKind::SecurityKey {
+                return lockit_auth::keys::key_check::vault_secret(descriptor);
+            }
             let mut source = source_for(descriptor.kind, typed.for_kind(descriptor.kind), handle)?;
             source.unlock(descriptor)
         })?;
@@ -532,11 +553,22 @@ pub(crate) async fn open_fully(app: &AppHandle, window: &WebviewWindow, typed: T
     })
     .await
     .map_err(|e| problem(format!("asking the keys stopped unexpectedly: {e}")))??;
+    let mut changed = false;
     if let (Some(hours), Some(from)) = (opened.policy.pending_hours, opened.policy.pending_from) {
         if from <= now() {
             opened.policy = lockit_auth::Policy { time_lock_hours: hours, pending_hours: None, pending_from: None };
-            reseal(app, &opened)?;
+            changed = true;
         }
+    }
+    if removal_due && opened.keys.iter().any(|(k, _)| k.kind == lockit_auth::KeyKind::SecurityKey) {
+        opened.keys.retain(|(k, _)| k.kind != lockit_auth::KeyKind::SecurityKey);
+        changed = true;
+    }
+    if changed {
+        reseal(app, &opened)?;
+    }
+    if removal_due {
+        crate::rules::finish_removal(app);
     }
     Ok(opened)
 }
@@ -572,6 +604,11 @@ pub async fn wallet_open_lock(
     let phrase = ask_the_keys(&app, &window, typed).await?;
     *slot.opened.lock().map_err(|_| problem("the app is in an unknown state"))? = Some(phrase);
     Ok(())
+}
+
+/// The sync's state and where it reads from, as plain words.
+pub(crate) fn sync_state(slot: &WalletSlot) -> (String, String) {
+    slot.sync.lock().map(|s| (s.state.clone(), s.server.clone())).unwrap_or_default()
 }
 
 /// Keeps the opened words: the lock is open.
@@ -691,6 +728,7 @@ pub async fn settings_set_server(app: AppHandle, slot: State<'_, WalletSlot>, ho
     let mut settings = load_settings(&app);
     settings.server = choice;
     save_settings(&app, &settings)?;
+    crate::rules::restart_removal_if_running(&app);
     nudge(&slot);
     Ok(format!("Connected. The network is at block {tip}."))
 }

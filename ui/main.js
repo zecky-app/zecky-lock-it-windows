@@ -1230,6 +1230,7 @@ function renderSettings() {
     $("ask-on-start-note").textContent = rules.start_with_hello
       ? "Windows Hello when Lock it starts, and after it locked itself (sleep, 5 minutes away). Why: your balance and history stay private on a shared or unattended PC."
       : "Your keys when Lock it starts, and after it locked itself (sleep, 5 minutes away). Why: your balance and history stay private on a shared or unattended PC.";
+    renderSecurityKeys();
     $("code-set").textContent = rules.code ? "Change code" : "Set a Zecky code";
     $("code-remove").hidden = !rules.code;
   }
@@ -1500,6 +1501,92 @@ $("code-remove").addEventListener("click", async () => {
     await refreshRules();
   } catch (problem) {
     if (problem && problem.message !== "cancelled") say($("code-note"), describe(problem) || "Not confirmed, so nothing changed.");
+  }
+});
+
+// Security keys (Settings › Security › Keys to the lock)
+function renderSecurityKeys() {
+  const keys = rules.security_keys || [];
+  const list = $("seckey-list");
+  list.textContent = "";
+  for (const key of keys) {
+    const row = document.createElement("div");
+    row.className = "seckey-row";
+    const grow = document.createElement("span");
+    grow.className = "grow";
+    const name = document.createElement("span");
+    name.textContent = key.role === "backup" ? "Backup key" : "Security key";
+    const added = document.createElement("small");
+    added.textContent = key.added ? `added ${new Date(key.added * 1000).toLocaleDateString(undefined, { dateStyle: "medium" })}` : "added in an earlier test build";
+    grow.append(name, added);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => securityKeyAction("seckey_remove", { id: key.id }, "Remove this key?",
+      "The lock opens with every key, so one of your security keys is touched first, then the key is taken off the lock.", "Security key removed."));
+    row.append(grow, remove);
+    list.append(row);
+  }
+  const available = rules.security_keys_available;
+  const removal = rules.removal;
+  $("seckey-add").hidden = keys.length > 0 || !available;
+  $("seckey-backup").hidden = keys.length === 0 || !available || !!removal;
+  $("seckey-test").hidden = keys.length === 0 || !available;
+  $("seckey-lost").hidden = keys.length === 0 || !!removal;
+  $("seckey-removal").hidden = !removal;
+  if (removal) {
+    $("seckey-removal-text").textContent = removal.due
+      ? "The 48 hours have passed. The keys are taken off the next time the lock opens, with your other keys."
+      : `Not before ${dateTime(removal.clock_done_at)}${removal.blocks_to_go > 0 ? ` and ${numbers.format(removal.blocks_to_go)} more Zcash blocks` : ""}. Until then your keys still work. Found them? Cancel with one of them. It finishes only on one of the built-in servers.`;
+  }
+  if (!available && keys.length === 0) say($("seckey-note"), "This Windows cannot use security keys (it needs Windows 10 version 1903 or later).", true);
+}
+
+async function securityKeyAction(command, args, title, text, done, { askFirst = true } = {}) {
+  say($("seckey-note"), "");
+  try {
+    const typed = askFirst ? await askKeys(title, text, { action: "Continue" }) : {};
+    say($("seckey-note"), "Follow the prompts from Windows.", true);
+    await invoke(command, { ...args, typed: typedOnly(typed) });
+    say($("seckey-note"), done, true);
+    await refreshRules();
+  } catch (problem) {
+    if (problem && problem.message !== "cancelled") say($("seckey-note"), describe(problem) || "Nothing changed.");
+    else say($("seckey-note"), "");
+  }
+}
+
+$("seckey-add").addEventListener("click", () => securityKeyAction("seckey_add", { backup: false }, "Add a security key",
+  "Your keys open the lock first, then touch the new key when Windows asks. From then on it is touched every time the lock opens.", "Key added. It is asked every time the lock opens."));
+$("seckey-backup").addEventListener("click", () => securityKeyAction("seckey_add", { backup: true }, "Add a backup key",
+  "Your keys open the lock first (one of your security keys is touched), then touch the backup key when Windows asks. Keep it somewhere else.", "Backup key added."));
+$("seckey-test").addEventListener("click", async () => {
+  say($("seckey-note"), "Touch your key when Windows asks.", true);
+  try {
+    say($("seckey-note"), await invoke("seckey_test"), true);
+  } catch (problem) {
+    say($("seckey-note"), describe(problem) || "No key was used.");
+  }
+});
+$("seckey-lost-button").addEventListener("click", async () => {
+  try {
+    await askKeys("Remove all security keys in 48 hours?",
+      "After 48 hours, and 48 hours of Zcash blocks, every security key is removed and the lock opens with your other keys again. Any of your keys can cancel it before then. It finishes only on one of the built-in servers.",
+      { action: "Start the 48 hours", danger: true, keys: false });
+  } catch {
+    return;
+  }
+  securityKeyAction("seckey_removal_start", {}, "Confirm it's you", "Your other keys (not a security key) confirm it's you.",
+    "Started. All security keys are removed after 48 hours unless you cancel.");
+});
+$("seckey-removal-cancel").addEventListener("click", async () => {
+  say($("seckey-note"), "Touch one of your keys when Windows asks.", true);
+  try {
+    await invoke("seckey_removal_cancel");
+    say($("seckey-note"), "The removal is cancelled. Your keys stay.", true);
+    await refreshRules();
+  } catch (problem) {
+    say($("seckey-note"), describe(problem) || "No key was used.");
   }
 });
 

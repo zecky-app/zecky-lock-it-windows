@@ -737,3 +737,14 @@ select.input { appearance: auto; }
 .switch input:checked + span::after { transform: translateX(16px); }
 .buttons { display: flex; gap: 8px; }
 .tabs { margin-bottom: 2px; }
+.card.list.inner { background: var(--ink); }
+.card.list.inner:empty { display: none; }
+.buttons.wrap { flex-wrap: wrap; }
+.removal-card { padding: 12px; border-radius: 10px; border: 1px solid rgba(217, 112, 95, 0.45); background: rgba(217, 112, 95, 0.06); display: flex; flex-direction: column; gap: 8px; }
+.seckey-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.seckey-row:last-child { border-bottom: 0; }
+.seckey-row .grow { flex: 1; display: flex; flex-direction: column; }
+.seckey-row small { color: var(--muted); font-size: 11px; }
+.seckey-row button { color: var(--red); font-size: 12px; font-weight: 500; }
+#seckey-lost { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+#seckey-lost[hidden] { display: none; }

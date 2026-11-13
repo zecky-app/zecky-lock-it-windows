@@ -402,6 +402,27 @@
               </span>
             </div>
           </div>
+          <div class="card pad" id="seckey-card">
+            <p class="card-title">Security key</p>
+            <p class="small quiet">A hardware key, such as a YubiKey, plugged into this PC or held to it, touched every time the lock opens. Why: Windows Hello, your passphrase and the Zecky code all live on this PC; a key you carry is something a thief of the PC does not have.</p>
+            <div class="card list inner" id="seckey-list"></div>
+            <div class="buttons wrap">
+              <button type="button" class="secondary narrow" id="seckey-add">Add a security key</button>
+              <button type="button" class="secondary narrow" id="seckey-backup" hidden>Add a backup key</button>
+              <button type="button" class="secondary narrow" id="seckey-test" hidden>Test my key</button>
+            </div>
+            <div class="removal-card" id="seckey-removal" hidden>
+              <p class="erase-title">Removing all security keys</p>
+              <p class="small quiet" id="seckey-removal-text"></p>
+              <button type="button" class="secondary narrow" id="seckey-removal-cancel">Cancel the removal</button>
+            </div>
+            <div id="seckey-lost" hidden>
+              <p class="card-title">Lost your keys?</p>
+              <p class="small quiet">Remove all security keys after 48 hours. Slow on purpose: someone at your PC cannot simply take the keys away, and you have time to notice and cancel.</p>
+              <button type="button" class="erase-button" id="seckey-lost-button">Lost my keys</button>
+            </div>
+            <p class="small message" id="seckey-note"></p>
+          </div>
           <div class="card pad">
             <p class="card-title">Really open the lock?</p>
             <p class="small quiet">A pause before your keys are asked, with the reminder that nobody legitimate rushes you.</p>

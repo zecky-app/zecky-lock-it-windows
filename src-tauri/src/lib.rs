@@ -348,6 +348,11 @@ pub fn run() {
             rules::app_unlock,
             rules::set_ask_on_start,
             rules::lock_log,
+            rules::seckey_add,
+            rules::seckey_remove,
+            rules::seckey_test,
+            rules::seckey_removal_start,
+            rules::seckey_removal_cancel,
             go_max::go_max_view,
             go_max::go_max_start,
             go_max::go_max_stop
