@@ -21,7 +21,7 @@ use std::{
 use lockit_auth::{KeyDescriptor, Secret, Vault};
 use lockit_wallet::{Activity, Balance, PreparedPayment, Server, SignedPayment, Wallet};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use zeroize::Zeroizing;
 
 use crate::{go_max::GoMaxSlot, problem, source_for, ChosenKey, CommandResult, KeySummary, Problem};
@@ -55,6 +55,21 @@ pub struct WalletSlot {
     unsent: Mutex<Option<SignedPayment>>,
     sync: Mutex<SyncView>,
     nudge: Mutex<Option<mpsc::Sender<()>>>,
+    /// The words while the lock is open (after "Really open the lock?" and
+    /// the keys). Let go when it closes, after a payment and when the
+    /// window is hidden.
+    opened: Mutex<Option<Zeroizing<String>>>,
+    /// Recent sync problems, newest first, at most 5 (as Lock it Mac).
+    problems: Mutex<Vec<SyncProblem>>,
+}
+
+/// One sync problem, for the sync details.
+#[derive(Clone, Serialize)]
+pub struct SyncProblem {
+    /// When (Unix seconds).
+    at: i64,
+    /// In words.
+    message: String,
 }
 
 fn runtime() -> &'static tokio::runtime::Runtime {
@@ -111,9 +126,20 @@ fn reading_server(app: &AppHandle, wallet: &Wallet) -> Server {
 }
 
 fn set_sync(app: &AppHandle, state: &str, server: &Server, problem: Option<String>) {
-    if let Ok(mut sync) = app.state::<WalletSlot>().sync.lock() {
-        *sync = SyncView { state: state.into(), server: server.label(), problem };
+    let slot = app.state::<WalletSlot>();
+    if let (Some(message), Ok(mut list)) = (problem.as_ref(), slot.problems.lock()) {
+        // The same message again within a minute is the same problem.
+        let at = now();
+        let repeat = list.first().is_some_and(|last| &last.message == message && at - last.at < 60);
+        if !repeat {
+            list.insert(0, SyncProblem { at, message: message.clone() });
+            list.truncate(5);
+        }
     }
+    let view = SyncView { state: state.into(), server: server.label(), problem };
+    if let Ok(mut sync) = slot.sync.lock() {
+        *sync = view;
+    };
 }
 
 /// Starts the background sync: now, then every [`SYNC_EVERY`], and at once
@@ -162,6 +188,8 @@ pub struct Overview {
     balance: Option<Balance>,
     sync: SyncView,
     unsent: bool,
+    lock_open: bool,
+    problems: Vec<SyncProblem>,
 }
 
 /// The wallet at a glance.
@@ -181,7 +209,9 @@ pub async fn wallet_overview(app: AppHandle, slot: State<'_, WalletSlot>) -> Com
     };
     let sync = slot.sync.lock().map(|s| s.clone()).unwrap_or_default();
     let unsent = slot.unsent.lock().map(|u| u.is_some()).unwrap_or(false);
-    Ok(Overview { exists, keys, balance, sync, unsent })
+    let lock_open = slot.opened.lock().map(|o| o.is_some()).unwrap_or(false);
+    let problems = slot.problems.lock().map(|p| p.clone()).unwrap_or_default();
+    Ok(Overview { exists, keys, balance, sync, unsent, lock_open, problems })
 }
 
 /// 24 new words, to be written down. Kept until sealed or forgotten.
@@ -315,7 +345,7 @@ pub async fn wallet_receive(app: AppHandle) -> CommandResult<Receive> {
 #[tauri::command]
 pub async fn wallet_activity(app: AppHandle) -> CommandResult<Vec<Activity>> {
     let wallet = wallet(&app)?;
-    tauri::async_runtime::spawn_blocking(move || Ok(wallet.activity(30)?))
+    tauri::async_runtime::spawn_blocking(move || Ok(wallet.activity(1000)?))
         .await
         .map_err(|e| problem(e.to_string()))?
 }
@@ -400,20 +430,16 @@ async fn broadcast(app: &AppHandle, slot: &WalletSlot, signed: SignedPayment, ov
     }
 }
 
-/// Opens the lock, signs the prepared payment and hands it to the network.
+/// Opens the lock: every key of the lock is asked. The words stay in memory
+/// until the lock closes.
 #[tauri::command]
-pub async fn wallet_send(
+pub async fn wallet_open_lock(
     app: AppHandle,
     window: WebviewWindow,
     slot: State<'_, WalletSlot>,
     passphrase: Option<String>,
-    over_tor: bool,
-) -> CommandResult<Sent> {
-    let payment = slot.prepared.lock().map_err(|_| problem("the app is in an unknown state"))?.take()
-        .ok_or_else(|| problem("work out the payment again"))?;
+) -> CommandResult<()> {
     let vault = read_lock(&app)?.ok_or_else(|| problem("there is no wallet on this PC"))?;
-    let params = sapling_params(&app)?;
-    let wallet = wallet(&app)?;
     #[cfg(windows)]
     let handle = crate::raw_window_handle(&window);
     #[cfg(not(windows))]
@@ -421,16 +447,50 @@ pub async fn wallet_send(
         let _ = &window;
         0
     };
-    let signed = tauri::async_runtime::spawn_blocking(move || -> (PreparedPayment, CommandResult<SignedPayment>) {
+    let phrase = tauri::async_runtime::spawn_blocking(move || -> CommandResult<Zeroizing<String>> {
         let passphrase = passphrase.map(Zeroizing::new);
         let opened = vault.open_with(|descriptor| {
             let mut source = source_for(descriptor.kind, passphrase.as_ref().map(|text| text.as_str()), handle)?;
             source.unlock(descriptor)
-        });
+        })?;
+        let phrase = std::str::from_utf8(&opened).map_err(|_| problem("the lock holds damaged words"))?;
+        Ok(Zeroizing::new(phrase.to_owned()))
+    })
+    .await
+    .map_err(|e| problem(format!("opening the lock stopped unexpectedly: {e}")))??;
+    *slot.opened.lock().map_err(|_| problem("the app is in an unknown state"))? = Some(phrase);
+    Ok(())
+}
+
+/// Closes the lock: the words are let go.
+#[tauri::command]
+pub fn wallet_close_lock(slot: State<'_, WalletSlot>) {
+    if let Ok(mut opened) = slot.opened.lock() {
+        *opened = None;
+    }
+    if let Ok(mut prepared) = slot.prepared.lock() {
+        *prepared = None;
+    }
+}
+
+fn step(app: &AppHandle, text: &str) {
+    let _ = app.emit("send-step", text);
+}
+
+/// Signs the prepared payment with the open lock's words and hands it to
+/// the network. The lock closes again once the payment is out.
+#[tauri::command]
+pub async fn wallet_send(app: AppHandle, slot: State<'_, WalletSlot>, over_tor: bool) -> CommandResult<Sent> {
+    let phrase = slot.opened.lock().map_err(|_| problem("the app is in an unknown state"))?.clone()
+        .ok_or_else(|| problem("the lock closed; open it again to send"))?;
+    let payment = slot.prepared.lock().map_err(|_| problem("the app is in an unknown state"))?.take()
+        .ok_or_else(|| problem("work out the payment again"))?;
+    let params = sapling_params(&app)?;
+    let wallet = wallet(&app)?;
+    step(&app, "Signing on this PC");
+    let signed = tauri::async_runtime::spawn_blocking(move || -> (PreparedPayment, CommandResult<SignedPayment>) {
         let result = (|| -> CommandResult<SignedPayment> {
-            let phrase = opened?;
-            let phrase = std::str::from_utf8(&phrase).map_err(|_| problem("the lock holds damaged words"))?;
-            let seed = lockit_wallet::phrase_to_seed(phrase)?;
+            let seed = lockit_wallet::phrase_to_seed(&phrase)?;
             Ok(wallet.sign(&payment, &seed, &params)?)
         })();
         (payment, result)
@@ -447,7 +507,12 @@ pub async fn wallet_send(
             return Err(error);
         }
     };
-    broadcast(&app, &slot, signed, over_tor).await
+    step(&app, if over_tor { "Connecting over Tor" } else { "Handing it to the network" });
+    let sent = broadcast(&app, &slot, signed, over_tor).await;
+    if sent.is_ok() {
+        wallet_close_lock(slot.clone());
+    }
+    sent
 }
 
 /// Hands a signed payment that did not get through to the network again.

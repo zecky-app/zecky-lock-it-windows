@@ -321,6 +321,8 @@ pub fn run() {
             wallet::wallet_receive,
             wallet::wallet_activity,
             wallet::wallet_prepare,
+            wallet::wallet_open_lock,
+            wallet::wallet_close_lock,
             wallet::wallet_send,
             wallet::wallet_send_again,
             wallet::wallet_sync_now,

@@ -8,77 +8,66 @@
 </head>
 <body>
   <header class="top">
-    <span class="brand">Zecky</span>
+    <span class="brand">ZECKY</span>
     <span class="product">Lock it</span>
+    <button type="button" class="icon-button" id="eye" title="Hide amounts" aria-label="Hide amounts" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path class="slash" d="M4 20 20 4"/></svg>
+    </button>
   </header>
 
-  <p class="practice" role="note">Test build. Use a small amount only.</p>
-
-  <main>
+  <!-- ===== Getting started ===== -->
+  <main class="onboarding">
     <section id="view-loading" class="view">
       <p class="quiet">One moment.</p>
     </section>
 
-    <!-- No wallet yet. -->
     <section id="view-welcome" class="view" hidden>
-      <div class="lock" aria-hidden="true">
-        <svg viewBox="0 0 240 240" class="lock-art">
-          <circle cx="120" cy="120" r="104" class="ring"/>
-          <path class="shackle" d="M92 112 V88 a28 28 0 0 1 56 0 V112"/>
-          <rect class="body" x="78" y="108" width="84" height="66" rx="10"/>
-          <circle class="hole" cx="120" cy="134" r="8"/>
-          <rect class="hole" x="116.500" y="134" width="7" height="22" rx="3"/>
-        </svg>
-      </div>
-      <h1 class="state">Your Zcash, locked</h1>
+      <div class="welcome-lock" data-padlock="small"></div>
+      <h1 class="title">Your Zcash, locked</h1>
       <p class="lead">A calm wallet that keeps your savings yours. Only your keys open it.</p>
-      <button type="button" class="primary" id="welcome-create">Create a new wallet</button>
+      <button type="button" class="brass" id="welcome-create">Create a new wallet</button>
       <button type="button" class="secondary" id="welcome-restore">Restore with 24 words</button>
-      <button type="button" class="go-max-entry" data-go-max>
-        <span class="go-max-entry-name">Go Max</span>
-        <span class="go-max-entry-note">Your own Zcash node, on this PC</span>
-      </button>
+      <p class="quiet center test-note">Test build. Use a small amount only.</p>
     </section>
 
-    <!-- The 24 words of a new wallet. -->
     <section id="view-words" class="view" hidden>
-      <h1>Your 24 words</h1>
+      <p class="eyebrow">ZECKY</p>
+      <h1 class="title">Your 24 words</h1>
       <p class="lead">Write them on paper, in order. With them anyone can take your Zcash, and without them nobody can get it back. Never type them into a website or a photo.</p>
       <ol class="words" id="words-list"></ol>
-      <button type="button" class="primary" id="words-done">I wrote them down</button>
-      <button type="button" class="link" id="words-back">Back</button>
+      <button type="button" class="brass" id="words-done">I wrote them down</button>
+      <button type="button" class="quiet-button" id="words-back">Back</button>
     </section>
 
-    <!-- Checking three of the words. -->
     <section id="view-check" class="view" hidden>
-      <h1>Check three words</h1>
+      <p class="eyebrow">ZECKY</p>
+      <h1 class="title">Check three words</h1>
       <p class="lead">From your paper, not from memory.</p>
       <form id="check-form" class="fields" autocomplete="off"></form>
       <p id="check-message" class="message" role="status" aria-live="polite"></p>
-      <button type="button" class="primary" id="check-submit">Check</button>
-      <button type="button" class="link" id="check-back">Show the words again</button>
+      <button type="button" class="brass" id="check-submit">Check</button>
+      <button type="button" class="quiet-button" id="check-back">Show the words again</button>
     </section>
 
-    <!-- Restoring. -->
     <section id="view-restore" class="view" hidden>
-      <h1>Restore your wallet</h1>
+      <p class="eyebrow">ZECKY</p>
+      <h1 class="title">Restore your wallet</h1>
       <p class="lead">Type your 24 words, with spaces between them.</p>
-      <textarea id="restore-words" class="words-input" rows="6" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      <textarea id="restore-words" class="input words-input" rows="6" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
       <p class="lead">When were these words made? A rough guess is fine: earlier is safer.</p>
       <div class="row">
-        <select id="restore-month" aria-label="Month"></select>
-        <select id="restore-year" aria-label="Year"></select>
+        <select id="restore-month" class="input" aria-label="Month"></select>
+        <select id="restore-year" class="input" aria-label="Year"></select>
       </div>
       <p id="restore-message" class="message" role="status" aria-live="polite"></p>
-      <button type="button" class="primary" id="restore-submit">Continue</button>
-      <button type="button" class="link" id="restore-back">Back</button>
+      <button type="button" class="brass" id="restore-submit">Continue</button>
+      <button type="button" class="quiet-button" id="restore-back">Back</button>
     </section>
 
-    <!-- Choosing the keys that seal the words. -->
     <section id="view-setup" class="view" hidden>
-      <h1>Choose your keys</h1>
-      <p class="lead">Every key you pick will be needed to open the lock and send.</p>
-
+      <p class="eyebrow">ZECKY</p>
+      <h1 class="title">Choose your keys</h1>
+      <p class="lead">Every key you pick is needed to open the lock.</p>
       <form id="setup-form" autocomplete="off">
         <label class="key" data-kind="device_hello">
           <input type="checkbox" name="kind" value="device_hello">
@@ -87,7 +76,6 @@
             <span class="key-note" data-note>Windows Hello: face, fingerprint or PIN</span>
           </span>
         </label>
-
         <label class="key" data-kind="security_key">
           <input type="checkbox" name="kind" value="security_key">
           <span class="key-text">
@@ -95,7 +83,6 @@
             <span class="key-note" data-note>A YubiKey or other FIDO2 key: touch it. Together with Hello or a passphrase</span>
           </span>
         </label>
-
         <label class="key" data-kind="passphrase">
           <input type="checkbox" name="kind" value="passphrase">
           <span class="key-text">
@@ -103,113 +90,243 @@
             <span class="key-note" data-note>Words only you know, at least 12 characters</span>
           </span>
         </label>
-
         <div id="setup-passphrase" class="fields" hidden>
-          <label class="field">
-            <span>Passphrase</span>
-            <input type="password" id="new-passphrase" autocomplete="new-password" spellcheck="false">
-          </label>
-          <label class="field">
-            <span>Once more</span>
-            <input type="password" id="new-passphrase-again" autocomplete="new-password" spellcheck="false">
-          </label>
+          <label class="field"><span>Passphrase</span><input class="input" type="password" id="new-passphrase" autocomplete="new-password" spellcheck="false"></label>
+          <label class="field"><span>Once more</span><input class="input" type="password" id="new-passphrase-again" autocomplete="new-password" spellcheck="false"></label>
         </div>
-
         <p id="setup-message" class="message" role="status" aria-live="polite"></p>
-        <button type="submit" class="primary" id="setup-submit" disabled>Lock it</button>
+        <button type="submit" class="brass" id="setup-submit" disabled>Lock it</button>
       </form>
-      <button type="button" class="link" id="setup-back">Back</button>
-    </section>
-
-    <!-- Home. -->
-    <section id="view-home" class="view" hidden>
-      <p class="balance-label">Locked</p>
-      <p class="balance" id="home-balance">…</p>
-      <p class="quiet center" id="home-pending"></p>
-      <p class="sync-line" id="home-sync"></p>
-      <div class="row">
-        <button type="button" class="secondary" id="home-receive">Receive</button>
-        <button type="button" class="primary" id="home-send">Send</button>
-      </div>
-      <p id="home-message" class="message" role="status" aria-live="polite"></p>
-      <h2 class="section">Activity</h2>
-      <ul class="activity" id="home-activity"></ul>
-      <button type="button" class="go-max-entry" data-go-max>
-        <span class="go-max-entry-name">Go Max</span>
-        <span class="go-max-entry-note" id="go-max-entry-note">Your own Zcash node, on this PC</span>
-      </button>
-      <p class="quiet center" id="home-keys"></p>
-    </section>
-
-    <!-- Receive. -->
-    <section id="view-receive" class="view" hidden>
-      <h1>Receive</h1>
-      <p class="lead">Your shielded address. Payments to it stay private.</p>
-      <img id="receive-qr" class="qr" alt="QR code of your address">
-      <p class="address" id="receive-address"></p>
-      <button type="button" class="secondary" id="receive-copy">Copy address</button>
-      <p id="receive-message" class="message calm" role="status" aria-live="polite"></p>
-      <button type="button" class="link" data-home>Back</button>
-    </section>
-
-    <!-- Send. -->
-    <section id="view-send" class="view" hidden>
-      <h1>Send</h1>
-      <form id="send-form" class="fields" autocomplete="off">
-        <label class="field"><span>To</span><input id="send-to" spellcheck="false" placeholder="u1… or zs… or t1…"></label>
-        <label class="field"><span>Amount in ZEC</span><input id="send-amount" inputmode="decimal" placeholder="0.01"></label>
-        <label class="field"><span>Note, only the receiver sees it (optional)</span><input id="send-memo" maxlength="512"></label>
-      </form>
-      <div id="send-plan" hidden>
-        <dl class="facts">
-          <div><dt>They get</dt><dd id="plan-amount"></dd></div>
-          <div><dt>Network fee</dt><dd id="plan-fee"></dd></div>
-          <div class="wide"><dt>Total</dt><dd id="plan-total"></dd></div>
-        </dl>
-        <label class="check"><input type="checkbox" id="send-tor" checked> Send over Tor, so servers cannot see where it came from</label>
-      </div>
-      <form id="send-confirm" autocomplete="off" hidden>
-        <p class="confirm">Really open the lock?</p>
-        <label class="field" id="send-passphrase-field" hidden>
-          <span>Passphrase</span>
-          <input type="password" id="send-passphrase" autocomplete="current-password" spellcheck="false">
-        </label>
-      </form>
-      <p id="send-message" class="message" role="status" aria-live="polite"></p>
-      <div class="row" id="send-buttons">
-        <button type="button" class="secondary" id="send-cancel">Cancel</button>
-        <button type="button" class="primary" id="send-next">Work it out</button>
-      </div>
-    </section>
-
-    <!-- Go Max: the owner's own node. -->
-    <section id="view-go-max" class="view" hidden>
-      <div class="node-ring" id="node-ring" data-state="off" aria-hidden="true">
-        <svg viewBox="0 0 240 240">
-          <circle cx="120" cy="120" r="104" class="ring-track"/>
-          <circle cx="120" cy="120" r="104" class="ring-progress" id="ring-progress"
-                  pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 120 120)"/>
-        </svg>
-        <span class="node-percent" id="node-percent"></span>
-      </div>
-      <h1 class="state" id="node-state">Off</h1>
-      <p class="lead" id="node-lead">Your own Zcash node, on this PC. About 20 GB, and a few hours to catch up the first time.</p>
-
-      <dl class="facts" id="node-facts" hidden>
-        <div><dt>Checked up to</dt><dd id="fact-height"></dd></div>
-        <div><dt>Peers</dt><dd id="fact-peers"></dd></div>
-        <div><dt>Wallet service</dt><dd id="fact-wallet"></dd></div>
-        <div><dt>On disk</dt><dd id="fact-disk"></dd></div>
-        <div class="wide"><dt>Phone access, over Tor</dt><dd id="fact-onion"></dd><dd class="onion" id="fact-onion-address"></dd></div>
-      </dl>
-
-      <p id="node-message" class="message" role="status" aria-live="polite"></p>
-      <button type="button" class="primary" id="node-toggle">Turn on Go Max</button>
-      <p class="quiet center">Private: other nodes cannot connect to this PC.</p>
-      <button type="button" class="link" id="go-max-back">Back</button>
+      <button type="button" class="quiet-button" id="setup-back">Back</button>
     </section>
   </main>
 
+  <!-- ===== Home: the lock ===== -->
+  <section id="view-home" class="home" hidden>
+    <div class="stage">
+      <div class="lock-area" id="lock-area">
+        <canvas id="medallion" width="760" height="760" aria-hidden="true"></canvas>
+        <canvas id="engraved" width="640" height="640" aria-hidden="true"></canvas>
+        <svg class="heartbeat" id="heartbeat" viewBox="0 0 356 356" aria-hidden="true">
+          <defs>
+            <linearGradient id="beat-grad" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="var(--gold)" stop-opacity="0"/>
+              <stop offset="1" stop-color="var(--gold)"/>
+            </linearGradient>
+          </defs>
+          <g id="beat-arm"><circle cx="178" cy="178" r="176.75" fill="none" stroke="url(#beat-grad)" stroke-width="2.5" stroke-linecap="round" pathLength="100" stroke-dasharray="7.5 92.5"/></g>
+          <text id="beat-label" x="178" y="49" text-anchor="middle">BLOCK</text>
+        </svg>
+        <svg class="milestone" id="milestone" viewBox="0 0 340 340" aria-hidden="true"></svg>
+        <button type="button" class="padlock-button" id="padlock" title="Open the lock" data-padlock="home"></button>
+      </div>
+
+      <button type="button" class="balance" id="balance" title="Click to show in zats">
+        <span class="balance-number" id="balance-number">…</span>
+        <span class="balance-unit" id="balance-unit">ZEC</span>
+      </button>
+      <button type="button" class="held-line" id="held-line"></button>
+
+      <div class="actions" id="actions-locked">
+        <button type="button" class="brass brass-big" id="home-receive">
+          <svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none"/></svg>
+          Receive
+        </button>
+      </div>
+      <div class="actions" id="actions-open" hidden>
+        <button type="button" class="brass brass-big" id="home-send">
+          <svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2" fill="none"/></svg>
+          Send Zcash
+        </button>
+        <button type="button" class="secondary close-lock" id="home-close">Close the lock</button>
+      </div>
+      <p class="open-note" id="open-note"></p>
+      <button type="button" class="payment-line" id="payment-line"></button>
+    </div>
+
+    <button type="button" class="go-max-coin" id="go-max-coin" title="Go Max: your own node">
+      <span class="coin-dot" id="coin-dot"></span>
+      <span class="coin-name">Go Max</span>
+    </button>
+
+    <footer class="status-bar">
+      <div class="status-left">
+        <span class="dot" id="status-dot"></span>
+        <button type="button" class="status-text" id="status-text" title="Sync details">Connecting…</button>
+        <span class="sep">·</span>
+        <span class="shielded" title="Lock it only uses shielded addresses: amounts, senders and receivers stay private on the blockchain.">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6z"/><path d="M12 3v18" /></svg>
+          Shielded
+        </span>
+      </div>
+      <div class="status-right">
+        <button type="button" id="open-activity">Activity</button>
+        <button type="button" id="open-gomax">Go Max</button>
+      </div>
+    </footer>
+  </section>
+
+  <!-- ===== Sheets ===== -->
+  <div class="sheet-layer" id="sheet-layer" hidden>
+    <!-- Receive -->
+    <section class="sheet" id="sheet-receive" hidden>
+      <div class="sheet-head">
+        <div><p class="eyebrow">ZECKY</p><h2 class="sheet-title">Receive</h2>
+        <p class="sheet-sub">Your shielded address. Payments to it stay private.</p></div>
+        <button type="button" class="done" data-close>Done</button>
+      </div>
+      <div class="receive-body">
+        <img id="receive-qr" class="qr" alt="QR code of your address">
+        <p class="address" id="receive-address"></p>
+        <button type="button" class="secondary" id="receive-copy">Copy address</button>
+        <p id="receive-message" class="message calm" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <!-- Send -->
+    <section class="sheet" id="sheet-send" hidden>
+      <div class="sheet-head">
+        <div><p class="eyebrow">ZECKY</p><h2 class="sheet-title" id="send-title">Send Zcash</h2>
+        <p class="sheet-sub" id="send-sub">Taken out of the lock. Everything else stays locked.</p></div>
+        <button type="button" class="done" id="send-close">Cancel</button>
+      </div>
+      <form id="send-form" class="fields" autocomplete="off">
+        <label class="field"><span>To</span><input class="input" id="send-to" spellcheck="false" placeholder="Zcash address"></label>
+        <label class="field"><span>Amount</span>
+          <span class="amount-row"><input class="input" id="send-amount" inputmode="decimal" placeholder="0.000"><span class="unit-chip">ZEC</span></span>
+        </label>
+        <label class="field"><span>Private note (optional)</span><input class="input" id="send-memo" maxlength="512" placeholder="Only the receiver can read this"></label>
+      </form>
+      <div id="send-receipt" class="receipt" hidden>
+        <div class="receipt-row"><span>They receive</span><strong id="plan-amount"></strong></div>
+        <div class="receipt-row"><span>Network fee</span><strong id="plan-fee"></strong></div>
+        <div class="receipt-row total"><span>Leaves the lock</span><strong id="plan-total"></strong></div>
+        <p class="receipt-to" id="plan-to"></p>
+        <label class="check"><input type="checkbox" id="send-tor" checked> Send over Tor, so servers cannot see where it came from</label>
+      </div>
+      <div class="send-progress" id="send-progress" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <p id="send-step">Signing on this PC</p>
+        <p class="quiet" id="send-step-note">This can take a minute. Keep Lock it open.</p>
+      </div>
+      <p id="send-message" class="message" role="status" aria-live="polite"></p>
+      <div class="sheet-actions" id="send-buttons">
+        <button type="button" class="quiet-button" id="send-back">Change</button>
+        <button type="button" class="brass" id="send-next">Check before sending</button>
+      </div>
+    </section>
+
+    <!-- Activity -->
+    <section class="sheet" id="sheet-activity" hidden>
+      <div class="sheet-head">
+        <div><p class="eyebrow">ZECKY</p><h2 class="sheet-title">Activity</h2>
+        <p class="sheet-sub">Every time Zcash was locked or released.</p></div>
+        <button type="button" class="done" data-close>Done</button>
+      </div>
+      <ul class="activity" id="activity-list"></ul>
+    </section>
+
+    <!-- Sync -->
+    <section class="sheet" id="sheet-sync" hidden>
+      <div class="sheet-head">
+        <div><p class="eyebrow">ZECKY</p><h2 class="sheet-title">Sync</h2>
+        <p class="sheet-sub" id="sync-sub">Up to date</p></div>
+        <button type="button" class="done" data-close>Done</button>
+      </div>
+      <div class="sheet-scroll">
+        <div class="sync-ring">
+          <svg viewBox="0 0 150 150" aria-hidden="true">
+            <circle cx="75" cy="75" r="70" class="ring-track"/>
+            <circle cx="75" cy="75" r="70" class="ring-fill" id="sync-ring-fill" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 75 75)"/>
+          </svg>
+          <div class="sync-ring-text"><span id="sync-percent">…</span><small id="sync-ring-word">checked</small></div>
+        </div>
+        <p class="quiet center" id="sync-ring-note"></p>
+        <h3 class="section-title">Blocks</h3>
+        <div class="card">
+          <div class="line"><span>Network</span><strong id="sync-network">…</strong></div>
+          <div class="line"><span>This wallet</span><strong id="sync-wallet">…</strong></div>
+          <div class="line"><span>Behind</span><strong id="sync-behind">…</strong></div>
+          <div class="line"><span>Block time</span><strong id="sync-blocktime">…</strong></div>
+          <div class="line"><span>Wallet birthday</span><strong id="sync-birthday">…</strong></div>
+        </div>
+        <h3 class="section-title">Checked so far</h3>
+        <div class="card pad">
+          <div class="bar"><div class="bar-fill" id="sync-bar"></div></div>
+          <div class="bar-ends"><span id="sync-bar-from">…</span><span id="sync-bar-to">…</span></div>
+          <p class="small quiet">Gold is checked without gaps. Lock it checks the newest blocks first, so payments can show before the dark part is done.</p>
+        </div>
+        <h3 class="section-title">Server</h3>
+        <div class="card">
+          <div class="line"><span>Server</span><strong id="sync-server">…</strong></div>
+          <div class="line"><span>Connection</span><strong id="sync-connection">…</strong></div>
+        </div>
+        <h3 class="section-title">Recent problems</h3>
+        <div class="card" id="sync-problems"></div>
+        <p class="small quiet">Kept on this PC only while Lock it is open.</p>
+      </div>
+    </section>
+
+    <!-- Go Max -->
+    <section class="sheet" id="sheet-gomax" hidden>
+      <div class="sheet-head">
+        <div><p class="eyebrow">ZECKY</p><h2 class="sheet-title">Go Max</h2>
+        <p class="sheet-sub">Your own Zcash node, on this PC.</p></div>
+        <button type="button" class="done" data-close>Done</button>
+      </div>
+      <div class="sheet-scroll">
+        <div class="node-ring" id="node-ring" data-state="off" aria-hidden="true">
+          <svg viewBox="0 0 240 240">
+            <circle cx="120" cy="120" r="104" class="ring-track"/>
+            <circle cx="120" cy="120" r="104" class="ring-progress" id="ring-progress"
+                    pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 120 120)"/>
+          </svg>
+          <span class="node-percent" id="node-percent"></span>
+        </div>
+        <h3 class="state" id="node-state">Off</h3>
+        <p class="lead center" id="node-lead">Your own Zcash node, on this PC. About 20 GB, and a few hours to catch up the first time.</p>
+        <div class="card" id="node-facts" hidden>
+          <div class="line"><span>Checked up to</span><strong id="fact-height"></strong></div>
+          <div class="line"><span>Peers</span><strong id="fact-peers"></strong></div>
+          <div class="line"><span>Wallet service</span><strong id="fact-wallet"></strong></div>
+          <div class="line"><span>On disk</span><strong id="fact-disk"></strong></div>
+          <div class="line"><span>Phone access, over Tor</span><strong id="fact-onion"></strong></div>
+          <p class="onion" id="fact-onion-address"></p>
+        </div>
+        <p id="node-message" class="message" role="status" aria-live="polite"></p>
+        <button type="button" class="brass" id="node-toggle">Turn on Go Max</button>
+        <p class="quiet center small">Private: other nodes cannot connect to this PC.</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== Really open the lock? ===== -->
+  <div class="scrim" id="open-prompt" hidden>
+    <div class="prompt">
+      <div class="prompt-ring">
+        <svg viewBox="0 0 104 104" aria-hidden="true">
+          <circle cx="52" cy="52" r="50" class="ring-track"/>
+          <circle cx="52" cy="52" r="50" class="ring-fill" id="prompt-fill" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 52 52)"/>
+        </svg>
+        <div class="prompt-lock" data-padlock="prompt"></div>
+        <span class="prompt-count" id="prompt-count"></span>
+      </div>
+      <h2 class="prompt-title">Really open the lock?</h2>
+      <p class="prompt-intro" id="prompt-intro"></p>
+      <label class="agree" id="prompt-agree-row"><input type="checkbox" id="prompt-agree"> I am opening it myself, and nobody is telling me to.</label>
+      <label class="field" id="prompt-passphrase-field" hidden>
+        <span>Passphrase</span>
+        <input class="input" type="password" id="prompt-passphrase" autocomplete="current-password" spellcheck="false">
+      </label>
+      <p class="message" id="prompt-message" role="status" aria-live="polite"></p>
+      <div class="sheet-actions">
+        <button type="button" class="brass" id="prompt-keep">Keep it locked</button>
+        <button type="button" class="secondary" id="prompt-open" disabled>Open in 10 s</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="padlock.js"></script>
   <script src="main.js"></script>
 </body>
 </html>

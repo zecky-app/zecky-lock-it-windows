@@ -52,6 +52,11 @@ pub struct Balance {
     pub chain_tip: u32,
     /// How far the scan is, from 0 to 1.
     pub progress: f64,
+    /// The block the wallet starts from.
+    pub birthday: u32,
+    /// Block ranges still to check, `[start, end)`, as the Mac's sync ring
+    /// counts them.
+    pub to_scan: Vec<(u32, u32)>,
 }
 
 /// A payment worked out and ready to sign, with its fee.
@@ -159,6 +164,13 @@ impl Wallet {
             progress: fraction.clamp(0.0, 1.0),
             ..Default::default()
         };
+        balance.birthday = db.get_account_birthday(account).map(u32::from).unwrap_or(0);
+        balance.to_scan = db
+            .suggest_scan_ranges()
+            .map_err(db_err)?
+            .iter()
+            .map(|range| (u32::from(range.block_range().start), u32::from(range.block_range().end)))
+            .collect();
         if let Some(account_balance) = summary.account_balances().get(&account) {
             balance.spendable = account_balance.spendable_value().into_u64();
             balance.total = account_balance.total().into_u64();

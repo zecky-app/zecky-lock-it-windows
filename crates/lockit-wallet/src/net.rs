@@ -24,6 +24,9 @@ use crate::{Error, Result};
 pub const PUBLIC_SERVERS: [&str; 5] =
     ["zec.rocks", "eu.zec.rocks", "na.zec.rocks", "sa.zec.rocks", "ap.zec.rocks"];
 
+/// How long sending over Tor may take, the first connection included.
+const TOR_PATIENCE: Duration = Duration::from_secs(180);
+
 /// Where Lock it reads from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Server {
@@ -122,7 +125,10 @@ pub(crate) async fn submit(raw: &[u8], reading_from: &Server, over_tor: bool, to
     }
 
     std::fs::create_dir_all(tor_dir).map_err(|e| Error::Tor(e.to_string()))?;
-    let tor = tor::Client::create(tor_dir, |_| {}).await.map_err(|e| Error::Tor(e.to_string()))?;
+    let tor = tokio::time::timeout(TOR_PATIENCE, tor::Client::create(tor_dir, |_| {}))
+        .await
+        .map_err(|_| Error::Tor("Tor did not connect within 3 minutes".into()))?
+        .map_err(|e| Error::Tor(e.to_string()))?;
 
     // The public server being read from (if not your own node), then the built-in ones.
     let mut hosts: Vec<String> = Vec::new();
@@ -148,7 +154,11 @@ pub(crate) async fn submit(raw: &[u8], reading_from: &Server, over_tor: bool, to
             submit_to(&mut client, raw, &host).await.map(|()| host)
         }
     });
-    let results = futures_util::future::join_all(attempts).await;
+    // Tor can take a while the first time; never longer than this.
+    let results = match tokio::time::timeout(TOR_PATIENCE, futures_util::future::join_all(attempts)).await {
+        Ok(results) => results,
+        Err(_) => return Err(Error::Tor("no server was reached within 3 minutes".into())),
+    };
 
     let accepted: Vec<String> = results.iter().filter_map(|r| r.as_ref().ok().cloned()).collect();
     if accepted.is_empty() {
