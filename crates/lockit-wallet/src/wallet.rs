@@ -258,6 +258,25 @@ impl Wallet {
         Ok(imported.id().expose_uuid().to_string())
     }
 
+    /// Hands the main wallet's place to another wallet of the key ring: the
+    /// main one is taken off this PC and `successor` becomes the main one.
+    /// (The app reseals the lock with the successor's words first.)
+    pub fn hand_over_to(&self, successor: &str) -> Result<()> {
+        let mut db = self.db()?;
+        let old = Self::main_account(&db)?;
+        let uuid = uuid::Uuid::parse_str(successor).map_err(|_| Error::Other("unknown wallet".into()))?;
+        let new = AccountUuid::from_uuid(uuid);
+        if new == old || !db.get_account_ids().map_err(db_err)?.contains(&new) {
+            return Err(Error::Other("unknown wallet".into()));
+        }
+        db.delete_account(old).map_err(db_err)?;
+        drop(db);
+        let conn = rusqlite::Connection::open(self.db_path()).map_err(db_err)?;
+        conn.busy_timeout(std::time::Duration::from_secs(15)).map_err(db_err)?;
+        conn.execute("UPDATE accounts SET key_source = NULL WHERE uuid = ?1", [uuid.as_bytes().to_vec()]).map_err(db_err)?;
+        Ok(())
+    }
+
     /// Whether the wallet on screen is signed on a phone with Seal it.
     pub fn is_sealit(&self) -> Result<bool> {
         let db = self.db()?;
@@ -801,8 +820,17 @@ mod tests {
         assert!(extra.activity(10).unwrap().is_empty());
         assert!(wallet.add_wallet_from_birthday("Again", &second, &birthday, SAPLING_ACTIVATION + 10).is_err(), "never twice");
         assert!(wallet.remove_account().is_err(), "the main wallet is not removed this way");
+        let third = phrase_to_seed(&new_phrase()).unwrap();
+        let other = wallet.add_wallet_from_birthday("Spending", &third, &birthday, SAPLING_ACTIVATION + 10).unwrap();
         extra.remove_account().unwrap();
-        assert_eq!(wallet.accounts().unwrap().len(), 1);
+        assert_eq!(wallet.accounts().unwrap().len(), 2);
+        // The main wallet is erased: Spending takes its place.
+        let address = wallet.for_account(Some(&other)).receive_address().unwrap();
+        wallet.hand_over_to(&other).unwrap();
+        let list = wallet.accounts().unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(list[0].main && list[0].id == other);
+        assert_eq!(wallet.receive_address().unwrap(), address);
     }
 
     #[test]

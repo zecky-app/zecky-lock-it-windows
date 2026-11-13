@@ -10,7 +10,6 @@
   <header class="top">
     <span class="brand">ZECKY</span>
     <span class="product">Lock it</span>
-    <button type="button" class="wallet-pill" id="wallet-pill" title="Your wallets" hidden><span id="wallet-pill-name">Main wallet</span><span class="pill-chev">▾</span></button>
     <button type="button" class="icon-button" id="eye" title="Hide amounts" aria-label="Hide amounts" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path class="slash" d="M4 20 20 4"/></svg>
     </button>
@@ -124,6 +123,8 @@
   <!-- ===== Home: the lock ===== -->
   <section id="view-home" class="home" hidden>
     <div class="stage">
+      <div class="key-ring" id="key-ring" role="toolbar" aria-label="Your wallets"></div>
+      <div class="ring-menu" id="ring-menu" role="menu" hidden></div>
       <div class="lock-area" id="lock-area">
         <canvas id="medallion" width="760" height="760" aria-hidden="true"></canvas>
         <canvas id="engraved" width="640" height="640" aria-hidden="true"></canvas>
@@ -202,36 +203,32 @@
 
   <!-- ===== Sheets ===== -->
   <div class="sheet-layer" id="sheet-layer" hidden>
-    <!-- Wallets: the key ring -->
+    <!-- Key ring: adding or renaming a wallet -->
     <section class="sheet" id="sheet-wallets" hidden>
       <div class="sheet-head">
-        <div><p class="eyebrow">ZECKY</p><h2 class="sheet-title">Your wallets</h2>
-        <p class="sheet-sub">Every wallet sits behind the same lock and the same keys.</p></div>
+        <div><p class="eyebrow">ZECKY</p><h2 class="sheet-title" id="wallet-sheet-title">New wallet on this PC</h2>
+        <p class="sheet-sub" id="wallet-sheet-sub">It sits behind the same lock and the same keys, with its own 24 words.</p></div>
+        <button type="button" class="done" data-close>Cancel</button>
+      </div>
+      <div class="sheet-scroll">
+        <div class="card pad">
+          <label class="field"><span>Name</span><input class="input" id="wallet-name" maxlength="40" placeholder="Savings" spellcheck="false" autocomplete="off"></label>
+          <button type="button" class="brass" id="wallet-go">Continue</button>
+          <p id="wallet-message" class="message" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- A wallet's words (Show its words…) -->
+    <section class="sheet" id="sheet-words" hidden>
+      <div class="sheet-head">
+        <div><p class="eyebrow">ZECKY</p><h2 class="sheet-title" id="words-sheet-title">Its words</h2>
+        <p class="sheet-sub">Make sure nobody can see your screen. Hidden again after 2 minutes.</p></div>
         <button type="button" class="done" data-close>Done</button>
       </div>
       <div class="sheet-scroll">
-        <div class="card list" id="wallet-list"></div>
-        <div class="card pad" id="wallet-edit" hidden>
-          <p class="card-title" id="wallet-edit-title">Wallet</p>
-          <label class="field"><span>Name</span><input class="input" id="wallet-rename" maxlength="40" spellcheck="false" autocomplete="off"></label>
-          <div class="inline">
-            <button type="button" class="secondary narrow" id="wallet-rename-save">Save the name</button>
-            <button type="button" class="secondary narrow danger-text" id="wallet-remove">Remove from this PC</button>
-          </div>
-          <p class="small quiet" id="wallet-edit-note">Removing takes its words off this PC. Its Zcash stays on the blockchain: with the 24 words you can add it again.</p>
-          <p id="wallet-edit-message" class="message" role="status" aria-live="polite"></p>
-        </div>
-        <div class="card pad" id="wallet-add">
-          <p class="card-title">Add a wallet</p>
-          <p class="small quiet">For example savings apart from spending. It gets its own 24 words; write those down too.</p>
-          <label class="field"><span>Name</span><input class="input" id="wallet-name" maxlength="40" placeholder="Savings" spellcheck="false" autocomplete="off"></label>
-          <div class="inline">
-            <button type="button" class="secondary narrow" id="wallet-new">New words</button>
-            <button type="button" class="secondary narrow" id="wallet-restore">Restore with 24 words</button>
-          </div>
-          <button type="button" class="link-gold" id="wallet-pair">Or pair a phone with Seal it ›</button>
-          <p id="wallet-message" class="message" role="status" aria-live="polite"></p>
-        </div>
+        <ol class="words" id="ring-words"></ol>
+        <p class="small quiet" id="ring-birthday"></p>
       </div>
     </section>
 

@@ -130,7 +130,12 @@ fn save_keyring(app: &AppHandle, ring: &[RingEntry]) -> CommandResult<()> {
 /// The words that sign for the wallet on screen: the main words, or an
 /// extra wallet's words opened with them.
 fn signing_phrase(app: &AppHandle, main_phrase: &Zeroizing<String>) -> CommandResult<Zeroizing<String>> {
-    let Some(current) = load_settings(app).current else { return Ok(main_phrase.clone()) };
+    phrase_of(app, main_phrase, load_settings(app).current)
+}
+
+/// The words of the wallet with this id (`None`: the main one).
+fn phrase_of(app: &AppHandle, main_phrase: &Zeroizing<String>, id: Option<String>) -> CommandResult<Zeroizing<String>> {
+    let Some(current) = id else { return Ok(main_phrase.clone()) };
     let entry = load_keyring(app).into_iter().find(|entry| entry.id == current);
     let Some(entry) = entry else {
         return Err(problem("this wallet is watch-only here: it is signed on your phone with Seal it"));
@@ -177,11 +182,15 @@ pub struct Settings {
     current: Option<String>,
     /// Names given to wallets after they were added (id → name).
     names: std::collections::BTreeMap<String, String>,
+    /// The order of the key ring's chips (ids; "main" for the main wallet).
+    order: Vec<String>,
+    /// Wallets kept out of sight on the key ring.
+    hidden: Vec<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { server: None, tor: true, wait: 10, ask_on_start: true, current: None, names: Default::default() }
+        Self { server: None, tor: true, wait: 10, ask_on_start: true, current: None, names: Default::default(), order: Vec::new(), hidden: Vec::new() }
     }
 }
 
@@ -919,10 +928,11 @@ pub async fn settings_set_wait(app: AppHandle, window: WebviewWindow, seconds: u
 
 /// The 24 words, after every key of the lock was asked. Only for showing.
 #[tauri::command]
-pub async fn wallet_show_words(app: AppHandle, window: WebviewWindow, typed: Typed) -> CommandResult<Vec<String>> {
+pub async fn wallet_show_words(app: AppHandle, window: WebviewWindow, typed: Typed, id: Option<String>) -> CommandResult<Vec<String>> {
     let main = ask_the_keys(&app, &window, typed).await?;
-    let phrase = signing_phrase(&app, &main)?;
-    let birthday = wallet(&app)?.balance().map(|b| b.birthday).unwrap_or(0);
+    let id = id.or_else(|| load_settings(&app).current);
+    let phrase = phrase_of(&app, &main, id.clone())?;
+    let birthday = main_wallet(&app)?.for_account(id.as_deref()).balance().map(|b| b.birthday).unwrap_or(0);
     let mut words: Vec<String> = phrase.split(' ').map(str::to_owned).collect();
     words.push(birthday.to_string());
     Ok(words)
@@ -1073,11 +1083,69 @@ pub fn keyring_rename(app: AppHandle, id: Option<String>, name: String) -> Comma
     save_settings(&app, &settings)
 }
 
+/// The key ring's order and the wallets kept out of sight.
+#[tauri::command]
+pub fn keyring_layout(app: AppHandle, order: Vec<String>, hidden: Vec<String>) -> CommandResult<()> {
+    let mut settings = load_settings(&app);
+    settings.order = order.into_iter().take(64).collect();
+    settings.hidden = hidden.into_iter().filter(|h| h != "main").take(64).collect();
+    save_settings(&app, &settings)
+}
+
+/// Erases the main wallet only: the lock passes to the next wallet of the
+/// key ring with words on this PC (first in the owner's order), as on Lock
+/// it Mac. Every key is asked; the keys and the lock's rules stay.
+#[tauri::command]
+pub async fn keyring_erase_main(app: AppHandle, window: WebviewWindow, slot: State<'_, WalletSlot>, typed: Typed) -> CommandResult<String> {
+    let mut ring = load_keyring(&app);
+    let settings = load_settings(&app);
+    let successor = settings
+        .order
+        .iter()
+        .filter_map(|id| ring.iter().find(|e| &e.id == id))
+        .chain(ring.iter())
+        .next()
+        .cloned()
+        .ok_or_else(|| problem("this is the only wallet with its words on this PC; erase it with Erase everything in Settings › Security"))?;
+    let opened = open_fully(&app, &window, typed).await?;
+    let main_seed = lockit_wallet::phrase_to_seed(&opened.phrase)?;
+    let words = lockit_auth::keyring::open_words(main_seed.expose_secret(), &successor.sealed)?;
+    let new_seed = lockit_wallet::phrase_to_seed(&words)?;
+    ring.retain(|e| e.id != successor.id);
+    let mut moved = Vec::with_capacity(ring.len());
+    for entry in &ring {
+        let other = lockit_auth::keyring::open_words(main_seed.expose_secret(), &entry.sealed)?;
+        moved.push(RingEntry { id: entry.id.clone(), sealed: lockit_auth::keyring::seal_words(new_seed.expose_secret(), &other)? });
+    }
+    let old_main = main_wallet(&app)?.accounts()?.into_iter().find(|a| a.main).map(|a| a.id);
+    // The lock first: from here on it holds the successor's words.
+    reseal(&app, &OpenedLock { phrase: words, keys: opened.keys, policy: opened.policy })?;
+    save_keyring(&app, &moved)?;
+    let main = main_wallet(&app)?;
+    let id = successor.id.clone();
+    tauri::async_runtime::spawn_blocking(move || main.hand_over_to(&id)).await.map_err(|e| problem(e.to_string()))??;
+    let mut settings = load_settings(&app);
+    if let Some(old) = old_main {
+        settings.names.remove(&old);
+    }
+    settings.order.retain(|o| o != &successor.id);
+    settings.hidden.retain(|o| o != &successor.id);
+    settings.current = None;
+    save_settings(&app, &settings)?;
+    wallet_close_lock(slot.clone());
+    Ok(successor.id)
+}
+
 /// Removes another wallet from the key ring after every key of the lock.
 /// Its words are gone from this PC; the main wallet goes with Erase.
 #[tauri::command]
 pub async fn keyring_remove(app: AppHandle, window: WebviewWindow, slot: State<'_, WalletSlot>, id: String, typed: Typed) -> CommandResult<()> {
-    drop(ask_the_keys(&app, &window, typed).await?);
+    // A Seal it wallet's keys are on the phone: removing it takes nothing
+    // that can spend off this PC, so the keys are not asked (as on the Mac).
+    let watch_only = main_wallet(&app)?.accounts()?.iter().any(|a| a.id == id && a.watch_only);
+    if !watch_only {
+        drop(ask_the_keys(&app, &window, typed).await?);
+    }
     let target = main_wallet(&app)?.for_account(Some(&id));
     tauri::async_runtime::spawn_blocking(move || target.remove_account()).await.map_err(|e| problem(e.to_string()))??;
     let mut ring = load_keyring(&app);
@@ -1085,6 +1153,8 @@ pub async fn keyring_remove(app: AppHandle, window: WebviewWindow, slot: State<'
     save_keyring(&app, &ring)?;
     let mut settings = load_settings(&app);
     settings.names.remove(&id);
+    settings.order.retain(|o| o != &id);
+    settings.hidden.retain(|o| o != &id);
     if settings.current.as_deref() == Some(id.as_str()) {
         settings.current = None;
         wallet_close_lock(slot.clone());

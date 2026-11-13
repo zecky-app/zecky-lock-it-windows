@@ -122,7 +122,6 @@ function showView(name) {
   onboarding.hidden = name === "home";
   $("view-home").hidden = name !== "home";
   $("eye").hidden = name !== "home";
-  $("wallet-pill").hidden = name !== "home";
   for (const [key, element] of Object.entries(views)) element.hidden = key !== name;
   if (name === "home") startHome();
   else stopHome();
@@ -359,7 +358,7 @@ function heldDays() {
 }
 
 function renderHome() {
-  renderWalletPill();
+  renderKeyRing();
   const b = overview.balance || { total: 0, spendable: 0, pending: 0, chain_tip: 0 };
   const hidden = prefs.hidden;
   $("eye").classList.toggle("on", hidden);
@@ -726,7 +725,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden && lockOpen && !sending) closeLock();
 });
 
-// ---------- Wallets: the key ring ----------
+// ---------- Wallets: the key ring (as Lock it Mac) ----------
 
 /// The wallet being added (its name) while the words are shown or typed.
 let adding = null;
@@ -736,7 +735,7 @@ const viewTitles = {
 };
 
 function walletName(w) {
-  return w.main && w.name === "Lock it" ? "Main wallet" : w.name;
+  return w.main && w.name === "Lock it" ? "This PC" : w.name;
 }
 
 function currentWallet() {
@@ -745,153 +744,293 @@ function currentWallet() {
   return list.find((w) => (id ? w.id === id : w.main)) || list[0] || null;
 }
 
-function renderWalletPill() {
-  const w = currentWallet();
-  $("wallet-pill-name").textContent = w ? walletName(w) : "Main wallet";
-  $("wallet-pill").classList.toggle("on", Boolean(w && !w.main));
+const keyOf = (w) => (w.main ? "main" : w.id);
+let showHidden = false;
+
+function ringLayout() {
+  const s = (overview && overview.settings) || {};
+  return { order: s.order || [], hidden: s.hidden || [] };
 }
 
-let editing = null;
+/// The wallets in the owner's order: This PC first unless moved.
+function orderedWallets() {
+  const list = (overview && overview.wallets) || [];
+  const { order } = ringLayout();
+  const rank = (w) => {
+    const i = order.indexOf(keyOf(w));
+    return i === -1 ? (w.main ? -1 : 1000 + list.indexOf(w)) : i;
+  };
+  return [...list].sort((a, b) => rank(a) - rank(b));
+}
 
-function renderWallets() {
-  const list = $("wallet-list");
-  list.textContent = "";
+function shownWallets() {
+  const { hidden } = ringLayout();
+  return orderedWallets().filter((w) => showHidden || w.main || !hidden.includes(w.id));
+}
+
+const LOCK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm2 0h6V8a3 3 0 0 0-6 0z"/></svg>';
+const ENVELOPE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm9 7.2L4.5 7v.2l7.5 5.2 7.5-5.2V7z"/></svg>';
+
+function renderKeyRing() {
+  const ring = $("key-ring");
+  ring.textContent = "";
   const current = currentWallet();
-  for (const w of (overview && overview.wallets) || []) {
-    const row = document.createElement("div");
-    row.className = "row wallet-row";
-    row.classList.toggle("on", Boolean(current && current.id === w.id));
-    const pick = document.createElement("button");
-    pick.type = "button";
-    pick.className = "wallet-pick";
-    const icon = document.createElement("span");
-    icon.className = "row-icon";
-    icon.textContent = current && current.id === w.id ? "●" : "○";
-    const title = document.createElement("span");
-    title.className = "row-title";
-    title.textContent = walletName(w);
-    pick.append(icon, title);
-    if (w.main) {
-      const tag = document.createElement("span");
-      tag.className = "tag";
-      tag.textContent = "main";
-      pick.append(tag);
-    }
-    if (w.watch_only) {
-      const tag = document.createElement("span");
-      tag.className = "tag";
-      tag.textContent = "Seal it";
-      pick.append(tag);
-    }
-    pick.addEventListener("click", () => chooseWallet(w));
-    const edit = document.createElement("button");
-    edit.type = "button";
-    edit.className = "edit";
-    edit.textContent = "Edit";
-    edit.addEventListener("click", () => editWallet(w));
-    row.append(pick, edit);
-    list.append(row);
+  const { hidden } = ringLayout();
+  for (const w of shownWallets()) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "ring-chip";
+    chip.classList.toggle("on", Boolean(current && current.id === w.id));
+    chip.classList.toggle("out", hidden.includes(w.id));
+    chip.disabled = lockOpen;
+    chip.title = lockOpen ? "Close the lock to switch wallets" : w.watch_only ? "Seal it: signed on your phone" : "";
+    chip.innerHTML = w.watch_only ? ENVELOPE_ICON : LOCK_ICON;
+    const label = document.createElement("span");
+    label.textContent = walletName(w);
+    chip.append(label);
+    chip.addEventListener("click", () => chooseWallet(w));
+    chip.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      if (!lockOpen) openRingMenu(event, w);
+    });
+    ring.append(chip);
   }
-  $("wallet-edit").hidden = !editing;
-  $("wallet-add").hidden = Boolean(editing);
+  if (orderedWallets().some((w) => !w.main && hidden.includes(w.id))) {
+    const star = document.createElement("button");
+    star.type = "button";
+    star.className = "ring-round";
+    star.textContent = showHidden ? "★" : "☆";
+    star.title = showHidden ? "Put them out of sight again" : "Show the wallets kept out of sight";
+    star.disabled = lockOpen;
+    star.addEventListener("click", () => { showHidden = !showHidden; leaveIfOutOfSight(); renderKeyRing(); });
+    ring.append(star);
+  }
+  const plus = document.createElement("button");
+  plus.type = "button";
+  plus.className = "ring-round plus";
+  plus.textContent = "+";
+  plus.title = "Add a wallet to the key ring";
+  plus.disabled = lockOpen;
+  plus.addEventListener("click", (event) => openPlusMenu(event));
+  ring.append(plus);
+}
+
+function leaveIfOutOfSight() {
+  const w = currentWallet();
+  if (!showHidden && w && !w.main && ringLayout().hidden.includes(w.id)) chooseWallet(orderedWallets().find((x) => x.main));
 }
 
 async function chooseWallet(w) {
+  if (!w || lockOpen) return;
   try {
     await invoke("keyring_select", { id: w.main ? null : w.id });
-    if (lockOpen) await invoke("wallet_close_lock");
-    closeSheet();
     activity = [];
     await refreshHome();
   } catch (problem) {
-    say($("wallet-message"), describe(problem));
+    alert(describe(problem));
   }
 }
 
-function editWallet(w) {
-  editing = w;
-  $("wallet-edit-title").textContent = walletName(w);
-  $("wallet-rename").value = walletName(w);
-  $("wallet-remove").hidden = w.main;
-  $("wallet-edit-note").textContent = w.main
-    ? "The main wallet's words are the ones sealed in the lock. It is removed only with Erase everything, in Settings › Security."
-    : "Removing takes its words off this PC. Its Zcash stays on the blockchain: with the 24 words you can add it again.";
-  say($("wallet-edit-message"), "");
-  $("wallet-edit").hidden = false;
-  $("wallet-add").hidden = true;
-  $("wallet-rename").focus();
+// The small menus: right-click on a chip, and "+".
+const ringMenu = $("ring-menu");
+
+function showMenu(event, items) {
+  ringMenu.textContent = "";
+  for (const item of items) {
+    if (item === "-") { ringMenu.append(document.createElement("hr")); continue; }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = item.label;
+    if (item.danger) button.className = "danger-text";
+    button.disabled = Boolean(item.disabled);
+    button.addEventListener("click", () => { closeRingMenu(); item.run(); });
+    ringMenu.append(button);
+  }
+  ringMenu.hidden = false;
+  const rect = ringMenu.getBoundingClientRect();
+  ringMenu.style.left = `${Math.min(event.clientX, window.innerWidth - rect.width - 8)}px`;
+  ringMenu.style.top = `${Math.min(event.clientY + 4, window.innerHeight - rect.height - 8)}px`;
+  setTimeout(() => document.addEventListener("click", closeRingMenu, { once: true }), 0);
 }
 
-$("wallet-pill").addEventListener("click", () => {
-  editing = null;
+function closeRingMenu() { ringMenu.hidden = true; }
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeRingMenu(); });
+
+function openPlusMenu(event) {
+  showMenu(event, [
+    { label: "Pair Seal it (offline phone)", run: () => openSeal("pair") },
+    "-",
+    { label: "New wallet on this PC", run: () => openAdd("new") },
+    { label: "Restore a wallet with 24 words", run: () => openAdd("restore") },
+  ]);
+}
+
+function openRingMenu(event, w) {
+  const shown = shownWallets();
+  const index = shown.indexOf(w);
+  const items = [{ label: "Rename…", run: () => openRename(w) }];
+  if (!w.main && !w.watch_only) items.push({ label: "Show its words…", run: () => showItsWords(w) });
+  items.push("-",
+    { label: "Move left", disabled: index <= 0, run: () => moveWallet(w, -1) },
+    { label: "Move right", disabled: index >= shown.length - 1, run: () => moveWallet(w, 1) });
+  if (!w.main) {
+    const out = ringLayout().hidden.includes(w.id);
+    items.push({ label: out ? "Bring back into sight" : "Keep out of sight", run: () => hideWallet(w, !out) });
+  }
+  items.push("-", w.watch_only
+    ? { label: "Remove from Lock it…", danger: true, run: () => removeWallet(w) }
+    : { label: "Erase this wallet…", danger: true, run: () => (w.main ? eraseMain(w) : removeWallet(w)) });
+  showMenu(event, items);
+}
+
+async function saveLayout(order, hidden) {
+  try {
+    await invoke("keyring_layout", { order, hidden });
+    overview.settings.order = order;
+    overview.settings.hidden = hidden;
+    renderKeyRing();
+  } catch (problem) {
+    alert(describe(problem));
+  }
+}
+
+function moveWallet(w, step) {
+  const all = orderedWallets().map(keyOf);
+  const shown = shownWallets().map(keyOf);
+  const at = shown.indexOf(keyOf(w));
+  const neighbour = shown[at + step];
+  if (neighbour === undefined) return;
+  const from = all.indexOf(keyOf(w));
+  const to = all.indexOf(neighbour);
+  all.splice(from, 1);
+  all.splice(to, 0, keyOf(w));
+  saveLayout(all, ringLayout().hidden);
+}
+
+function hideWallet(w, out) {
+  const hidden = ringLayout().hidden.filter((id) => id !== w.id);
+  if (out) hidden.push(w.id);
+  saveLayout(orderedWallets().map(keyOf), hidden).then(leaveIfOutOfSight);
+}
+
+// Adding and renaming share a small sheet.
+let walletSheet = null;
+
+function openAdd(mode) {
+  walletSheet = { mode };
+  $("wallet-sheet-title").textContent = mode === "new" ? "New wallet on this PC" : "Restore a wallet";
+  $("wallet-sheet-sub").textContent = mode === "new"
+    ? "It sits behind the same lock and the same keys, with its own 24 words. Write those down too."
+    : "Type its 24 words next. It goes behind the same lock and the same keys.";
+  $("wallet-name").value = "";
+  $("wallet-go").textContent = "Continue";
   say($("wallet-message"), "");
-  renderWallets();
   openSheet("wallets");
-});
-
-$("wallet-rename-save").addEventListener("click", async () => {
-  if (!editing) return;
-  try {
-    await invoke("keyring_rename", { id: editing.main ? null : editing.id, name: $("wallet-rename").value });
-    editing = null;
-    await refreshHome();
-    renderWallets();
-  } catch (problem) {
-    say($("wallet-edit-message"), describe(problem));
-  }
-});
-
-$("wallet-remove").addEventListener("click", async () => {
-  if (!editing || editing.main) return;
-  const w = editing;
-  try {
-    const typed = await askKeys(`Remove ${walletName(w)}?`, "Its words leave this PC. Make sure you have them on paper: without them, its Zcash cannot be taken out anywhere.", { danger: true, action: "Remove" });
-    await invoke("keyring_remove", { id: w.id, typed: typedOnly(typed) });
-    editing = null;
-    await refreshHome();
-    renderWallets();
-  } catch (problem) {
-    say($("wallet-edit-message"), describe(problem));
-  }
-});
-
-function newWalletName() {
-  const name = $("wallet-name").value.trim();
-  if (!name) {
-    say($("wallet-message"), "Give the wallet a name first.");
-    $("wallet-name").focus();
-    return null;
-  }
-  return name;
+  $("wallet-name").focus();
 }
 
-$("wallet-new").addEventListener("click", async () => {
-  const name = newWalletName();
-  if (!name) return;
+function openRename(w) {
+  walletSheet = { mode: "rename", wallet: w };
+  $("wallet-sheet-title").textContent = "Rename wallet";
+  $("wallet-sheet-sub").textContent = "The name is only shown on this PC.";
+  $("wallet-name").value = walletName(w);
+  $("wallet-go").textContent = "Rename";
+  say($("wallet-message"), "");
+  openSheet("wallets");
+  $("wallet-name").select();
+}
+
+$("wallet-name").addEventListener("keydown", (event) => { if (event.key === "Enter") $("wallet-go").click(); });
+
+$("wallet-go").addEventListener("click", async () => {
+  const name = $("wallet-name").value.trim();
+  if (!name) return say($("wallet-message"), "Give the wallet a name first.");
+  const sheet = walletSheet || { mode: "new" };
   try {
-    words = await invoke("wallet_new_words");
-    madeIn = null;
+    if (sheet.mode === "rename") {
+      await invoke("keyring_rename", { id: sheet.wallet.main ? null : sheet.wallet.id, name });
+      closeSheet();
+      return refreshHome();
+    }
     adding = name;
-    views.words.querySelector(".title").textContent = `Words for ${name}`;
-    listWords();
-    closeSheet();
-    showView("words");
+    if (sheet.mode === "new") {
+      words = await invoke("wallet_new_words");
+      madeIn = null;
+      views.words.querySelector(".title").textContent = `Words for ${name}`;
+      listWords();
+      closeSheet();
+      showView("words");
+    } else {
+      views.restore.querySelector(".title").textContent = `Restore ${name}`;
+      $("restore-words").value = "";
+      say($("restore-message"), "");
+      closeSheet();
+      showView("restore");
+      $("restore-words").focus();
+    }
   } catch (problem) {
     say($("wallet-message"), describe(problem));
   }
 });
 
-$("wallet-restore").addEventListener("click", () => {
-  const name = newWalletName();
-  if (!name) return;
-  adding = name;
-  views.restore.querySelector(".title").textContent = `Restore ${name}`;
-  $("restore-words").value = "";
-  say($("restore-message"), "");
-  closeSheet();
-  showView("restore");
-  $("restore-words").focus();
-});
+let ringWordsTimer = null;
+async function showItsWords(w) {
+  try {
+    const typed = await askKeys("Confirm it's you", `${walletName(w)}'s 24 words are that wallet. Make sure nobody can see your screen.`, { action: "Show the words" });
+    const list = await invoke("wallet_show_words", { typed: typedOnly(typed), id: w.id });
+    const birthday = list.pop();
+    const ol = $("ring-words");
+    ol.textContent = "";
+    for (const word of list) {
+      const li = document.createElement("li");
+      li.textContent = word;
+      ol.append(li);
+    }
+    $("words-sheet-title").textContent = `${walletName(w)}: its words`;
+    $("ring-birthday").textContent = Number(birthday) ? `Birthday block ${numbers.format(Number(birthday))}: with the words, it tells any Zcash wallet where to start looking.` : "";
+    openSheet("words");
+    clearTimeout(ringWordsTimer);
+    ringWordsTimer = setTimeout(() => { $("ring-words").textContent = ""; if (!$("sheet-words").hidden) closeSheet(); }, 120000);
+  } catch (problem) {
+    const text = describe(problem);
+    if (text && text !== "cancelled") alert(text);
+  }
+}
+
+async function removeWallet(w) {
+  try {
+    if (w.watch_only) {
+      const ok = await askKeys(`Remove ${walletName(w)} from Lock it?`, "Its keys stay on your phone: you can pair it again at any time.", { danger: true, action: "Remove", keys: false });
+      await invoke("keyring_remove", { id: w.id, typed: typedOnly(ok) });
+    } else {
+      const typed = await askKeys(`Erase ${walletName(w)}?`, "Its words leave this PC. Make sure you have them on paper: without them, its Zcash cannot be taken out anywhere.", { danger: true, action: "Erase" });
+      await invoke("keyring_remove", { id: w.id, typed: typedOnly(typed) });
+    }
+    activity = [];
+    await refreshHome();
+  } catch (problem) {
+    const text = describe(problem);
+    if (text && text !== "cancelled") alert(text);
+  }
+}
+
+async function eraseMain(w) {
+  const next = orderedWallets().find((x) => !x.main && !x.watch_only);
+  if (!next) {
+    alert("This is the only wallet with its words on this PC. To erase it, use Erase everything in Settings › Security.");
+    return;
+  }
+  try {
+    const title = walletName(w) === "This PC" ? "this PC's wallet" : walletName(w);
+    const typed = await askKeys(`Erase ${title}?`, `Its words leave this PC: make sure you have them on paper. The lock passes to ${walletName(next)}, with the same keys and rules.`, { danger: true, action: "Erase" });
+    await invoke("keyring_erase_main", { typed: typedOnly(typed) });
+    activity = [];
+    await refreshHome();
+  } catch (problem) {
+    const text = describe(problem);
+    if (text && text !== "cancelled") alert(text);
+  }
+}
 
 function leaveOnboarding() {
   if (adding) {
@@ -911,7 +1050,6 @@ async function finishAdding() {
     const typed = await askKeys(`Add ${name}`, "Your keys are asked once: the new words are sealed with your main words, behind the same lock.", { action: "Add the wallet" });
     say(message, "Adding the wallet. This takes a moment.");
     await invoke("keyring_add", { name, madeIn, typed: typedOnly(typed) });
-    $("wallet-name").value = "";
     say(message, "");
     forgetWords();
     leaveOnboarding();
@@ -1013,7 +1151,6 @@ function closeSeal() {
 }
 $("seal-close").addEventListener("click", closeSeal);
 $("home-seal-send").addEventListener("click", () => openSeal("send"));
-$("wallet-pair").addEventListener("click", () => openSeal("pair"));
 $("seal-done").addEventListener("click", closeSeal);
 
 for (const id of ["seal-to", "seal-amount", "seal-memo"]) {

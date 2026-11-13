@@ -337,6 +337,8 @@ pub fn run() {
             wallet::keyring_add,
             wallet::keyring_remove,
             wallet::keyring_rename,
+            wallet::keyring_layout,
+            wallet::keyring_erase_main,
             sealit::sealit_scan_start,
             sealit::sealit_scan_push,
             sealit::sealit_pair,
