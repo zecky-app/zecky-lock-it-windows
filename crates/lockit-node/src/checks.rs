@@ -7,9 +7,10 @@ use std::{
 
 use crate::{Error, GoMaxSettings, NodeLayout, Result};
 
-/// Free space needed before the very first start: the pruned state measured
-/// about 20 GB on the Mac, plus room to breathe.
-pub const FIRST_START_BYTES: u64 = 25 * GB;
+/// Free space needed before the very first start, the same as Lock it Mac:
+/// about 22 GB for the node, the same again at the peak of a sync, and room
+/// for the database to tidy itself (35 GiB).
+pub const FIRST_START_BYTES: u64 = 35 * 1024 * 1024 * 1024;
 
 /// Free space always kept, once the state exists, so the node never fills the
 /// drive to the last byte.
@@ -43,7 +44,6 @@ fn ports(settings: &GoMaxSettings) -> Result<()> {
         (settings.rpc_port, "the node's RPC"),
         (settings.wallet_port, "the wallet service"),
         (settings.p2p_port, "the Zcash network"),
-        (settings.p2p_v2_port, "the Zakura network"),
     ] {
         // Binding and dropping at once: only asks whether the port is free.
         if TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).is_err() {

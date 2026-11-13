@@ -34,7 +34,7 @@ pub mod process;
 mod rpc;
 mod supervisor;
 
-pub use config::{GoMaxSettings, Listening};
+pub use config::{GoMaxSettings, Listening, RETENTION_AT_TIP, RETENTION_SYNCING};
 pub use error::{Error, Result};
 pub use layout::NodeLayout;
 pub use rpc::{NodeRpc, NodeStatus};

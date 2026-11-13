@@ -11,13 +11,15 @@ fn zakura_is_pruned_private_and_cookie_protected() {
     let layout = NodeLayout::new(r"C:\Users\Owner\AppData\Local\Zecky\Lock it\go-max");
     let config = parse(&GoMaxSettings::default().zakura_toml(&layout).unwrap());
 
-    assert_eq!(config["state"]["storage_mode"].as_str(), Some("pruned"));
+    assert_eq!(config["state"]["storage_mode"]["pruned"]["tx_retention"].as_integer(), Some(10_000));
+    assert_eq!(config["consensus"]["checkpoint_sync"].as_bool(), Some(false));
+    assert_eq!(config["network"]["p2p_stack"].as_str(), Some("legacy"));
     let state = config["state"]["cache_dir"].as_str().unwrap();
     assert!(state.starts_with(r"C:\Users\Owner\AppData\Local\Zecky\Lock it\go-max"), "{state}");
     assert_eq!(config["network"]["network"].as_str(), Some("Mainnet"));
     // Private: listens on this computer only, and never on IPv6 "[::]".
     assert_eq!(config["network"]["listen_addr"].as_str(), Some("127.0.0.1:8233"));
-    assert_eq!(config["network"]["zakura"]["listen_addr"].as_str(), Some("127.0.0.1:8234"));
+    assert!(config["network"].get("zakura").is_none(), "no second P2P port");
     assert_eq!(config["rpc"]["listen_addr"].as_str(), Some("127.0.0.1:8232"));
     assert_eq!(config["rpc"]["enable_cookie_auth"].as_bool(), Some(true));
     assert!(config["network"].get("peerset_initial_target_size").is_none());
@@ -39,6 +41,7 @@ fn zaino_reads_zakura_with_the_cookie_and_serves_on_loopback() {
     let layout = NodeLayout::new("/tmp/go-max");
     let config = parse(&GoMaxSettings::default().zaino_toml(&layout).unwrap());
     assert_eq!(config["backend"].as_str(), Some("rpc"));
+    assert_eq!(config["ephemeral_finalised_state"].as_bool(), Some(true));
     assert_eq!(config["network"].as_str(), Some("Mainnet"));
     assert_eq!(config["grpc_settings"]["listen_address"].as_str(), Some("127.0.0.1:8137"));
     assert_eq!(
@@ -82,7 +85,7 @@ fn a_busy_port_is_named_before_starting() {
     // Hold a port, then ask Go Max to use it for the wallet service.
     let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = held.local_addr().unwrap().port();
-    let settings = GoMaxSettings { wallet_port: port, rpc_port: 0, p2p_port: 0, p2p_v2_port: 0, ..Default::default() };
+    let settings = GoMaxSettings { wallet_port: port, rpc_port: 0, p2p_port: 0, ..Default::default() };
     match lockit_node::checks::before_start(&layout, &settings) {
         Err(lockit_node::Error::PortInUse { port: busy, .. }) => assert_eq!(busy, port),
         Err(lockit_node::Error::NotEnoughSpace { .. }) => {} // a small test disk; the port check comes after

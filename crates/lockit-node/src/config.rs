@@ -32,10 +32,11 @@ pub struct GoMaxSettings {
     pub listening: Listening,
     /// How many outgoing peers to aim for. `None` keeps Zakura's default.
     pub peer_target: Option<u32>,
-    /// Zcash P2P port (legacy stack).
+    /// Zcash P2P port (legacy stack only, as on the Mac).
     pub p2p_port: u16,
-    /// Zakura's P2P v2 port.
-    pub p2p_v2_port: u16,
+    /// How many recent blocks the node keeps in full. Lock it Mac syncs with
+    /// Zakura's minimum (10,000) and widens to 100,000 once at the tip.
+    pub tx_retention: u32,
     /// Replaces Zakura's built-in seed list. `None` keeps the built-in one.
     ///
     /// For special setups only: for example a PC that should sync from the
@@ -55,12 +56,19 @@ impl Default for GoMaxSettings {
             peer_target: None,
             initial_peers: None,
             p2p_port: 8233,
-            p2p_v2_port: 8234,
+            tx_retention: RETENTION_SYNCING,
             rpc_port: 8232,
             wallet_port: 8137,
         }
     }
 }
+
+/// Blocks kept in full during the first sync: Zakura's minimum. In the
+/// 2022–23 spam years 100,000 blocks are 100–200 GB, so the window starts small.
+pub const RETENTION_SYNCING: u32 = 10_000;
+
+/// Blocks kept in full once at the tip: about a month, about 7 GB.
+pub const RETENTION_AT_TIP: u32 = 100_000;
 
 impl GoMaxSettings {
     /// The address other nodes would connect to.
@@ -92,6 +100,9 @@ impl GoMaxSettings {
     pub fn zakura_toml(&self, layout: &NodeLayout) -> Result<String> {
         let mut network = Table::new();
         network.insert("network".into(), "Mainnet".into());
+        // The long-standing peer-to-peer protocol only, so a new default can
+        // never open another port (as on the Mac).
+        network.insert("p2p_stack".into(), "legacy".into());
         network.insert(
             "listen_addr".into(),
             SocketAddr::V4(SocketAddrV4::new(self.listen_ip(), self.p2p_port)).to_string().into(),
@@ -105,16 +116,18 @@ impl GoMaxSettings {
             let list = peers.iter().cloned().map(Value::String).collect();
             network.insert("initial_mainnet_peers".into(), Value::Array(list));
         }
-        let mut v2 = Table::new();
-        v2.insert(
-            "listen_addr".into(),
-            SocketAddr::V4(SocketAddrV4::new(self.listen_ip(), self.p2p_v2_port)).to_string().into(),
-        );
-        network.insert("zakura".into(), Value::Table(v2));
+        // Every proof since Canopy is checked here: under checkpoint sync
+        // Zakura drops the transparent address indexes the wallet needs.
+        let mut consensus = Table::new();
+        consensus.insert("checkpoint_sync".into(), false.into());
 
         let mut state = Table::new();
         state.insert("cache_dir".into(), path(&layout.zakura_state())?);
-        state.insert("storage_mode".into(), "pruned".into());
+        let mut pruned = Table::new();
+        pruned.insert("tx_retention".into(), Value::Integer(self.tx_retention.into()));
+        let mut mode = Table::new();
+        mode.insert("pruned".into(), Value::Table(pruned));
+        state.insert("storage_mode".into(), Value::Table(mode));
 
         let mut rpc = Table::new();
         rpc.insert("listen_addr".into(), Self::loopback(self.rpc_port).into());
@@ -127,6 +140,7 @@ impl GoMaxSettings {
 
         let mut root = Table::new();
         root.insert("network".into(), Value::Table(network));
+        root.insert("consensus".into(), Value::Table(consensus));
         root.insert("state".into(), Value::Table(state));
         root.insert("rpc".into(), Value::Table(rpc));
         root.insert("tracing".into(), Value::Table(tracing));
@@ -142,20 +156,37 @@ impl GoMaxSettings {
         validator.insert("validator_jsonrpc_listen_address".into(), Self::loopback(self.rpc_port).into());
         validator.insert("validator_cookie_path".into(), path(&layout.cookie_file())?);
 
+        let mut service = Table::new();
+        service.insert("timeout".into(), Value::Integer(30));
+        service.insert("channel_size".into(), Value::Integer(32));
+
+        let mut cache = Table::new();
+        cache.insert("capacity".into(), Value::Integer(10_000));
+        cache.insert("shard_power".into(), Value::Integer(4));
         let mut database = Table::new();
         database.insert("path".into(), path(&layout.zaino_database())?);
+        database.insert("size".into(), Value::Integer(200));
+        database.insert("sync_write_batch_size".into(), Value::Integer(2));
+        database.insert("accumulator_rebuild_memory_size".into(), Value::Integer(1));
+        database.insert("sync_checkpoint_interval".into(), Value::Integer(120));
         let mut storage = Table::new();
+        storage.insert("cache".into(), Value::Table(cache));
         storage.insert("database".into(), Value::Table(database));
 
         let mut root = Table::new();
         root.insert("backend".into(), "rpc".into());
         root.insert("network".into(), "Mainnet".into());
+        // No index of its own: every read goes to the node, so wallets can
+        // connect as soon as the node is at the tip (as on the Mac and Umbrel).
+        root.insert("ephemeral_finalised_state".into(), true.into());
         // Unused with the RPC backend, but Zaino's default is a Unix path that
         // is not valid on Windows, so set it to something real.
         root.insert("zebra_db_path".into(), path(&layout.zakura_state())?);
         root.insert("grpc_settings".into(), Value::Table(grpc));
         root.insert("validator_settings".into(), Value::Table(validator));
+        root.insert("service".into(), Value::Table(service));
         root.insert("storage".into(), Value::Table(storage));
+        root.insert("mempool".into(), Value::Table(Table::new()));
         write_toml("zainod.toml", root)
     }
 
