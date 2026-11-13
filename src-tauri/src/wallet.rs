@@ -373,11 +373,25 @@ pub fn wallet_forget_words(slot: State<'_, WalletSlot>) {
     }
 }
 
-/// For a restore: the month and year the words were made.
+/// For a restore: the month and year the words were made, or, when the
+/// owner has it, the exact birthday block (it wins).
 #[derive(Deserialize)]
+#[serde(default)]
+#[derive(Default)]
 pub struct MadeIn {
     pub(crate) year: i32,
     pub(crate) month: u32,
+    pub(crate) block: Option<u32>,
+}
+
+impl MadeIn {
+    /// The block to start scanning from.
+    pub(crate) fn birthday(&self, tip: u32) -> u32 {
+        match self.block {
+            Some(block) => block.clamp(lockit_wallet::SAPLING_ACTIVATION, tip.max(lockit_wallet::SAPLING_ACTIVATION)),
+            None => lockit_wallet::estimate_birthday(self.year, self.month, tip, now()),
+        }
+    }
 }
 
 /// Creates the wallet from the pending words and seals them into a new lock.
@@ -417,7 +431,7 @@ pub async fn wallet_create(
         let birthday = match made_in {
             Some(made) => {
                 let tip = runtime().block_on(Wallet::chain_tip(&server))?;
-                Some(lockit_wallet::estimate_birthday(made.year, made.month, tip, now()))
+                Some(made.birthday(tip))
             }
             None => None,
         };
@@ -1044,7 +1058,7 @@ pub async fn keyring_add(
         let birthday = match made_in {
             Some(made) => {
                 let tip = runtime().block_on(Wallet::chain_tip(&server))?;
-                Some(lockit_wallet::estimate_birthday(made.year, made.month, tip, now()))
+                Some(made.birthday(tip))
             }
             None => None,
         };

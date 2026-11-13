@@ -90,10 +90,12 @@
       <p class="lead">Type your 24 words, with spaces between them.</p>
       <textarea id="restore-words" class="input words-input" rows="6" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
       <p class="lead">When were these words made? A rough guess is fine: earlier is safer.</p>
-      <div class="row">
+      <div class="seal-dates">
         <select id="restore-month" class="input" aria-label="Month"></select>
         <select id="restore-year" class="input" aria-label="Year"></select>
       </div>
+      <label class="field"><span>Or the exact birthday block, if you have it (optional)</span><input class="input mono" id="restore-block" inputmode="numeric" maxlength="9" placeholder="for example 2,850,000" spellcheck="false" autocomplete="off"></label>
+      <p class="small quiet">Another Zcash wallet may show it as "wallet birthday" or "birthday height". With the block, Lock it starts right there; without it, from the month above.</p>
       <p id="restore-message" class="message" role="status" aria-live="polite"></p>
       <button type="button" class="brass" id="restore-submit">Continue</button>
       <button type="button" class="quiet-button" id="restore-back">Back</button>

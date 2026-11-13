@@ -64,7 +64,7 @@ pub async fn sealit_pair(app: AppHandle, slot: State<'_, WalletSlot>, seal: Stat
     let id = tauri::async_runtime::spawn_blocking(move || -> CommandResult<String> {
         let tip = w::runtime().block_on(Wallet::chain_tip(&server))?;
         let birthday = match made_in {
-            Some(made) => lockit_wallet::estimate_birthday(made.year, made.month, tip, w::now()),
+            Some(made) => made.birthday(tip),
             None => tip.saturating_sub(1_000),
         };
         Ok(w::runtime().block_on(main.add_sealit(&name, &export, Some(birthday), &server))?)

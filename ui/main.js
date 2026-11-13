@@ -215,16 +215,29 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
 
 $("welcome-restore").addEventListener("click", () => {
   $("restore-words").value = "";
+  $("restore-block").value = "";
   say($("restore-message"), "");
   showView("restore");
   $("restore-words").focus();
 });
 $("restore-back").addEventListener("click", () => { forgetWords(); leaveOnboarding(); });
+/// The typed birthday block: null when empty; throws when it is not a block.
+function restoreBlock() {
+  const text = $("restore-block").value.replace(/[\s,.']/g, "");
+  if (!text) return null;
+  const block = Number(text);
+  if (!/^\d+$/.test(text) || block < 419200 || block > 99999999) {
+    throw new Error("The birthday block is a number from 419,200 up. Leave it empty if you are not sure.");
+  }
+  return block;
+}
+
 $("restore-submit").addEventListener("click", async () => {
   try {
+    restoreBlock();
     await invoke("wallet_use_words", { words: $("restore-words").value });
     $("restore-words").value = "";
-    madeIn = { year: Number($("restore-year").value), month: Number($("restore-month").value) };
+    madeIn = { year: Number($("restore-year").value), month: Number($("restore-month").value), block: restoreBlock() };
     if (adding) finishAdding();
     else openSetup();
   } catch (problem) {
@@ -966,6 +979,7 @@ $("wallet-go").addEventListener("click", async () => {
     } else {
       views.restore.querySelector(".title").textContent = `Restore ${name}`;
       $("restore-words").value = "";
+      $("restore-block").value = "";
       say($("restore-message"), "");
       closeSheet();
       showView("restore");
