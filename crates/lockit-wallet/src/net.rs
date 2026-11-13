@@ -40,6 +40,31 @@ pub enum Server {
         /// Its host name.
         host: String,
     },
+    /// A server or node of the owner's choice. On a home or Tailscale
+    /// address it is reached without TLS (as Lock it Mac does for Rock it);
+    /// anywhere else with TLS.
+    Custom {
+        /// Host name or IP address.
+        host: String,
+        /// Port.
+        port: u16,
+    },
+}
+
+/// Whether `host` is on a home network, this PC, or a Tailscale address:
+/// such a node is reached without TLS, as Lock it Mac does.
+pub fn is_private_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".local") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => {
+            let [a, b, ..] = ip.octets();
+            ip.is_private() || ip.is_loopback() || (a == 100 && (64..=127).contains(&b))
+        }
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
+        Err(_) => false,
+    }
 }
 
 impl Server {
@@ -48,10 +73,22 @@ impl Server {
         Self::Public { host: PUBLIC_SERVERS[0].to_owned() }
     }
 
+    fn uses_tls(&self) -> bool {
+        match self {
+            Self::OwnNode { .. } => false,
+            Self::Public { .. } => true,
+            Self::Custom { host, .. } => !is_private_host(host),
+        }
+    }
+
     fn uri(&self) -> String {
         match self {
             Self::OwnNode { port } => format!("http://127.0.0.1:{port}"),
             Self::Public { host } => format!("https://{host}:443"),
+            Self::Custom { host, port } => {
+                let host = if host.contains(':') { format!("[{host}]") } else { host.clone() };
+                format!("{}://{host}:{port}", if self.uses_tls() { "https" } else { "http" })
+            }
         }
     }
 
@@ -60,6 +97,7 @@ impl Server {
         match self {
             Self::OwnNode { .. } => "your own node (Go Max)".into(),
             Self::Public { host } => host.clone(),
+            Self::Custom { host, port } => format!("{host}:{port}"),
         }
     }
 
@@ -70,7 +108,7 @@ impl Server {
             .connect_timeout(Duration::from_secs(10))
             .http2_keep_alive_interval(Duration::from_secs(30))
             .keep_alive_timeout(Duration::from_secs(20));
-        if matches!(self, Self::Public { .. }) {
+        if self.uses_tls() {
             endpoint = endpoint
                 .tls_config(ClientTlsConfig::new().with_webpki_roots())
                 .map_err(|e| Error::Server(e.to_string()))?;
@@ -132,6 +170,8 @@ pub(crate) async fn submit(raw: &[u8], reading_from: &Server, over_tor: bool, to
 
     // The public server being read from (if not your own node), then the built-in ones.
     let mut hosts: Vec<String> = Vec::new();
+    // Never the owner's own node: it would announce the payment from this
+    // PC's internet address. A public server being read from goes first.
     if let Server::Public { host } = reading_from {
         hosts.push(host.clone());
     }
@@ -168,3 +208,20 @@ pub(crate) async fn submit(raw: &[u8], reading_from: &Server, over_tor: bool, to
     Ok(accepted)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn home_and_tailscale_addresses_skip_tls_and_public_ones_use_it() {
+        for host in ["192.168.1.20", "10.0.0.5", "172.16.3.4", "100.101.102.103", "127.0.0.1", "localhost", "umbrel.local"] {
+            assert!(is_private_host(host), "{host}");
+        }
+        for host in ["zec.rocks", "8.8.8.8", "100.200.1.1", "example.com"] {
+            assert!(!is_private_host(host), "{host}");
+        }
+        assert_eq!(Server::Custom { host: "192.168.1.20".into(), port: 9067 }.uri(), "http://192.168.1.20:9067");
+        assert_eq!(Server::Custom { host: "lwd.example.com".into(), port: 443 }.uri(), "https://lwd.example.com:443");
+    }
+}

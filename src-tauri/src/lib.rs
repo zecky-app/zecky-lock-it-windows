@@ -326,6 +326,13 @@ pub fn run() {
             wallet::wallet_send,
             wallet::wallet_send_again,
             wallet::wallet_sync_now,
+            wallet::wallet_show_words,
+            wallet::wallet_viewing_key,
+            wallet::wallet_erase,
+            wallet::settings_get,
+            wallet::settings_set_server,
+            wallet::settings_set_tor,
+            wallet::settings_set_wait,
             go_max::go_max_view,
             go_max::go_max_start,
             go_max::go_max_stop

@@ -21,7 +21,7 @@ mod phrase;
 mod rng_compat;
 mod wallet;
 
-pub use net::{Server, PUBLIC_SERVERS};
+pub use net::{is_private_host, Server, PUBLIC_SERVERS};
 pub use phrase::{new_phrase, phrase_to_seed, validate_phrase, Seed};
 pub use birthday::{estimate_birthday, SAPLING_ACTIVATION};
 pub use wallet::{Activity, Balance, PreparedPayment, SignedPayment, Wallet};

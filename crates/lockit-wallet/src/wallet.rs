@@ -330,6 +330,13 @@ impl Wallet {
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db_err)
     }
 
+    /// The wallet's unified full viewing key: sees everything, spends nothing.
+    pub fn viewing_key(&self) -> Result<String> {
+        let db = self.db()?;
+        let account = db.get_account(self.account(&db)?).map_err(db_err)?.ok_or(Error::NoWallet)?;
+        account.ufvk().ok_or_else(|| other("this wallet has no viewing key"))?.encode(&MainNetwork).map_err(other)
+    }
+
     /// The newest block height the server knows.
     pub async fn chain_tip(server: &Server) -> Result<u32> {
         let mut client = server.connect().await?;
@@ -403,6 +410,7 @@ mod tests {
     fn a_new_wallet_has_no_activity_and_its_address_makes_a_qr_code() {
         let (_dir, wallet, _seed) = fresh();
         assert!(wallet.activity(20).unwrap().is_empty());
+        assert!(wallet.viewing_key().unwrap().starts_with("uview1"));
         let svg = crate::qr_svg(&wallet.receive_address().unwrap()).unwrap();
         assert!(svg.starts_with("<?xml") && svg.contains("#14161C"));
     }

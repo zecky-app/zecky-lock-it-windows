@@ -10,8 +10,8 @@ const listen = window.__TAURI__.event ? window.__TAURI__.event.listen : null;
 
 const KEY_NAMES = { device_hello: "This PC", security_key: "Security key", passphrase: "Passphrase" };
 const MIN_PASSPHRASE = 12;
-/// "Really open the lock?" waits this long, as Lock it Mac's default.
-const OPEN_WAIT = 10;
+/// "Really open the lock?" waits this long by default, as Lock it Mac.
+let OPEN_WAIT = 10;
 const NU7_HEIGHT = 3_543_405;
 
 const $ = (id) => document.getElementById(id);
@@ -295,6 +295,7 @@ async function refreshHome() {
   renderHome();
   if (!$("sheet-sync").hidden) renderSync();
   if (!$("sheet-activity").hidden) renderActivity();
+  if (!$("sheet-holding").hidden) renderHolding();
 }
 
 /// Days the Zcash has been in the lock; null while unknown (as Lock it Mac).
@@ -322,7 +323,9 @@ function renderHome() {
   $("balance").title = hidden ? "" : `Click to show in ${prefs.unit === "ZEC" ? "zats" : "ZEC"}`;
 
   const days = heldDays();
-  $("held-line").textContent = b.total > 0 ? (days === null ? "Locked on this PC" : `Locked ${Holding.heldFor(days)}`) : "";
+  $("held-line").textContent = b.total > 0 ? (days === null ? "Locked on this PC" : `Locked ${Holding.heldFor(days)} ›`) : "";
+  $("held-line").disabled = days === null;
+  $("held-line").title = days === null ? "" : "Milestones and highlights";
   const ring = $("milestone");
   Lockart.milestone(ring, Holding.progress(days ?? 0), days !== null && Holding.reachedToday(days));
   ring.classList.toggle("dim", days === null);
@@ -441,8 +444,21 @@ let countdownTimer = null;
 
 function needsPassphrase() { return overview && overview.keys.some((key) => key.kind === "passphrase"); }
 
+async function openWithoutPause() {
+  try {
+    const passphrase = needsPassphrase() ? await askKeys("Open the lock", "Your keys open the lock.", { action: "Open the lock" }) : null;
+    await invoke("wallet_open_lock", { passphrase });
+    lockOpen = true;
+    renderHome();
+  } catch (problem) {
+    if (problem && problem.message !== "cancelled") $("open-note").textContent = describe(problem) || "Not confirmed, so the lock stayed closed.";
+  }
+}
+
 function askToOpen() {
   if (lockOpen || !overview) return;
+  OPEN_WAIT = overview.settings ? overview.settings.wait : 10;
+  if (OPEN_WAIT === 0) return openWithoutPause();
   const days = heldDays();
   const held = days === null ? "" : days < 1 ? "This Zcash was locked today. " : `This Zcash has been locked ${Holding.heldFor(days)}. `;
   $("prompt-intro").textContent = held + "Nobody legitimate will ever rush you, ask for your 24 words, or tell you to move your Zcash to keep it safe.";
@@ -531,7 +547,8 @@ function closeSheet() {
 for (const button of layer.querySelectorAll("[data-close]")) button.addEventListener("click", closeSheet);
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
-  if (!$("open-prompt").hidden) keepLocked();
+  if (!$("confirm").hidden) $("confirm-cancel").click();
+  else if (!$("open-prompt").hidden) keepLocked();
   else if (!layer.hidden && !sending) ($("sheet-send").hidden ? closeSheet() : closeSend());
 });
 
@@ -701,7 +718,7 @@ let plan = null;
 function openSend() {
   if (!lockOpen && !(overview && overview.unsent)) return askToOpen();
   $("send-form").reset();
-  $("send-tor").checked = true;
+  $("send-tor").checked = !overview || !overview.settings || overview.settings.tor;
   plan = null;
   sendStage = overview && overview.unsent ? "unsent" : "compose";
   say($("send-message"), sendStage === "unsent" ? "A signed payment did not reach a server. It is the same payment each time, so nothing is paid twice." : "");
@@ -812,6 +829,538 @@ $("send-next").addEventListener("click", async () => {
     }
   }
 });
+
+// ---------- Confirm it's you (before the words, the viewing key, erasing) ----------
+
+/// Shows the dialog; resolves with the passphrase (or null when the lock has
+/// no passphrase key) on Continue, rejects on Cancel. The keys themselves
+/// (Windows Hello, security key) are asked by Windows right after.
+function askKeys(title, intro, { danger = false, action = "Continue" } = {}) {
+  return new Promise((resolve, reject) => {
+    $("confirm-title").textContent = title;
+    $("confirm-intro").textContent = intro;
+    $("confirm-passphrase").value = "";
+    $("confirm-passphrase-field").hidden = !needsPassphrase();
+    say($("confirm-message"), "");
+    const go = $("confirm-go");
+    go.textContent = action;
+    go.classList.toggle("danger", danger);
+    $("confirm").hidden = false;
+    (needsPassphrase() ? $("confirm-passphrase") : $("confirm-cancel")).focus();
+    const finish = (ok) => {
+      $("confirm").hidden = true;
+      go.onclick = null;
+      $("confirm-cancel").onclick = null;
+      const passphrase = needsPassphrase() ? $("confirm-passphrase").value : null;
+      $("confirm-passphrase").value = "";
+      if (ok) resolve(passphrase);
+      else reject(new Error("cancelled"));
+    };
+    go.onclick = () => finish(true);
+    $("confirm-cancel").onclick = () => finish(false);
+  });
+}
+
+// ---------- Holding: "Locked for ..." (HoldingSheet) ----------
+
+function confirmedEntries() {
+  return activity.filter((a) => a.height && !a.expired).map((a) => ({ height: a.height, time: a.time || 0, change: a.change }));
+}
+
+function shortDate(seconds) {
+  return new Date(seconds * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+let holdingAll = false;
+
+function renderHolding() {
+  const h = Holding.summary(confirmedEntries());
+  const amount = (z) => (prefs.hidden ? "••••" : amountText(z));
+  $("holding-title").textContent = h ? `Locked ${Holding.heldFor(h.days)}` : "Nothing locked";
+  $("holding-sub").textContent = h ? `Since ${shortDate(h.since)}` : "";
+  $("holding-note").textContent = h
+    ? "Worked out on this PC from your own payments. Sending or receiving more never resets it; only an empty lock does."
+    : "The count starts when Zcash comes into the lock.";
+  for (const id of ["holding-milestones", "holding-highlights"]) $(id).hidden = !h;
+  document.querySelectorAll("#sheet-holding .section-title, #sheet-holding .holding-ring").forEach((el) => { el.hidden = !h; });
+  if (!h) return;
+
+  Lockart.milestone($("holding-ring"), Holding.progress(h.days), Holding.reachedToday(h.days));
+  const words = Holding.heldFor(h.days).replace("for ", "").split(" ");
+  $("holding-number").textContent = h.days < 1 ? "" : words[0];
+  $("holding-unit").textContent = h.days < 1 ? "since today" : words.slice(1).join(" ");
+  const moment = Holding.reachedToday(h.days) ? h.days : null;
+  $("holding-moment").hidden = moment === null;
+  if (moment !== null) $("holding-moment").textContent = `${Holding.name(moment)}. ${Holding.line(moment)}`;
+
+  const full = Holding.path(h.since, h.days);
+  const path = holdingAll ? full : Holding.shortPath(full);
+  const box = $("holding-milestones");
+  box.textContent = "";
+  path.forEach((step, i) => {
+    const next = step.progress !== null;
+    const row = document.createElement("div");
+    row.className = `step${!step.reached && !next ? " dim" : ""}${moment === step.days ? " moment-step" : ""}`;
+    const rail = document.createElement("div");
+    rail.className = "step-rail";
+    const dot = document.createElement("span");
+    dot.className = `step-dot${step.reached ? " reached" : next ? " next" : ""}`;
+    rail.append(dot);
+    if (i < path.length - 1) {
+      const line = document.createElement("span");
+      line.className = `step-line${step.reached && path[i + 1].reached ? " gold" : ""}`;
+      rail.append(line);
+    }
+    const text = document.createElement("div");
+    text.className = "step-text";
+    const name = document.createElement("span");
+    name.className = "step-name";
+    name.textContent = step.name;
+    const when = document.createElement("span");
+    when.className = "step-when";
+    when.textContent = step.reached
+      ? `${step.length} · ${step.at.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+      : next ? `${step.length} · in ${step.inDays} ${step.inDays === 1 ? "day" : "days"}` : step.length;
+    text.append(name, when);
+    if (next) {
+      const bar = document.createElement("div");
+      bar.className = "step-bar";
+      const fill = document.createElement("div");
+      fill.style.width = `${Math.max(3, step.progress * 100)}%`;
+      bar.append(fill);
+      text.append(bar);
+    }
+    row.append(rail, text);
+    box.append(row);
+  });
+  const more = document.createElement("span");
+  more.className = "show-all";
+  more.textContent = holdingAll ? "Show less" : "Show all milestones ›";
+  box.append(more);
+
+  const lines = [["Since", shortDate(h.since)], ["Received since then", amount(h.current.received)]];
+  const pace = Holding.pace(h.current.received, h.days);
+  if (pace) lines.push(["Stacking pace", `+${amount(pace.zats)} a ${pace.per}`]);
+  lines.push(["Payments in", String(h.current.paymentsIn)]);
+  if (h.current.largest) lines.push(["Largest payment in", `${amount(h.current.largest.zats)} · ${shortDate(h.current.largest.at)}`]);
+  if (h.longestBefore) lines.push(["Longest before", Holding.heldFor(h.longestBefore.days).replace("for ", "")]);
+  const card = $("holding-highlights");
+  card.textContent = "";
+  for (const [label, value] of lines) card.append(cardLine(label, value));
+}
+
+function cardLine(label, value) {
+  const line = document.createElement("div");
+  line.className = "line";
+  const l = document.createElement("span");
+  l.textContent = label;
+  const v = document.createElement("strong");
+  v.textContent = value;
+  line.append(l, v);
+  return line;
+}
+
+$("holding-milestones").addEventListener("click", () => { holdingAll = !holdingAll; renderHolding(); });
+$("held-line").addEventListener("click", () => {
+  if (heldDays() === null) return;
+  holdingAll = false;
+  renderHolding();
+  openSheet("holding");
+});
+
+// ---------- Settings (SettingsView) ----------
+
+const PRESETS = [["Default", "zec.rocks"], ["Europe", "eu.zec.rocks"], ["North America", "na.zec.rocks"], ["South America", "sa.zec.rocks"], ["Asia Pacific", "ap.zec.rocks"]];
+const PAGE_TEXT = {
+  overview: ["Settings", null],
+  network: ["Network", "Where Lock it gets the Zcash chain from."],
+  display: ["Display", "How Lock it looks on this PC."],
+  security: ["Security", "The keys, your words, erasing."],
+  keys: ["Keys to the lock", "What has to be passed before the lock opens."],
+  phrase: ["Recovery phrase", "Your 24 words, sealed on this PC."],
+  viewkey: ["Viewing key", "Read-only access to this wallet."],
+  about: ["About", "Zecky Lock it for Windows."],
+  how: ["How Zecky works", "Short chapters. Open the one you want."],
+};
+const PARENT = { keys: "security", phrase: "security", viewkey: "security" };
+
+let settingsPage = "overview";
+let settingsView = null;
+let serverChoice = 0;
+let phraseTimer = null;
+
+async function loadSettings() {
+  try { settingsView = await invoke("settings_get"); } catch { settingsView = null; }
+}
+
+function currentSettings() {
+  return (settingsView && settingsView.settings) || (overview && overview.settings) || { server: null, tor: true, wait: 10 };
+}
+
+function goSettings(page) {
+  if (page === "gomax") return openSheet("gomax");
+  settingsPage = page;
+  hidePhrase();
+  hideViewKey();
+  for (const el of document.querySelectorAll("#sheet-settings .page")) el.hidden = el.dataset.page !== page;
+  const [title, sub] = PAGE_TEXT[page];
+  $("settings-title").textContent = title;
+  $("settings-sub").textContent = sub || "";
+  $("settings-sub").hidden = !sub;
+  $("settings-close").textContent = page === "overview" ? "Done" : "Back";
+  renderSettings();
+  document.querySelector("#sheet-settings .sheet-scroll").scrollTop = 0;
+}
+
+function renderSettings() {
+  const s = currentSettings();
+  const b = (overview && overview.balance) || {};
+  // Overview
+  $("net-block").textContent = b.chain_tip ? `Block ${numbers.format(b.chain_tip)}` : "Catching up…";
+  $("net-pace").textContent = b.chain_tip ? (b.chain_tip >= NU7_HEIGHT ? "A block every 25 seconds, since NU7" : "A block every 75 seconds") : "";
+  $("row-network").textContent = s.server ? `${s.server[0]}${s.server[1] === 443 ? "" : ":" + s.server[1]}` : "zec.rocks";
+  $("row-display").textContent = `${prefs.unit}${prefs.hidden ? " · hidden" : ""}`;
+  const keys = overview ? overview.keys.map((k) => KEY_NAMES[k.kind]) : [];
+  $("row-security").textContent = keys.join(" + ");
+  $("row-keys").textContent = `${keys.length} ${keys.length === 1 ? "key" : "keys"}${s.wait ? ` · wait ${s.wait} s` : ""}`;
+  $("row-about").textContent = settingsView ? `Version ${settingsView.version}` : "";
+  // Network
+  serverChoice = !s.server ? 0 : s.server[1] === 443 ? PRESETS.findIndex(([, h]) => h === s.server[0]) : -1;
+  if (s.server && serverChoice === -1 && !$("server-own").value) $("server-own").value = `${s.server[0]}:${s.server[1]}`;
+  renderServerChips();
+  $("settings-tor").checked = s.tor;
+  const tor = $("tor-note");
+  tor.textContent = s.tor
+    ? "Your payments leave over Tor, each on its own connection, to a public server that cannot see this PC's internet address. If Tor cannot connect, the payment waits; it is never sent another way by itself. Reading the chain is not affected."
+    : "Your payments go to the server above, which sees this PC's internet address. With your own node, other Zcash nodes see the payment coming from your internet address.";
+  tor.className = `small ${s.tor ? "quiet" : "gold"}`;
+  // Display
+  for (const chip of document.querySelectorAll("[data-unit]")) chip.classList.toggle("on", chip.dataset.unit === prefs.unit);
+  $("settings-hide").checked = prefs.hidden;
+  // Keys
+  const list = $("keys-list");
+  list.textContent = "";
+  const all = overview ? overview.keys : [];
+  all.forEach((key, i) => {
+    const row = document.createElement("div");
+    row.className = "row key-row";
+    const n = document.createElement("span");
+    n.className = "key-num";
+    n.textContent = String(i + 1);
+    const title = document.createElement("span");
+    title.className = "row-title";
+    title.textContent = { device_hello: "This PC (Windows Hello)", security_key: "Security key", passphrase: "Passphrase" }[key.kind];
+    const state = document.createElement("span");
+    state.className = "row-detail on";
+    state.textContent = { device_hello: "Face, fingerprint or PIN", security_key: "Touch the key", passphrase: "Asked when opening" }[key.kind];
+    row.append(n, title, state);
+    list.append(row);
+  });
+  for (const chip of document.querySelectorAll("[data-wait]")) chip.classList.toggle("on", Number(chip.dataset.wait) === s.wait);
+  // About
+  $("about-version").textContent = settingsView ? settingsView.version : "…";
+  $("about-name").textContent = `Lock it for Windows ${settingsView ? settingsView.version : ""}`;
+  $("about-block").textContent = b.chain_tip ? numbers.format(b.chain_tip) : "…";
+  $("about-birthday").textContent = b.birthday ? numbers.format(b.birthday) : "…";
+  $("about-server").textContent = (overview && overview.sync.server) || "…";
+}
+
+function renderServerChips() {
+  const chips = $("server-chips");
+  chips.textContent = "";
+  [...PRESETS.map(([label], i) => [i, label]), [-1, "Your own"]].forEach(([i, label]) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = `chip${i === serverChoice ? " on" : ""}`;
+    chip.textContent = label;
+    chip.addEventListener("click", () => { serverChoice = i; say($("server-note"), ""); renderServerChips(); });
+    chips.append(chip);
+  });
+  $("server-shown").textContent = serverChoice >= 0 ? `${PRESETS[serverChoice][1]}:443` : "Your own node (Rock it) or server: host:port";
+  $("server-own").hidden = serverChoice !== -1;
+  const own = serverChoice === -1 ? $("server-own").value.trim().split(":")[0] : "";
+  $("server-why").textContent = serverChoice === -1 && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|localhost)/.test(own)
+    ? "Your own node on your home network, without TLS: the traffic stays inside your home. Lock it cannot check that this address is really your node. On another Wi-Fi, a stranger's device with the same numbers could answer: it cannot take anything, but it could hide or delay payments. Away from home, use your node's Tailscale address."
+    : serverChoice === -1 && /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(own)
+      ? "Your own node through Tailscale: the connection is encrypted by Tailscale and only reaches your tailnet. Lock it cannot prove it is your node, so only use the address your node shows you."
+      : "Encrypted (TLS). The server sees this PC's internet address, never your words or balance. With Go Max up to date, Lock it reads from your own node instead.";
+}
+
+$("server-own").addEventListener("input", renderServerChips);
+$("server-why-toggle").addEventListener("click", () => {
+  const why = $("server-why");
+  why.hidden = !why.hidden;
+  $("server-why-toggle").textContent = why.hidden ? "What the server sees" : "Less";
+});
+
+$("server-use").addEventListener("click", async () => {
+  let host = null;
+  let port = null;
+  if (serverChoice > 0) { host = PRESETS[serverChoice][1]; port = 443; }
+  if (serverChoice === -1) {
+    const text = $("server-own").value.trim();
+    const m = text.match(/^\[?([^\]]+?)\]?(?::(\d{1,5}))?$/);
+    if (!m) return say($("server-note"), "Type host:port, for example 192.168.1.20:9067.");
+    host = m[1];
+    port = m[2] ? Number(m[2]) : 443;
+  }
+  say($("server-note"), "Checking that it answers…", true);
+  $("server-use").disabled = true;
+  try {
+    const note = await invoke("settings_set_server", { host, port });
+    say($("server-note"), note, true);
+    await loadSettings();
+    renderSettings();
+  } catch (problem) {
+    say($("server-note"), describe(problem));
+  } finally {
+    $("server-use").disabled = false;
+  }
+});
+
+$("settings-tor").addEventListener("change", async (event) => {
+  try {
+    await invoke("settings_set_tor", { on: event.target.checked });
+    await loadSettings();
+  } catch (problem) {
+    event.target.checked = !event.target.checked;
+  }
+  renderSettings();
+});
+
+for (const chip of document.querySelectorAll("[data-unit]")) {
+  chip.addEventListener("click", () => { prefs.unit = chip.dataset.unit; renderSettings(); if (overview) renderHome(); });
+}
+$("settings-hide").addEventListener("change", (event) => { prefs.hidden = event.target.checked; renderSettings(); if (overview) renderHome(); });
+
+for (const chip of document.querySelectorAll("[data-wait]")) {
+  chip.addEventListener("click", async () => {
+    const seconds = Number(chip.dataset.wait);
+    const now = currentSettings().wait;
+    if (seconds === now) return;
+    const weaker = seconds === 0 || (now !== 0 && seconds < now);
+    say($("wait-note"), "");
+    try {
+      const passphrase = weaker ? await askKeys("Confirm it's you", "Making the pause shorter weakens a key, so your keys are asked first.") : null;
+      await invoke("settings_set_wait", { seconds, passphrase });
+      await loadSettings();
+      if (overview) overview.settings = currentSettings();
+      renderSettings();
+    } catch (problem) {
+      if (problem && problem.message !== "cancelled") say($("wait-note"), describe(problem) || "Not confirmed, so nothing changed.");
+    }
+  });
+}
+
+// Recovery phrase: shown after the keys, hidden after 2 minutes or when
+// Lock it is not in front.
+function hidePhrase() {
+  clearTimeout(phraseTimer);
+  $("phrase-words").textContent = "";
+  $("phrase-shown").hidden = true;
+  $("phrase-toggle").textContent = "Show recovery phrase";
+}
+
+$("phrase-toggle").addEventListener("click", async () => {
+  if (!$("phrase-shown").hidden) return hidePhrase();
+  say($("phrase-note"), "");
+  try {
+    const passphrase = await askKeys("Confirm it's you", "Your 24 words are the wallet. Make sure nobody can see your screen.", { action: "Show the words" });
+    const words = await invoke("wallet_show_words", { passphrase });
+    const birthday = words.pop();
+    const list = $("phrase-words");
+    list.textContent = "";
+    for (const word of words) {
+      const item = document.createElement("li");
+      item.textContent = word;
+      list.append(item);
+    }
+    $("phrase-birthday").textContent = Number(birthday) ? `Birthday block ${numbers.format(Number(birthday))}: with the words, it tells any Zcash wallet where to start looking.` : "";
+    $("phrase-shown").hidden = false;
+    $("phrase-toggle").textContent = "Hide";
+    clearTimeout(phraseTimer);
+    phraseTimer = setTimeout(hidePhrase, 120000);
+  } catch (problem) {
+    if (problem && problem.message !== "cancelled") say($("phrase-note"), describe(problem) || "Not confirmed, so nothing is shown.");
+  }
+});
+
+function hideViewKey() {
+  $("viewkey-text").textContent = "";
+  $("viewkey-text").hidden = true;
+  $("viewkey-toggle").textContent = "Show viewing key";
+}
+
+$("viewkey-toggle").addEventListener("click", async () => {
+  if (!$("viewkey-text").hidden) return hideViewKey();
+  say($("viewkey-note"), "");
+  try {
+    const passphrase = await askKeys("Confirm it's you", "Whoever has the viewing key sees every payment, past and future.", { action: "Show the key" });
+    $("viewkey-text").textContent = await invoke("wallet_viewing_key", { passphrase });
+    $("viewkey-text").hidden = false;
+    $("viewkey-toggle").textContent = "Hide";
+  } catch (problem) {
+    if (problem && problem.message !== "cancelled") say($("viewkey-note"), describe(problem) || "This wallet's viewing key could not be read.");
+  }
+});
+
+window.addEventListener("blur", () => { hidePhrase(); hideViewKey(); });
+document.addEventListener("visibilitychange", () => { if (document.hidden) { hidePhrase(); hideViewKey(); } });
+
+$("erase").addEventListener("click", async () => {
+  try {
+    await askKeys("Erase everything on this PC?",
+      "The wallet's 24 words, the history and settings are removed from this PC. Without the 24 words on paper, the Zcash in this wallet cannot be recovered. Go Max's node data stays.",
+      { danger: true, action: "Erase everything" });
+  } catch {
+    return;
+  }
+  try {
+    const passphrase = await askKeys("Confirm it's you", "Erasing asks your keys, whatever you chose.", { danger: true, action: "Erase" });
+    await invoke("wallet_erase", { passphrase });
+    closeSheet();
+    overview = null;
+    activity = [];
+    lockOpen = false;
+    await start();
+  } catch (problem) {
+    if (problem && problem.message !== "cancelled") alert(describe(problem) || "Not confirmed, so nothing was erased.");
+  }
+});
+
+$("settings-close").addEventListener("click", () => {
+  if (settingsPage === "overview") return closeSheet();
+  goSettings(PARENT[settingsPage] || "overview");
+});
+for (const el of document.querySelectorAll("#sheet-settings [data-go]")) el.addEventListener("click", () => goSettings(el.dataset.go));
+
+$("open-settings").addEventListener("click", async () => {
+  await loadSettings();
+  openSheet("settings");
+  goSettings("overview");
+  refreshGoMaxRow();
+});
+
+async function refreshGoMaxRow() {
+  try {
+    const v = await invoke("go_max_view");
+    $("row-gomax").textContent = v.state === "off" ? "Off" : v.state !== "on" ? (v.state === "starting" ? "Starting" : "Stopping")
+      : v.status && v.status.estimated_height > 0 && v.status.height + 2 >= v.status.estimated_height ? "Yours, up to date"
+      : v.status && v.status.estimated_height > 0 ? `Catching up · ${Math.floor((v.status.height / v.status.estimated_height) * 100)}%` : "On";
+  } catch { $("row-gomax").textContent = ""; }
+}
+
+// How Zecky works: the Mac's chapters, as they are on Windows.
+const CHAPTERS = [
+  ["The lock", "A place to keep Zcash, not to spend it.", [
+    "Receiving is always one click. Opening the lock to send takes a deliberate moment: the pause, your keys, and then Send.",
+    "The lock closes again after a payment, or when you minimise Lock it.",
+    "The line under your balance says how long your Zcash has been in the lock: “Locked for 3 weeks”. It is never a date, and nothing unlocks on a date.",
+    "The ring around the lock fills towards your next milestone: 1 week, then every month of the first year, then every year. On the day you reach one, the ring glows softly.",
+    "Click the line for highlights and milestones, each with its own name, from Locked at 1 week to Legend at 4 years.",
+  ], [
+    "The count starts at your first payment in after the lock was last empty. Sending, of any size, and receiving more do not reset it; only an empty lock does.",
+    "It is worked out on this PC from your own payment history, with no timer stored. Without the history from before your first payment in (after a restore), the line says “Locked on this PC”.",
+    "1 week, 1 year and every year after also engrave a fine line into the medallion. With every new Zcash block a light runs once around it.",
+    "Milestones bring no notifications, badges or pop-ups.",
+  ]],
+  ["Receive and send", "Waiting times, fees and what can't be undone.", [
+    "Receive gives you a shielded address: amount, sender and receiver are encrypted on the blockchain. It is safe to share; only your 24 words must stay secret.",
+    "Nothing leaves without a receipt first: who receives what, the network fee and what leaves the lock. A payment cannot be reversed once sent.",
+  ], [
+    "Zcash you receive can be used after 10 confirmations, your own change after 3. A block comes about every 25 seconds since the NU7 upgrade.",
+    "A payment that could not be delivered is kept, and Try again sends that same payment. Do not pay again meanwhile. If it is never delivered, it expires after about 40 blocks and nothing leaves the lock.",
+    "Sending to a transparent address is public: its amount and destination. A private note only goes to a shielded address.",
+  ]],
+  ["Your 24 words", "They are your Zcash. Keep them on paper.", [
+    "Your 24 words and birthday block restore the wallet in Lock it or any Zcash wallet. Whoever has them has your Zcash.",
+    "On this PC they are sealed by the keys you chose (Windows Hello, a passphrase, a security key) and shown only when you ask, for at most 2 minutes.",
+    "A viewing key shows everything in a wallet but can't spend. Showing it asks your keys first, and sharing it can't be undone.",
+  ], [
+    "They are made on this PC from the system's secure random generator (256 bits). After you write them down, Lock it asks for three of them back.",
+    "They are opened only to sign a payment or to show them to you, and let go straight after the lock closes. They are never written to a log or sent anywhere.",
+    "To remove everything, use Settings › Security › Erase everything.",
+  ]],
+  ["Keys to the lock", "Checks before Zcash leaves. You choose.", [
+    "The keys are chosen when the wallet is made: This PC (Windows Hello), a passphrase, and a security key. Every key you chose is needed.",
+    "Really open the lock? adds a pause with a reminder. Showing your 24 words, the viewing key and erasing always ask your keys.",
+  ], [
+    "Windows Hello keeps its key in this PC's security chip (TPM) and asks for your face, fingerprint or PIN.",
+    "A security key, such as a YubiKey, signs a fresh challenge each time and Lock it checks the signature itself; nothing goes over the internet. It always comes together with Windows Hello or a passphrase.",
+  ]],
+  ["Private by default", "Amounts, senders and addresses stay hidden.", [
+    "Lock it only hands out shielded addresses, so amounts, senders and receivers stay private on the blockchain.",
+  ], []],
+  ["Go Max", "Your own Zcash node, inside Lock it.", [
+    "Go Max runs a Zcash node in Lock it on this PC. It checks the blocks itself and keeps only recent blocks in full. When it is up to date, Lock it reads the chain from it instead of a server.",
+    "It needs about 35 GB free to start. The first check takes most of a day and downloads the whole chain once, deleting older blocks as it goes.",
+  ], [
+    "Until the node is up to date, Lock it keeps using your server. When a wallet still has older blocks to check, Lock it reads those from your server.",
+    "The node connects to other Zcash nodes on the internet, like every node: they see this PC's internet address, never your wallet, addresses or balance. The node accepts no connections from outside.",
+    "It runs while Lock it is open. Its files live in %LOCALAPPDATA%\\app.zecky.lockit\\go-max.",
+  ]],
+  ["What others can see", "The server.", [
+    "Lock it talks to one Zcash server (zec.rocks by default) over an encrypted connection. The server sees this PC's internet address, never your words or your balance.",
+  ], [
+    "Payments you send leave over Tor, each on its own connection, to a public Zcash server: it sees a payment arriving from Tor, not this PC's internet address. If Tor cannot connect, the payment waits and you are told. You can switch this off in Settings › Network.",
+    "With Go Max up to date, Lock it uses no server at all for reading: it reads the chain from its own node on this PC.",
+  ]],
+  ["On this PC", "Where your data lives.", [
+    "Your history (amounts and dates, never the words) is kept in %LOCALAPPDATA%\\app.zecky.lockit. Keep BitLocker or device encryption on so the whole disk is encrypted as well.",
+  ], [
+    "Keys, proofs, signatures and payments are made by librustzcash, the Zcash developers' own core (NU7 releases), in the same versions as the Zecky engine.",
+    "The Sapling parameter files (about 50 MB) come with the app, checked against the Zcash developers' published fingerprints. Lock it never downloads them.",
+  ]],
+  ["What Zecky never does", "No account, no tracking.", [
+    "No account, no analytics, no tracking, no ads. Lock it never sends your words, balance or history anywhere.",
+  ], []],
+  ["Where it stands", "Early software.", [
+    "Lock it for Windows is new and in testing. Start with small amounts, and keep your 24 words on paper.",
+  ], []],
+];
+
+(function buildChapters() {
+  const box = $("chapters");
+  for (const [title, summary, essentials, more] of CHAPTERS) {
+    const chapter = document.createElement("div");
+    chapter.className = "chapter";
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "chapter-head";
+    const t = document.createElement("strong");
+    t.textContent = title;
+    const sm = document.createElement("span");
+    sm.textContent = summary;
+    head.append(t, sm);
+    const body = document.createElement("div");
+    body.className = "chapter-body";
+    body.hidden = true;
+    for (const text of essentials) {
+      const p = document.createElement("p");
+      p.textContent = text;
+      body.append(p);
+    }
+    if (more.length) {
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "link-gold small-link";
+      toggle.textContent = "More detail";
+      const box2 = document.createElement("div");
+      box2.className = "more";
+      box2.hidden = true;
+      for (const text of more) {
+        const p = document.createElement("p");
+        p.textContent = text;
+        box2.append(p);
+      }
+      toggle.addEventListener("click", () => { box2.hidden = !box2.hidden; toggle.textContent = box2.hidden ? "More detail" : "Less"; });
+      body.append(toggle, box2);
+    }
+    head.addEventListener("click", () => { body.hidden = !body.hidden; });
+    chapter.append(head, body);
+    box.append(chapter);
+  }
+})();
 
 // ---------- Go Max ----------
 
@@ -944,7 +1493,6 @@ nodeToggle.addEventListener("click", async () => {
 });
 
 $("go-max-coin").addEventListener("click", () => openSheet("gomax"));
-$("open-gomax").addEventListener("click", () => openSheet("gomax"));
 
 // ---------- Start ----------
 

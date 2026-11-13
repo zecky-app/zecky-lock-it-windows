@@ -161,7 +161,7 @@
       </div>
       <div class="status-right">
         <button type="button" id="open-activity">Activity</button>
-        <button type="button" id="open-gomax">Go Max</button>
+        <button type="button" id="open-settings">Settings</button>
       </div>
     </footer>
   </section>
@@ -267,6 +267,174 @@
       </div>
     </section>
 
+
+    <!-- Holding: "Locked for ..." -->
+    <section class="sheet" id="sheet-holding" hidden>
+      <div class="sheet-head">
+        <div><p class="eyebrow">ZECKY</p><h2 class="sheet-title" id="holding-title">Locked</h2>
+        <p class="sheet-sub" id="holding-sub"></p></div>
+        <button type="button" class="done" data-close>Done</button>
+      </div>
+      <div class="sheet-scroll">
+        <div class="holding-ring">
+          <svg class="milestone small" id="holding-ring" viewBox="0 0 340 340" aria-hidden="true"></svg>
+          <div class="holding-ring-text"><span id="holding-number"></span><small id="holding-unit"></small></div>
+        </div>
+        <p class="moment" id="holding-moment" hidden></p>
+        <h3 class="section-title">Milestones</h3>
+        <button type="button" class="card pad milestones" id="holding-milestones"></button>
+        <h3 class="section-title">Highlights</h3>
+        <div class="card" id="holding-highlights"></div>
+        <p class="small quiet" id="holding-note"></p>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section class="sheet tall" id="sheet-settings" hidden>
+      <div class="sheet-head">
+        <div><p class="eyebrow">ZECKY</p><h2 class="sheet-title" id="settings-title">Settings</h2>
+        <p class="sheet-sub" id="settings-sub" hidden></p></div>
+        <button type="button" class="done" id="settings-close">Done</button>
+      </div>
+      <div class="sheet-scroll">
+        <!-- Overview -->
+        <div class="page" data-page="overview">
+          <div class="card pad network-card">
+            <p class="section-title flush">Zcash network</p>
+            <p class="network-block" id="net-block">Catching up…</p>
+            <p class="small quiet" id="net-pace"></p>
+          </div>
+          <div class="card list">
+            <button type="button" class="row" data-go="network"><span class="row-icon">◎</span><span class="row-title">Network</span><span class="row-detail" id="row-network"></span><span class="chev">›</span></button>
+            <button type="button" class="row" data-go="gomax"><span class="row-icon">⌬</span><span class="row-title">Go Max</span><span class="row-detail" id="row-gomax"></span><span class="chev">›</span></button>
+            <button type="button" class="row" data-go="display"><span class="row-icon">◐</span><span class="row-title">Display</span><span class="row-detail" id="row-display"></span><span class="chev">›</span></button>
+            <button type="button" class="row" data-go="security"><span class="row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none"/></svg></span><span class="row-title">Security</span><span class="row-detail" id="row-security"></span><span class="chev">›</span></button>
+          </div>
+          <div class="card list">
+            <button type="button" class="row" data-go="about"><span class="row-icon">ⓘ</span><span class="row-title">About</span><span class="row-detail" id="row-about"></span><span class="chev">›</span></button>
+          </div>
+          <button type="button" class="link-gold" data-go="how">How Zecky works ›</button>
+        </div>
+
+        <!-- Network -->
+        <div class="page" data-page="network" hidden>
+          <div class="card pad">
+            <p class="card-title">Server</p>
+            <div class="chips" id="server-chips"></div>
+            <p class="mono quiet" id="server-shown"></p>
+            <input class="input mono" id="server-own" placeholder="192.168.1.20:9067 or a Tailscale 100.x address" spellcheck="false" hidden>
+            <div class="inline">
+              <button type="button" class="secondary narrow" id="server-use">Use this server</button>
+              <span class="small quiet" id="server-note"></span>
+            </div>
+            <button type="button" class="link-gold small-link" id="server-why-toggle">What the server sees</button>
+            <p class="small quiet" id="server-why" hidden></p>
+          </div>
+          <div class="card pad">
+            <p class="card-title">Sending</p>
+            <label class="check flush"><input type="checkbox" id="settings-tor"> Send payments over Tor</label>
+            <p class="small" id="tor-note"></p>
+          </div>
+        </div>
+
+        <!-- Display -->
+        <div class="page" data-page="display" hidden>
+          <div class="card pad">
+            <p class="card-title">Amounts</p>
+            <div class="chips">
+              <button type="button" class="chip" data-unit="ZEC">ZEC</button>
+              <button type="button" class="chip" data-unit="zats">zats</button>
+            </div>
+            <label class="check flush"><input type="checkbox" id="settings-hide"> Hide amounts on screen</label>
+            <p class="small quiet">Also from home: click the balance to switch, and the eye at the top right to hide.</p>
+          </div>
+        </div>
+
+        <!-- Security -->
+        <div class="page" data-page="security" hidden>
+          <div class="card list">
+            <button type="button" class="row" data-go="keys"><span class="row-icon">⚿</span><span class="row-title">Keys to the lock</span><span class="row-detail" id="row-keys"></span><span class="chev">›</span></button>
+            <button type="button" class="row" data-go="phrase"><span class="row-icon">❡</span><span class="row-title">Recovery phrase</span><span class="row-detail">Sealed by your keys</span><span class="chev">›</span></button>
+            <button type="button" class="row" data-go="viewkey"><span class="row-icon">◉</span><span class="row-title">Viewing key</span><span class="row-detail">View</span><span class="chev">›</span></button>
+          </div>
+          <div class="erase-card">
+            <p class="erase-title">Erase everything</p>
+            <p class="small quiet">Removes the wallet, its words, the history and settings from this PC. Go Max's node data stays. Make sure the 24 words are on paper first.</p>
+            <button type="button" class="erase-button" id="erase">Erase everything on this PC…</button>
+          </div>
+        </div>
+
+        <!-- Keys to the lock -->
+        <div class="page" data-page="keys" hidden>
+          <div class="card list" id="keys-list"></div>
+          <div class="card pad">
+            <p class="card-title">Really open the lock?</p>
+            <p class="small quiet">A pause before your keys are asked, with the reminder that nobody legitimate rushes you.</p>
+            <div class="chips" id="wait-chips">
+              <button type="button" class="chip" data-wait="10">10 s</button>
+              <button type="button" class="chip" data-wait="5">5 s</button>
+              <button type="button" class="chip" data-wait="3">3 s</button>
+              <button type="button" class="chip" data-wait="0">Don't ask</button>
+            </div>
+            <p class="small message" id="wait-note"></p>
+          </div>
+          <p class="small quiet">Always asked, whatever you choose: showing the recovery phrase, the viewing key and erasing. Making a key stricter needs nothing; weakening one asks your keys first. The keys themselves are chosen when the wallet is made.</p>
+        </div>
+
+        <!-- Recovery phrase -->
+        <div class="page" data-page="phrase" hidden>
+          <div class="card pad">
+            <p class="card-title">Recovery phrase</p>
+            <p class="small quiet">The 24 words of this wallet, sealed by the keys you chose. Why: the 24 words are the wallet. Sealed, they cannot be read from a copy of this PC's files.</p>
+            <div id="phrase-shown" hidden>
+              <ol class="words" id="phrase-words"></ol>
+              <p class="small quiet" id="phrase-birthday"></p>
+              <p class="small quiet">Hidden again after 2 minutes, or when Lock it is not in front.</p>
+            </div>
+            <div class="inline">
+              <span class="small message" id="phrase-note"></span>
+              <button type="button" class="secondary narrow" id="phrase-toggle">Show recovery phrase</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Viewing key -->
+        <div class="page" data-page="viewkey" hidden>
+          <div class="card pad">
+            <p class="card-title">Viewing key</p>
+            <p class="small quiet">A viewing key gives read-only access to this wallet. Whoever has it can see your balance and every payment in and out, past and future, but cannot spend anything.</p>
+            <p class="small gold">It cannot be taken back once shared. Give it only to someone or something that should see everything, such as your own watch-only device or an accountant.</p>
+            <p class="address" id="viewkey-text" hidden></p>
+            <div class="inline">
+              <span class="small message" id="viewkey-note"></span>
+              <button type="button" class="secondary narrow" id="viewkey-toggle">Show viewing key</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- About -->
+        <div class="page" data-page="about" hidden>
+          <div class="card pad">
+            <p class="about-head"><span class="brand">ZECKY</span> <span class="about-name" id="about-name">Lock it for Windows</span></p>
+            <p class="small quiet">Self-custody Zcash. Your words stay on this PC, sealed by your keys. zecky.app</p>
+            <div class="about-lines">
+              <div><span>Version</span><strong id="about-version"></strong></div>
+              <div><span>Zcash engine</span><strong>librustzcash NU7 releases (as the Zecky engine)</strong></div>
+              <div><span>Current block</span><strong id="about-block"></strong></div>
+              <div><span>Wallet birthday</span><strong id="about-birthday"></strong></div>
+              <div><span>Server</span><strong id="about-server"></strong></div>
+              <div><span>Node (Go Max)</span><strong>Zakura 1.8.5 + Zaino 0.10.1</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- How Zecky works -->
+        <div class="page" data-page="how" hidden>
+          <div class="chapters" id="chapters"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- Go Max -->
     <section class="sheet" id="sheet-gomax" hidden>
       <div class="sheet-head">
@@ -326,6 +494,23 @@
     </div>
   </div>
 
+
+  <!-- Confirm it's you: before the words, the viewing key, erasing -->
+  <div class="scrim" id="confirm" hidden>
+    <div class="prompt">
+      <h2 class="prompt-title small-title" id="confirm-title">Confirm it's you</h2>
+      <p class="prompt-intro" id="confirm-intro"></p>
+      <label class="field" id="confirm-passphrase-field" hidden>
+        <span>Passphrase</span>
+        <input class="input" type="password" id="confirm-passphrase" autocomplete="current-password" spellcheck="false">
+      </label>
+      <p class="message" id="confirm-message" role="status" aria-live="polite"></p>
+      <div class="sheet-actions">
+        <button type="button" class="quiet-button" id="confirm-cancel">Cancel</button>
+        <button type="button" class="brass" id="confirm-go">Continue</button>
+      </div>
+    </div>
+  </div>
   <script src="padlock.js"></script>
   <script src="main.js"></script>
 </body>

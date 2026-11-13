@@ -210,8 +210,14 @@ const Holding = (() => {
     for (const e of sorted) {
       const paymentIn = e.change > 0;
       if (!open && balance <= 0 && paymentIn) {
-        list.push({ start: e.time, end: null });
+        list.push({ start: e.time, end: null, received: 0, paymentsIn: 0, largest: null });
         open = true;
+      }
+      if (open && paymentIn) {
+        const s = list[list.length - 1];
+        s.received += e.change;
+        s.paymentsIn += 1;
+        if (!s.largest || s.largest.zats < e.change) s.largest = { zats: e.change, at: e.time };
       }
       balance += e.change;
       if (balance <= 0) {
@@ -250,5 +256,79 @@ const Holding = (() => {
     return "for " + unit(Math.floor(d / 365), "year");
   }
 
-  return { progress, reachedToday, engraved, engravedToday, since, historyComplete, days, heldFor };
+  const NAMES = {
+    7: "Locked", 30: "Sealed", 60: "Bolted", 90: "Steady", 120: "Anchored", 150: "Rooted",
+    180: "Unshaken", 210: "Hardened", 240: "Vaulted", 270: "Fortified", 300: "Bedrock",
+    330: "Keeper", 365: "Guardian", 730: "Sentinel", 1095: "Stronghold", 1460: "Legend",
+  };
+  const name = (d) => NAMES[d] ?? `Legend · ${Math.round(d / YEAR)} years`;
+
+  function length(d) {
+    if (d === 7) return "1 week";
+    const [n, unit] = d < YEAR ? [Math.round(d / 30), "month"] : [Math.round(d / YEAR), "year"];
+    return `${n} ${unit}${n === 1 ? "" : "s"}`;
+  }
+
+  const line = (d) => { const t = length(d); return t[0].toUpperCase() + t.slice(1) + " in the lock."; };
+
+  /// Highlights of the holding going on now; null for an empty lock.
+  function summary(entries, now = new Date()) {
+    const list = walk(entries).stretches;
+    const current = list[list.length - 1];
+    if (!current || current.end !== null) return null;
+    const held = days(current.start, now);
+    let longestBefore = null;
+    for (const s of list.slice(0, -1)) {
+      if (s.end === null) continue;
+      const len = days(s.start, new Date(s.end * 1000));
+      if (len > held && len > (longestBefore?.days ?? 0)) longestBefore = { days: len, start: s.start, end: s.end };
+    }
+    return { since: current.start, days: held, current, longestBefore };
+  }
+
+  /// The whole path up to Legend at 4 years (and further), always with the
+  /// next two after the one in progress.
+  function path(sinceSeconds, held) {
+    const legend = 4 * YEAR;
+    const upcoming = (list) => list.filter((d) => d > held).length;
+    const reach = Math.max(held, legend);
+    let list = milestoneList(reach);
+    while (upcoming(list) < 3) list = milestoneList(list[list.length - 1]);
+    const shown = list.filter((d) => d <= reach || upcoming(list.filter((x) => x < d)) < 3);
+    const s = new Date(sinceSeconds * 1000);
+    const day0 = new Date(s.getFullYear(), s.getMonth(), s.getDate());
+    let prev = 0;
+    let nextSeen = false;
+    return shown.map((d) => {
+      const at = new Date(day0);
+      at.setDate(at.getDate() + d);
+      const step = { days: d, name: name(d), length: length(d), at, reached: d <= held, progress: null, inDays: null };
+      if (!step.reached && !nextSeen) {
+        nextSeen = true;
+        step.progress = (held - prev) / (d - prev);
+        step.inDays = d - held;
+      }
+      prev = d;
+      return step;
+    });
+  }
+
+  function shortPath(full) {
+    let next = full.findIndex((s) => !s.reached);
+    if (next < 0) next = full.length;
+    const from = next <= 0 ? 0 : next - 1;
+    return full.slice(from, Math.min(full.length, from + 3));
+  }
+
+  /// Stacking pace, rounded to 3 significant digits so it reads calmly.
+  function pace(received, held) {
+    if (held < 1 || received <= 0) return null;
+    const [per, len] = held < 7 ? ["day", 1] : held < 90 ? ["week", 7] : ["month", 30];
+    const exact = Math.floor((received * len) / held);
+    const digits = String(exact).length;
+    const step = digits > 3 ? 10 ** (digits - 3) : 1;
+    return { zats: Math.floor((exact + step / 2) / step) * step, per };
+  }
+
+  return { progress, reachedToday, engraved, engravedToday, since, historyComplete, days, heldFor, name, length, line, summary, path, shortPath, pace };
 })();
