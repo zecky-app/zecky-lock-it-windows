@@ -67,6 +67,10 @@ jobs:
           # Zakura crashes as it opens its database (see experiment/README.md).
           CXXSTDLIB_x86_64_pc_windows_gnu: "static:-bundle=stdc++"
         run: |
+          # Zakura and Zaino pin their own Rust (rust-toolchain.toml): the
+          # Windows target must be added to that toolchain, not only to stable.
+          (cd zakura && rustup target add x86_64-pc-windows-gnu)
+          (cd zaino && rustup target add x86_64-pc-windows-gnu)
           (cd zakura && cargo build --release --locked -p zakura --target x86_64-pc-windows-gnu)
           (cd zaino && cargo build --release --locked -p zainod --target x86_64-pc-windows-gnu)
       - name: Collect
