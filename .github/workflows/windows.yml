@@ -133,6 +133,14 @@ jobs:
           target/release/examples/go_max_smoke.exe node/zakurad.exe node/zainod.exe "$RUNNER_TEMP/go-max" 15 3 | tee smoke.txt
           grep -q "RESULT every stop was clean" smoke.txt
           grep -q "received Ctrl-C" "$RUNNER_TEMP/go-max/logs/zakurad.log"
+      - name: Show the node logs
+        if: always()
+        shell: bash
+        run: |
+          # The uploaded logs are not always reachable; the job log is.
+          for f in "$RUNNER_TEMP"/go-max/logs/*.log; do
+            echo "===== $f (last 80 lines)"; tail -n 80 "$f" || true
+          done
       - name: Keep the logs
         if: always()
         uses: actions/upload-artifact@v4
