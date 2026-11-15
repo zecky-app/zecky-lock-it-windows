@@ -162,6 +162,17 @@ jobs:
         with:
           name: node-windows-gnu
           path: src-tauri/node
+      - name: Sapling parameters (not in git, about 50 MB)
+        shell: bash
+        run: |
+          # Zcash's published files; the build stops unless both match.
+          mkdir -p src-tauri/params && cd src-tauri/params
+          curl --fail --location --retry 5 -sS -O https://download.z.cash/downloads/sapling-spend.params
+          curl --fail --location --retry 5 -sS -O https://download.z.cash/downloads/sapling-output.params
+          printf '%s  %s\n' \
+            8e48ffd23abb3a5fd9c5589204f32d9c31285a04b78096ba40a79b75677efc13 sapling-spend.params \
+            2f0ebbcbb9bb0bcffe95a397e7eba89c29eb4dde6191c339db88570e3f3fb0e4 sapling-output.params \
+            | sha256sum -c -
       - name: Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
       - name: Build the installer, node inside
