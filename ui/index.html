@@ -704,6 +704,16 @@
               <div><span>Server</span><strong id="about-server"></strong></div>
               <div><span>Node (Go Max)</span><strong>Zakura 1.8.5 + Zaino 0.10.1</strong></div>
             </div>
+            <div class="inline">
+              <button type="button" class="secondary narrow" id="update-check">Check for updates</button>
+            </div>
+            <p class="small" id="update-result" role="status" aria-live="polite" hidden></p>
+            <button type="button" class="link-gold" id="update-get" hidden>Get it at zecky.app/windows.html ›</button>
+            <p class="small quiet">Asks GitHub for the newest version, only when you press it. GitHub sees this PC's internet address. Lock it never checks by itself and never downloads an update.</p>
+          </div>
+          <div class="card">
+            <button type="button" class="row" id="about-terms"><span class="row-icon">§</span><span class="row-title">Terms</span><span class="chev">›</span></button>
+            <button type="button" class="row" id="about-privacy"><span class="row-icon">◌</span><span class="row-title">Privacy policy</span><span class="chev">›</span></button>
           </div>
           <div class="card pad">
             <p class="card-title">Report a problem</p>
@@ -747,14 +757,16 @@
           <span class="node-percent" id="node-percent"></span>
         </div>
         <h3 class="state" id="node-state">Off</h3>
-        <p class="lead center" id="node-lead">Your own Zcash node, on this PC. About 20 GB, and a few hours to catch up the first time.</p>
+        <p class="lead center" id="node-lead">Your own Zcash node, on this PC. It needs about 30 GB free; the first check takes from about 14 hours to a few days, depending on the computer.</p>
         <div class="card" id="node-facts" hidden>
           <div class="line"><span>Checked up to</span><strong id="fact-height"></strong></div>
           <div class="line"><span>Peers</span><strong id="fact-peers"></strong></div>
           <div class="line"><span>Wallet service</span><strong id="fact-wallet"></strong></div>
           <div class="line"><span>On disk</span><strong id="fact-disk"></strong></div>
-          <div class="line"><span>Phone access, over Tor</span><strong id="fact-onion"></strong></div>
-          <p class="onion" id="fact-onion-address"></p>
+          <div id="fact-onion-rows" hidden>
+            <div class="line"><span>Phone access, over Tor</span><strong id="fact-onion"></strong></div>
+            <p class="onion" id="fact-onion-address"></p>
+          </div>
         </div>
         <p class="gm-note" id="gm-reading" hidden></p>
         <p class="gm-note" id="gm-quiet" hidden></p>
@@ -781,9 +793,26 @@
           <span class="gm-knob"><span class="coin-face big"><svg viewBox="0 0 24 24" aria-hidden="true" id="gm-glyph"></svg></span></span>
         </button>
         <p class="quiet center small">Private: other nodes cannot connect to this PC.</p>
+        <label class="gm-option" id="gm-plugged-row" hidden><input type="checkbox" id="gm-plugged"> <span>Only sync while plugged in</span></label>
+        <button type="button" class="link-gold" id="gm-check-link">Check this computer ›</button>
         <button type="button" class="link-danger" id="gm-remove" hidden>Remove node and its data…</button>
       </div>
     </section>
+  </div>
+
+  <!-- ===== Before you start Go Max: a local check of this PC ===== -->
+  <div class="scrim" id="pc-check" hidden>
+    <div class="prompt">
+      <p class="eyebrow center">GO MAX</p>
+      <h2 class="prompt-title center">Before you start Go Max</h2>
+      <ul class="pc-lines" id="pc-lines"></ul>
+      <p class="small quiet" id="pc-expect">The first check works the processor hard for about 14 hours to a few days, depending on the computer; the fan may run and the PC gets warm. After that it is light: one block about every 25 seconds. Go Max uses about 15 to 22 GB. You can switch it off any time; your wallet works the same without it.</p>
+      <p class="small quiet">Checked on this PC only. Nothing is sent anywhere.</p>
+      <div class="sheet-actions">
+        <button type="button" class="brass" id="pc-start">Start Go Max</button>
+        <button type="button" class="secondary" id="pc-not-now">Not now</button>
+      </div>
+    </div>
   </div>
 
   <!-- ===== Time lock: ask, or wait (TimeLockPrompt) ===== -->

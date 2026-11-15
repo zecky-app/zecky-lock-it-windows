@@ -1,4 +1,4 @@
-Zecky Lock it for Windows - 0.1.0 beta 1
+Zecky Lock it for Windows - 0.1.0 beta 2
 
 A calm, self-custody Zcash wallet. Your 24 words stay on this PC, sealed by
 the keys you choose (Windows Hello, a passphrase, a Zecky code, a security
@@ -18,7 +18,7 @@ Keep this folder together:
 
 Needs: Windows 10 (1903 or later) or 11, x64, internet, Microsoft Edge
 WebView2 (already on almost every Windows 10/11 PC). Go Max needs about
-35 GB free on drive C:. Seal it needs a webcam.
+30 GB free on drive C:. Seal it needs a webcam.
 
 Where your wallet is kept: %LOCALAPPDATA%\app.zecky.lockit
   wallet-lock.json   your 24 words, sealed by your keys
@@ -62,6 +62,18 @@ Windows Hello is greyed out
 "Can't reach" the server
   Check the PC's internet connection and clock. Or pick another server in
   Settings > Network.
+
+Go Max is slow
+  The first check takes from about 14 hours (a recent PC with an SSD) to
+  several days (an older laptop or a hard drive). The slowest stretch is
+  the 2022-23 spam years, roughly blocks 1,710,000 to 2,100,000: the
+  percentage crawls there, that is normal. As long as "Checked up to"
+  rises, all is well. Keep Lock it open and the PC plugged in; Lock it
+  keeps the PC awake while Go Max catches up. Your wallet works meanwhile.
+
+Go Max says "Paused while on battery"
+  "Only sync while plugged in" is on (the default on laptops). Connect the
+  charger and it carries on, or switch the option off on the Go Max page.
 
 Go Max stopped while starting
   Press Try again. Still not working? Quit Lock it, open it again; if it

@@ -2624,17 +2624,19 @@ const CHAPTERS = [
   ], []],
   ["Go Max", "Your own Zcash node, inside Lock it.", [
     "Go Max runs a Zcash node in Lock it on this PC. It checks the blocks itself and keeps only recent blocks in full. When it is up to date, Lock it reads the chain from it instead of a server.",
-    "It needs about 35 GB free to start. The first check takes most of a day and downloads the whole chain once, deleting older blocks as it goes.",
+    "It needs about 30 GB free to start and uses about 15 to 22 GB. The first check takes from about 14 hours to a few days, depending on the computer, and downloads the whole chain once, deleting older blocks as it goes. Older laptops and hard drives are the slow end.",
   ], [
     "Until the node is up to date, Lock it keeps using your server. When a wallet still has older blocks to check, Lock it reads those from your server.",
     "The node connects to other Zcash nodes on the internet, like every node: they see this PC's internet address, never your wallet, addresses or balance. The node accepts no connections from outside.",
-    "It runs while Lock it is open. Its files live in %LOCALAPPDATA%\\app.zecky.lockit\\go-max.",
+    "It runs while Lock it is open. While it catches up, Lock it keeps the PC from sleeping (the screen may still turn off); on a laptop it can pause on battery (Only sync while plugged in). Its files live in %LOCALAPPDATA%\\app.zecky.lockit\\go-max.",
+    "Before the first start, Lock it checks this PC's free space, memory, drive and power. The check is read from Windows on this PC; nothing is sent.",
   ]],
   ["What others can see", "The server.", [
     "Lock it talks to one Zcash server (zec.rocks by default) over an encrypted connection. The server sees this PC's internet address, never your words or your balance.",
   ], [
     "Payments you send leave over Tor, each on its own connection, to a public Zcash server: it sees a payment arriving from Tor, not this PC's internet address. If Tor cannot connect, the payment waits and you are told. You can switch this off in Settings › Network.",
     "With Go Max up to date, Lock it uses no server at all for reading: it reads the chain from its own node on this PC.",
+    "Check for updates (Settings › About) asks GitHub for the newest version, only when you press it: GitHub sees this PC's internet address. Lock it never checks by itself and never downloads an update.",
   ]],
   ["On this PC", "Where your data lives.", [
     "Your history (amounts and dates, never the words) is kept in %LOCALAPPDATA%\\app.zecky.lockit. Keep BitLocker or device encryption on so the whole disk is encrypted as well.",
@@ -2703,7 +2705,7 @@ const nodeLead = $("node-lead");
 const nodeFacts = $("node-facts");
 const nodeMessage = $("node-message");
 const nodeToggle = $("node-toggle");
-const LEAD_OFF = "Your own Zcash node, on this PC. About 20 GB, and a few hours to catch up the first time.";
+const LEAD_OFF = "Your own Zcash node, on this PC. It needs about 30 GB free; the first check takes from about 14 hours to a few days, depending on the computer.";
 
 let watchTimer = null;
 let lastView = null;
@@ -2725,8 +2727,12 @@ function setSwitch(on) {
 const GM_WORDS = {
   stoppedWhileStarting: "The node stopped while starting. Your wallet is fine: Lock it reads from its server meanwhile.",
   tryingAgain: "Trying again in half a minute…",
+  pausedOnBattery: "Paused while on battery. Go Max carries on when the charger is connected; Lock it reads from its server meanwhile.",
+  notConnected: "Not connected to other Zcash nodes · check this PC's internet connection. Some networks (office, hotel, guest Wi-Fi) block Zcash nodes. A second Zcash node on the same internet connection, such as Rock it, may also be taking the peers.",
   stillNotWorking: "Quit Lock it and open it again. If the node still stops, click \"Remove node and its data…\" below and switch Go Max on: it starts over. To help us, send the node's log with your feedback.",
 };
+
+let noPeersSince = 0;
 
 function chosenServerLabel() {
   const server = overview && overview.settings && overview.settings.server;
@@ -2779,6 +2785,15 @@ function renderGoMax(view) {
     if (view.retrying) $("gm-still").hidden = true;
   }
   $("gm-remove").hidden = !(view.state === "off" && view.has_data && !view.retrying);
+  if (view.state === "off" && view.paused) {
+    setSwitch(true);
+    setRing("off", 0);
+    nodePercent.textContent = "";
+    nodeState.textContent = "Paused";
+    nodeLead.textContent = GM_WORDS.pausedOnBattery;
+    nodeFacts.hidden = true;
+    return;
+  }
   if (view.state === "off") {
     setRing("off", 0);
     nodePercent.textContent = "";
@@ -2813,12 +2828,26 @@ function renderGoMax(view) {
   const fraction = netHeight > 0 ? f : status.progress;
   setRing("on", caughtUp ? 1 : fraction);
   nodePercent.textContent = caughtUp ? "" : `${Math.floor(fraction * 100)}%`;
-  if (status.peers === 0 && status.height === 0) {
+  // No other Zcash nodes for a minute: say so plainly (Wi-Fi gone, or a
+  // network that blocks Zcash nodes), as on the Mac.
+  if (status.peers === 0) { if (!noPeersSince) noPeersSince = Date.now(); } else noPeersSince = 0;
+  const disconnected = noPeersSince && Date.now() - noPeersSince > 60000;
+  const own = ((overview && overview.sync && overview.sync.server) || "").startsWith("your own node");
+  const behind = netHeight > 0 ? Math.max(0, netHeight - status.height) : 0;
+  if (disconnected) {
+    nodeState.textContent = "Not connected";
+    nodeLead.textContent = GM_WORDS.notConnected;
+  } else if (status.peers === 0 && status.height === 0) {
     nodeState.textContent = "Waiting";
     nodeLead.textContent = "Looking for other Zcash nodes. Check that this PC is online.";
   } else if (caughtUp) {
-    nodeState.textContent = "Yours";
-    nodeLead.textContent = "Caught up. Lock it reads from your own node.";
+    nodeState.textContent = "Up to date";
+    nodeLead.textContent = own
+      ? "Every block checked on this PC. Lock it reads from your own node."
+      : `Lock it still reads the chain from ${chosenServerLabel()}. It moves to this node by itself once the node has stayed at the newest block for half a minute.`;
+  } else if (status.progress >= 0.999 && behind > 0 && behind < 2000) {
+    nodeState.textContent = "A little behind";
+    nodeLead.textContent = `${numbers.format(behind)} block${behind === 1 ? "" : "s"} to catch up. Lock it reads from ${chosenServerLabel()} meanwhile.`;
   } else {
     nodeState.textContent = "Catching up";
     nodeLead.textContent = `Checking the blocks since the beginning. You can keep using this PC; Lock it reads from ${chosenServerLabel()} until the node has caught up.`;
@@ -2830,6 +2859,7 @@ function renderGoMax(view) {
   $("fact-wallet").title = view.wallet_note || "";
   $("fact-disk").textContent = gigabytes(status.size_on_disk);
   const ONION_WORDS = { starting: "Connecting to Tor", reachable: "Ready", degraded: "Ready, partly", unreachable: "Not reachable right now" };
+  $("fact-onion-rows").hidden = !view.onion && !view.onion_problem;
   if (view.onion) {
     $("fact-onion").textContent = ONION_WORDS[view.onion.state] || view.onion.state;
     $("fact-onion-address").textContent = view.onion.address;
@@ -2850,7 +2880,7 @@ $("gm-still-toggle").addEventListener("click", () => {
 });
 $("gm-remove").addEventListener("click", async () => {
   try {
-    await askKeys("Remove the node and its data?", "Go Max starts over at the next switch-on: the first check takes most of a day again. Your wallet is not touched.", { danger: true, action: "Remove", keys: false });
+    await askKeys("Remove the node and its data?", "Go Max starts over at the next switch-on: the first check takes from about 14 hours to a few days again. Your wallet is not touched.", { danger: true, action: "Remove", keys: false });
     await invoke("go_max_remove_data");
     refreshGoMax();
   } catch (problem) {
@@ -2868,6 +2898,7 @@ $("gm-wait").addEventListener("click", async () => {
 });
 
 async function refreshGoMax() {
+  refreshPowerOption();
   try {
     renderGoMax(await invoke("go_max_view"));
   } catch (problem) {
@@ -2942,6 +2973,8 @@ async function refreshCoin() {
     text = "Starting"; checking = true;
   } else if (view.state === "stopping") {
     text = "Stopping";
+  } else if (view.paused) {
+    text = "Paused · on battery"; tone = "gold"; badge.hidden = false; badge.classList.add("gold");
   } else if (view.support && view.support.state && view.support.state.state === "ended") {
     glyph = "warn"; text = "Needs an update"; tone = "gold"; badge.hidden = false; badge.classList.add("gold");
   } else if (view.stopped_while_starting || view.retrying) {
@@ -2960,15 +2993,87 @@ async function refreshCoin() {
 if (listen) listen("go-max", () => { if (!$("sheet-gomax").hidden) refreshGoMax(); });
 
 nodeToggle.addEventListener("click", async () => {
+  const on = lastView && (lastView.state === "on" || lastView.paused);
+  // The first switch-on shows the check of this PC first.
+  if (!on) {
+    const prefs = await invoke("go_max_prefs").catch(() => ({ checked: true }));
+    if (!prefs.checked) return showComputerCheck(true);
+  }
   nodeToggle.disabled = true;
-  const command = lastView && lastView.state === "on" ? "go_max_stop" : "go_max_start";
   try {
-    await invoke(command);
+    await invoke(on ? "go_max_stop" : "go_max_start");
   } catch (problem) {
     say(nodeMessage, describe(problem));
   }
   refreshGoMax();
 });
+
+// ---------- Before you start Go Max: a local check of this PC ----------
+
+let pcCheckStarts = false;
+
+function pcLine(mark, text) {
+  const li = document.createElement("li");
+  const m = document.createElement("span");
+  m.className = `pc-mark ${mark}`;
+  m.textContent = mark === "ok" ? "✓" : mark === "stop" ? "✕" : "!";
+  const t = document.createElement("span");
+  t.textContent = text;
+  li.append(m, t);
+  return li;
+}
+
+/// The check: disk space blocks a start; everything else only informs.
+async function showComputerCheck(starting) {
+  let c;
+  try { c = await invoke("go_max_check_computer"); } catch (problem) { say(nodeMessage, describe(problem)); return; }
+  const lines = $("pc-lines");
+  lines.replaceChildren();
+  lines.append(c.enough_space
+    ? pcLine("ok", `Free space: ${numbers.format(c.free_gb)} GB (Go Max needs about ${c.needed_gb} GB).`)
+    : pcLine("stop", `Not enough free space: ${numbers.format(c.free_gb)} GB free, about ${c.needed_gb} GB needed. Free up space on this drive, then try again.`));
+  if (c.memory_gb) {
+    lines.append(c.low_memory
+      ? pcLine("warn", `Memory: ${c.memory_gb} GB. This PC may feel slow during the first check; it is fine after.`)
+      : pcLine("ok", `Memory: ${c.memory_gb} GB.`));
+  }
+  if (c.disk === "ssd") lines.append(pcLine("ok", "Drive: SSD."));
+  else if (c.disk === "hdd") lines.append(pcLine("warn", "Drive: hard drive. The first check can take several days."));
+  if (c.has_battery) {
+    lines.append(c.on_battery
+      ? pcLine("warn", "On battery: plug in to sync.")
+      : pcLine("ok", "Plugged in."));
+  }
+  pcCheckStarts = starting && lastView && lastView.state === "off" && !lastView.paused;
+  $("pc-start").hidden = !pcCheckStarts && !(lastView && lastView.state === "off" && !lastView.paused);
+  $("pc-start").disabled = !c.enough_space;
+  $("pc-not-now").textContent = $("pc-start").hidden ? "Close" : "Not now";
+  $("pc-check").hidden = false;
+}
+
+$("pc-start").addEventListener("click", async () => {
+  $("pc-check").hidden = true;
+  await invoke("go_max_checked").catch(() => {});
+  nodeToggle.disabled = true;
+  try { await invoke("go_max_start"); } catch (problem) { say(nodeMessage, describe(problem)); }
+  refreshGoMax();
+});
+$("pc-not-now").addEventListener("click", async () => {
+  $("pc-check").hidden = true;
+  await invoke("go_max_checked").catch(() => {});
+});
+$("gm-check-link").addEventListener("click", () => showComputerCheck(false));
+$("gm-plugged").addEventListener("change", async () => {
+  await invoke("go_max_set_plugged_in_only", { on: $("gm-plugged").checked }).catch(() => {});
+  refreshGoMax();
+});
+
+async function refreshPowerOption() {
+  const prefs = await invoke("go_max_prefs").catch(() => null);
+  if (!prefs) return;
+  $("gm-plugged-row").hidden = !prefs.has_battery && !prefs.plugged_in_only;
+  $("gm-plugged").checked = !!prefs.plugged_in_only;
+}
 
 $("go-max-coin").addEventListener("click", () => openSheet("gomax"));
 
@@ -2991,7 +3096,7 @@ $("terms-accept").addEventListener("click", async () => {
 const TOUR = [
   ["Receive", "Click Receive for your address. Zcash sent to it goes straight into the lock."],
   ["Click the lock to send", "The lock opens with a deliberate click. Send takes out only what you choose; the rest stays locked. It closes again by itself."],
-  ["Go Max, if you want", "The gold coin at the bottom right starts your own Zcash node inside Lock it, so Lock it reads the chain from this PC instead of a server. Optional: it needs about 35 GB and most of a day the first time. Lock it works the same without it."],
+  ["Go Max, if you want", "The gold coin at the bottom right starts your own Zcash node inside Lock it, so Lock it reads the chain from this PC instead of a server. Optional: it needs about 30 GB free, and the first check takes from about 14 hours to a few days. Lock it works the same without it."],
   ["Choose your keys", "Decide what is asked before the lock opens: Windows Hello, a Zecky code, a short pause, a security key. Settings › Security › Keys to the lock."],
 ];
 let tourStep = 0;
@@ -3062,4 +3167,31 @@ async function start() {
 start().catch((problem) => {
   showView("loading");
   views.loading.querySelector("p").textContent = describe(problem) || "The app could not start.";
+});
+
+// ---------- Settings › About: Terms, Privacy, Check for updates ----------
+
+$("about-terms").addEventListener("click", () => invoke("open_page", { page: "terms" }).catch(() => {}));
+$("about-privacy").addEventListener("click", () => invoke("open_page", { page: "privacy" }).catch(() => {}));
+$("update-get").addEventListener("click", () => invoke("open_page", { page: "windows" }).catch(() => {}));
+$("update-check").addEventListener("click", async () => {
+  const button = $("update-check");
+  const result = $("update-result");
+  button.disabled = true;
+  button.textContent = "Checking…";
+  $("update-get").hidden = true;
+  try {
+    const answer = await invoke("check_for_updates");
+    result.textContent = answer.newer
+      ? `Lock it ${answer.newest} is out. You have ${answer.current}.`
+      : "You have the newest version.";
+    result.className = answer.newer ? "small gm-note" : "small quiet";
+    $("update-get").hidden = !answer.newer;
+  } catch (problem) {
+    result.textContent = describe(problem);
+    result.className = "small message";
+  }
+  result.hidden = false;
+  button.disabled = false;
+  button.textContent = "Check for updates";
 });

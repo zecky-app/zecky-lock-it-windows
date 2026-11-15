@@ -4,8 +4,9 @@
 //! `node\` (`zakurad.exe`, `zainod.exe`). The chain state lives in the app's
 //! local data folder under `go-max\`, never in a roaming profile.
 //!
-//! While Go Max runs, an onion service gives the wallet port a private
-//! address a paired phone can reach from anywhere (see `lockit_tor`).
+//! Phone access over Tor (an onion service for the wallet port, see
+//! `lockit_tor`) is built but off until phone pairing exists: see
+//! [`PHONE_ACCESS`].
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -17,6 +18,10 @@ use lockit_node::{GoMax, GoMaxSettings, NodeLayout, NodePrograms, NodeStatus};
 use lockit_tor::{OnionAccess, OnionState};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
+
+/// Whether Go Max opens phone access over Tor. Off since beta 2: no phone app
+/// pairs with it yet, so it would only be an open door with no use.
+const PHONE_ACCESS: bool = false;
 
 /// Phone access over Tor, as the page shows it.
 #[derive(Clone, Serialize)]
@@ -46,6 +51,8 @@ pub enum GoMaxView {
         has_data: bool,
         /// This node version and the network's height.
         support: SupportView,
+        /// Paused on battery ("Only sync while plugged in").
+        paused: bool,
     },
     /// Starting; `step` says what is happening.
     Starting { step: String },
@@ -132,20 +139,24 @@ fn date_text(unix: i64) -> String {
 pub(crate) fn support_now(app: &AppHandle, wallet_network: u32) -> SupportView {
     let slot = app.state::<GoMaxSlot>();
     let status = slot.status_now();
+    let at = now();
     let live = match &status {
-        Some(s) => support::network_height(s.height, s.estimated_height, s.progress, wallet_network),
+        Some(s) => support::network_height(s.height, s.estimated_height, s.progress, wallet_network, at),
         None => wallet_network,
     };
     let mut file = load_support(app);
-    if live > file.last_height {
+    let seen_at = (file.seen_at > 0).then_some(file.seen_at);
+    // A height remembered from a guess is replaced, not kept (as on the Mac).
+    let remembered = support::trusted_remembered(file.last_height, seen_at, at);
+    if live <= support::plausible_max(at) && live > remembered {
         file.last_height = live;
-        file.seen_at = now();
+        file.seen_at = at;
         save_support(app, &file);
     }
     let state = if live > 0 {
-        support::state(live, None, now(), support::STOP_HEIGHT)
+        support::state(live, None, at, support::STOP_HEIGHT)
     } else {
-        support::state(file.last_height, (file.seen_at > 0).then_some(file.seen_at), now(), support::STOP_HEIGHT)
+        support::state(remembered, seen_at, at, support::STOP_HEIGHT)
     };
     let text = match state {
         support::State::Fine => None,
@@ -170,7 +181,7 @@ pub(crate) fn expire(app: &AppHandle, was_on_node: bool) {
         save_support(app, &file);
     }
     if running {
-        let _ = go_max_stop(app.clone(), slot);
+        let _ = stop(app);
     }
 }
 
@@ -205,6 +216,8 @@ pub struct GoMaxSlot {
     busy: AtomicBool,
     step: Mutex<Option<String>>,
     problem: Mutex<Option<String>>,
+    /// When the node first reached the newest block, for the half-minute hold.
+    at_tip_since: Mutex<Option<std::time::Instant>>,
 }
 
 fn programs(app: &AppHandle) -> Result<NodePrograms, String> {
@@ -242,6 +255,7 @@ pub fn go_max_view(app: AppHandle, slot: State<'_, GoMaxSlot>) -> GoMaxView {
         retrying: slot.retrying.load(Ordering::SeqCst),
         has_data: layout(&app).map(|l| l.root().exists()).unwrap_or(false),
         support: support.clone(),
+        paused: app.state::<crate::machine::PowerSlot>().paused(),
         problem,
     };
     if slot.retrying.load(Ordering::SeqCst) {
@@ -293,9 +307,30 @@ pub fn go_max_view(app: AppHandle, slot: State<'_, GoMaxSlot>) -> GoMaxView {
     }
 }
 
-/// Starts Go Max. Returns at once; the page follows along with `go_max_view`.
+/// Starts Go Max, as the owner asks. On battery with "Only sync while
+/// plugged in", it waits for the charger instead and the page says so.
 #[tauri::command]
-pub fn go_max_start(app: AppHandle, slot: State<'_, GoMaxSlot>) -> Result<(), String> {
+pub fn go_max_start(app: AppHandle) -> Result<(), String> {
+    let power = app.state::<crate::machine::PowerSlot>();
+    power.clear();
+    if crate::machine::hold_on_battery(&app) {
+        power.pause();
+        return Ok(());
+    }
+    start(&app)
+}
+
+/// Stops Go Max, as the owner asks (no longer paused either).
+#[tauri::command]
+pub fn go_max_stop(app: AppHandle) -> Result<(), String> {
+    app.state::<crate::machine::PowerSlot>().clear();
+    stop(&app)
+}
+
+/// Starts Go Max. Returns at once; the page follows along with `go_max_view`.
+pub(crate) fn start(app: &AppHandle) -> Result<(), String> {
+    let slot = app.state::<GoMaxSlot>();
+    let app = app.clone();
     if slot.node.lock().map(|guard| guard.is_some()).unwrap_or(true) {
         return Err("Go Max is already running".into());
     }
@@ -334,19 +369,23 @@ pub fn go_max_start(app: AppHandle, slot: State<'_, GoMaxSlot>) -> Result<(), St
         });
         match started {
             Ok(()) => {
-                // Phone access over Tor. If it cannot start, Go Max still runs
-                // for this computer, and the page says why.
-                set(&slot.step, Some("Making your private address".into()));
-                let layout = node.layout().clone();
-                let port = node.settings().wallet_port;
-                match OnionAccess::start(&layout.tor_state(), &layout.tor_cache(), port) {
-                    Ok(onion) => {
-                        if let Ok(mut guard) = slot.onion.lock() {
-                            *guard = Some(onion);
+                // Phone access over Tor. Off until phone pairing exists:
+                // nothing on this PC listens for outside connections. If it
+                // cannot start, Go Max still runs for this computer, and the
+                // page says why.
+                if PHONE_ACCESS {
+                    set(&slot.step, Some("Making your private address".into()));
+                    let layout = node.layout().clone();
+                    let port = node.settings().wallet_port;
+                    match OnionAccess::start(&layout.tor_state(), &layout.tor_cache(), port) {
+                        Ok(onion) => {
+                            if let Ok(mut guard) = slot.onion.lock() {
+                                *guard = Some(onion);
+                            }
+                            set(&slot.onion_problem, None);
                         }
-                        set(&slot.onion_problem, None);
+                        Err(error) => set(&slot.onion_problem, Some(error.to_string())),
                     }
-                    Err(error) => set(&slot.onion_problem, Some(error.to_string())),
                 }
                 if let Ok(mut guard) = slot.node.lock() {
                     *guard = Some(node);
@@ -384,7 +423,7 @@ pub fn go_max_try_again(app: AppHandle, slot: State<'_, GoMaxSlot>) -> Result<()
         std::thread::sleep(std::time::Duration::from_secs(30));
         slot.retrying.store(false, Ordering::SeqCst);
         slot.stopped_while_starting.store(false, Ordering::SeqCst);
-        let _ = go_max_start(handle.clone(), handle.state::<GoMaxSlot>());
+        let _ = start(&handle);
     });
     Ok(())
 }
@@ -406,8 +445,9 @@ pub fn go_max_remove_data(app: AppHandle, slot: State<'_, GoMaxSlot>) -> Result<
 }
 
 /// Stops Go Max cleanly. Returns at once.
-#[tauri::command]
-pub fn go_max_stop(app: AppHandle, slot: State<'_, GoMaxSlot>) -> Result<(), String> {
+pub(crate) fn stop(app: &AppHandle) -> Result<(), String> {
+    let slot = app.state::<GoMaxSlot>();
+    let app = app.clone();
     if slot.busy.swap(true, Ordering::SeqCst) {
         return Err("Go Max is busy".into());
     }
@@ -455,6 +495,31 @@ pub fn stop_on_exit(app: &AppHandle) {
 }
 
 impl GoMaxSlot {
+    /// Whether the node runs or is starting.
+    pub fn running(&self) -> bool {
+        self.busy.load(Ordering::SeqCst) && get(&self.step).as_deref() != Some("Stopping")
+            || self.node.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+
+    /// Whether Go Max is between steps (starting or stopping).
+    pub fn busy_now(&self) -> bool {
+        self.busy.load(Ordering::SeqCst)
+    }
+
+    /// Whether the node is still checking the chain: keep the PC awake.
+    pub fn catching_up(&self) -> bool {
+        if self.busy.load(Ordering::SeqCst) {
+            return true;
+        }
+        match self.status_now() {
+            Some(status) => {
+                let network = status.estimated_height.min(support::plausible_max(now()));
+                status.progress < 0.999 || status.height.saturating_add(words::UP_TO_DATE_BLOCKS) < network
+            }
+            None => self.node.lock().map(|g| g.is_some()).unwrap_or(false),
+        }
+    }
+
     /// The node's numbers now, if it runs and answers. Never waits.
     pub fn status_now(&self) -> Option<NodeStatus> {
         if self.busy.load(Ordering::SeqCst) {
@@ -477,6 +542,16 @@ impl GoMaxSlot {
             return None;
         }
         let status = node.status().ok()?;
-        (status.estimated_height > 0 && status.height + 2 >= status.estimated_height).then_some(status.height)
+        let at_tip = status.estimated_height > 0 && status.height + 2 >= status.estimated_height;
+        // Lock it moves to the node only once it has stayed at the newest
+        // block for half a minute (as on the Mac): no back and forth while
+        // it is just arriving.
+        let mut since = self.at_tip_since.lock().ok()?;
+        if !at_tip {
+            *since = None;
+            return None;
+        }
+        let first = *since.get_or_insert_with(std::time::Instant::now);
+        (first.elapsed() >= std::time::Duration::from_secs(30)).then_some(status.height)
     }
 }

@@ -19,8 +19,10 @@
 
 mod firstrun;
 mod go_max;
+mod machine;
 mod rules;
 mod sealit;
+mod updates;
 mod wallet;
 
 use std::{fs, path::PathBuf};
@@ -307,10 +309,12 @@ pub fn run() {
             }
         }))
         .manage(go_max::GoMaxSlot::default())
+        .manage(machine::PowerSlot::default())
         .manage(wallet::WalletSlot::default())
         .manage(sealit::SealSlot::default())
         .setup(|app| {
             wallet::start_syncing(app.handle().clone());
+            machine::watch(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -385,7 +389,12 @@ pub fn run() {
             go_max::go_max_stop,
             go_max::go_max_try_again,
             go_max::go_max_remove_data,
-            go_max::go_max_choose_at_stop
+            go_max::go_max_choose_at_stop,
+            machine::go_max_check_computer,
+            machine::go_max_prefs,
+            machine::go_max_set_plugged_in_only,
+            machine::go_max_checked,
+            updates::check_for_updates
         ])
         .build(tauri::generate_context!())
         .expect("Zecky Lock it could not start");

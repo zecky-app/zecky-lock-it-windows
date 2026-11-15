@@ -59,15 +59,48 @@ pub mod support {
         State::Soon { at: now + i64::from(remaining) * BLOCK_SECONDS }
     }
 
+    /// NU7's block and its expected moment (5 Nov 2026, 12:00 UTC); a block
+    /// every 25 seconds since.
+    const NU7_HEIGHT: u32 = 3_543_405;
+    const NU7_TIME: i64 = 1_793_880_000;
+    /// Room for blocks coming faster than every 25 seconds.
+    pub const PLAUSIBLE_MARGIN: u32 = 5_000;
+
+    /// A rough chain height for a moment, from the clock alone (as Lock it
+    /// Mac's `Birthday.estimatedTip`). Only used as a ceiling.
+    pub fn estimated_tip(now: i64) -> u32 {
+        let since = (now - NU7_TIME).max(0) / BLOCK_SECONDS;
+        NU7_HEIGHT.saturating_add(u32::try_from(since).unwrap_or(u32::MAX))
+    }
+
+    /// The highest network height the clock allows at a moment. Verified
+    /// blocks are never capped by it; guesses and remembered heights are.
+    pub fn plausible_max(now: i64) -> u32 {
+        estimated_tip(now).saturating_add(PLAUSIBLE_MARGIN)
+    }
+
+    /// A height remembered across restarts, if the clock allows it when it
+    /// was seen; 0 otherwise. One remembered from a guess can be far too
+    /// high and would show "needs an update" weeks early whenever nothing is
+    /// answering yet (seen on the Mac, 14 Nov 2026: "before Nov 27").
+    pub fn trusted_remembered(height: u32, seen_at: Option<i64>, now: i64) -> u32 {
+        if height == 0 {
+            return 0;
+        }
+        if height <= plausible_max(seen_at.unwrap_or(now)) { height } else { 0 }
+    }
+
     /// The network height the stop is judged by. The node's own estimate of
     /// the network is only trusted once the node is close to the newest
     /// block: during the first check of history it can be far too high (seen
     /// 13 Nov 2026: about 60,000 blocks, which showed "needs an update
     /// before Nov 17" three weeks early and could have stopped Go Max
     /// mid-sync). Before that, the node's verified blocks and the wallet's
-    /// server count.
-    pub fn network_height(node_blocks: u32, node_estimate: u32, progress: f64, wallet_network: u32) -> u32 {
-        let node = if progress >= 0.999 { node_blocks.max(node_estimate) } else { node_blocks };
+    /// server count. An estimate is never trusted above what the clock
+    /// allows; verified blocks always are.
+    pub fn network_height(node_blocks: u32, node_estimate: u32, progress: f64, wallet_network: u32, now: i64) -> u32 {
+        let estimate = node_estimate.min(plausible_max(now));
+        let node = if progress >= 0.999 { node_blocks.max(estimate) } else { node_blocks };
         node.max(wallet_network)
     }
 }
@@ -152,6 +185,41 @@ pub mod words {
     pub const WALLET_QUIET: &str =
         "Lock it is not getting new blocks from this node. It has connected again; if this line stays, switch Go Max off and on.";
 
+    /// Where a newer Lock it is.
+    pub const DOWNLOAD_PAGE: &str = "zecky.app/windows.html";
+
+    /// Three or four blocks behind the network's height still counts as up
+    /// to date: the estimate runs ahead of the real tip (as on the Mac).
+    pub const UP_TO_DATE_BLOCKS: u32 = 10;
+
+    /// Whether the node is shown as up to date.
+    pub fn shown_up_to_date(node_blocks: u32, network: u32) -> bool {
+        network > 0 && node_blocks.saturating_add(UP_TO_DATE_BLOCKS) >= network
+    }
+
+    /// The node is up but not quite at the newest block.
+    pub fn a_little_behind(blocks: u32) -> String {
+        format!("A little behind · {} block{} to catch up", grouped(blocks), if blocks == 1 { "" } else { "s" })
+    }
+
+    /// Caught up, but Lock it has not moved to the node yet.
+    pub fn still_on_server(server: &str) -> String {
+        format!(
+            "Lock it still reads the chain from {server}. It moves to this node by itself once the node has stayed at the newest block for half a minute."
+        )
+    }
+
+    /// No other Zcash nodes for a while.
+    pub const NOT_CONNECTED: &str = "Not connected to other Zcash nodes · check this PC's internet connection. Some networks (office, hotel, guest Wi-Fi) block Zcash nodes. A second Zcash node on the same internet connection, such as Rock it, may also be taking the peers.";
+
+    /// Paused on battery (Only sync while plugged in).
+    pub const PAUSED_ON_BATTERY: &str = "Paused while on battery. Go Max carries on when the charger is connected; Lock it reads from its server meanwhile.";
+
+    /// The node from last time is still closing.
+    pub fn port_still_closing(port: u16) -> String {
+        format!("Go Max's node from the last time is still closing (port {port}). Wait a minute, then switch Go Max on again.")
+    }
+
     /// Whether a problem means "not connected yet" (the server or the
     /// wallet's database busy), not a wrong input.
     pub fn still_connecting(text: &str) -> bool {
@@ -189,7 +257,7 @@ pub mod words {
     /// Two weeks ahead of the stop.
     pub fn update_before(date: &str) -> String {
         format!(
-            "Go Max needs an update before {date}. This node version follows the chain up to block {}; a newer Lock it brings the next one.",
+            "Go Max needs an update before {date}. This node version follows the chain up to block {}; a newer Lock it brings the next one. Get the new version at zecky.app/windows.html.",
             grouped(super::support::STOP_HEIGHT)
         )
     }
@@ -197,7 +265,7 @@ pub mod words {
     /// At the stop.
     pub fn ended() -> String {
         format!(
-            "This node version follows the Zcash chain up to block {}, and the network is now past it. Go Max carries on after an update of Lock it; the node's data is kept. Your Zcash is not affected.",
+            "This node version follows the Zcash chain up to block {}, and the network is now past it. Go Max carries on after an update of Lock it; the node's data is kept. Your Zcash is not affected. Get the new version at zecky.app/windows.html.",
             grouped(super::support::STOP_HEIGHT)
         )
     }
@@ -215,19 +283,36 @@ mod tests {
     #[test]
     fn the_estimate_counts_only_near_the_tip() {
         // First check of history: the estimate is ~60,000 too high.
-        assert_eq!(support::network_height(556_480, 3_628_874, 0.15, 3_568_874), 3_568_874);
+        assert_eq!(support::network_height(556_480, 3_628_874, 0.15, 3_568_874, NOW), 3_568_874);
         // Verified blocks above the wallet's server: those count.
-        assert_eq!(support::network_height(3_570_000, 3_630_000, 0.998, 3_568_874), 3_570_000);
+        assert_eq!(support::network_height(3_570_000, 3_630_000, 0.998, 3_568_874, NOW), 3_570_000);
         // Near the tip the estimate counts.
-        assert_eq!(support::network_height(3_569_990, 3_570_002, 0.9995, 3_569_000), 3_570_002);
+        assert_eq!(support::network_height(3_569_990, 3_570_002, 0.9995, 3_569_000, NOW), 3_570_002);
         // Nothing from the wallet: the node alone.
-        assert_eq!(support::network_height(100, 200, 0.5, 0), 100);
+        assert_eq!(support::network_height(100, 200, 0.5, 0, NOW), 100);
     }
 
     #[test]
     fn mid_sync_the_wrong_estimate_shows_no_notice_and_no_stop() {
-        let height = support::network_height(556_480, STOP_HEIGHT + 100, 0.15, 3_568_874);
+        let height = support::network_height(556_480, STOP_HEIGHT + 100, 0.15, 3_568_874, NOW);
         assert_eq!(support::state(height, None, NOW, STOP_HEIGHT), State::Fine);
+    }
+
+    #[test]
+    fn heights_the_clock_does_not_allow_are_not_trusted() {
+        // The Mac's test: 14 Nov 2026, 13:10 UTC; the real tip was 3,572,285.
+        let now = 1_794_661_800;
+        let limit = support::plausible_max(now);
+        assert!(limit > 3_572_285 && limit < 3_590_000, "{limit}");
+        // A remembered guess about 26,000 blocks too high is dropped; a real one is kept.
+        assert_eq!(support::trusted_remembered(3_598_400, Some(now), now), 0);
+        assert_eq!(support::trusted_remembered(3_572_285, Some(now), now), 3_572_285);
+        assert_eq!(support::trusted_remembered(0, None, now), 0);
+        // Dropped, it shows no early notice.
+        assert_eq!(support::state(support::trusted_remembered(3_598_400, Some(now), now), Some(now), now, STOP_HEIGHT), State::Fine);
+        // A caught-up node's estimate above the clock is capped; its verified blocks are not.
+        assert_eq!(support::network_height(3_572_285, 3_640_000, 1.0, 3_572_285, now), limit);
+        assert_eq!(support::network_height(3_643_400, 0, 1.0, 0, now), 3_643_400);
     }
 
     #[test]
@@ -258,6 +343,20 @@ mod tests {
         assert_eq!(STOP_HEIGHT, 3_643_309);
         assert!(words::update_before("Dec 5").contains("block 3,643,309"));
         assert!(words::ended().contains("block 3,643,309"));
+        assert!(words::update_before("Dec 5").ends_with("Get the new version at zecky.app/windows.html."));
+        assert!(words::ended().ends_with("Get the new version at zecky.app/windows.html."));
+    }
+
+    #[test]
+    fn up_to_date_allows_a_few_blocks_and_says_why_still_on_the_server() {
+        assert!(words::shown_up_to_date(3_572_281, 3_572_285));
+        assert!(words::shown_up_to_date(3_572_275, 3_572_285));
+        assert!(!words::shown_up_to_date(3_572_240, 3_572_285));
+        assert!(!words::shown_up_to_date(3_572_285, 0));
+        assert_eq!(words::a_little_behind(45), "A little behind · 45 blocks to catch up");
+        assert_eq!(words::a_little_behind(1), "A little behind · 1 block to catch up");
+        assert!(words::still_on_server("zec.rocks").starts_with("Lock it still reads the chain from zec.rocks."));
+        assert!(words::NOT_CONNECTED.contains("such as Rock it"));
     }
 
     // ---- 1. Older blocks come from the server ----

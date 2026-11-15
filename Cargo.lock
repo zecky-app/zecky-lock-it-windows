@@ -10218,6 +10218,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tokio",
  "ureq",
+ "windows 0.61.3",
  "zeroize",
 ]
 

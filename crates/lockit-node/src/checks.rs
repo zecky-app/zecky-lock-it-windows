@@ -7,10 +7,10 @@ use std::{
 
 use crate::{Error, GoMaxSettings, NodeLayout, Result};
 
-/// Free space needed before the very first start, the same as Lock it Mac:
-/// about 22 GB for the node, the same again at the peak of a sync, and room
-/// for the database to tidy itself (35 GiB).
-pub const FIRST_START_BYTES: u64 = 35 * 1024 * 1024 * 1024;
+/// Free space needed before the very first start: about 22 GB for the node
+/// after a month, and room while it works (a Windows laptop peaked near
+/// 19 GB in the 2022-23 spam blocks). 30 GB, the figure the page shows.
+pub const FIRST_START_BYTES: u64 = 30 * GB;
 
 /// Free space always kept, once the state exists, so the node never fills the
 /// drive to the last byte.
@@ -18,10 +18,21 @@ pub const HEADROOM_BYTES: u64 = 2 * GB;
 
 const GB: u64 = 1_000_000_000;
 
-/// Checks free space and ports. Call before starting.
-pub fn before_start(layout: &NodeLayout, settings: &GoMaxSettings) -> Result<()> {
+/// Checks free space and ports. Call before starting. `waiting` is told when
+/// a port is still busy, most likely the node from last time still closing.
+pub fn before_start(layout: &NodeLayout, settings: &GoMaxSettings, waiting: impl FnMut(&str)) -> Result<()> {
+    before_start_waiting(layout, settings, PORT_WAIT_SECONDS, waiting)
+}
+
+/// [`before_start`], giving a busy port `wait_seconds` to come free.
+pub fn before_start_waiting(
+    layout: &NodeLayout,
+    settings: &GoMaxSettings,
+    wait_seconds: u64,
+    waiting: impl FnMut(&str),
+) -> Result<()> {
     disk(layout)?;
-    ports(settings)
+    ports(settings, wait_seconds, waiting)
 }
 
 fn disk(layout: &NodeLayout) -> Result<()> {
@@ -39,15 +50,29 @@ fn has_any_state(state: &Path) -> bool {
     std::fs::read_dir(state).map(|mut entries| entries.next().is_some()).unwrap_or(false)
 }
 
-fn ports(settings: &GoMaxSettings) -> Result<()> {
+/// How long a busy port is given to come free: the node from last time can
+/// take this long to close (as on the Mac).
+const PORT_WAIT_SECONDS: u64 = 90;
+
+fn ports(settings: &GoMaxSettings, wait_seconds: u64, mut waiting: impl FnMut(&str)) -> Result<()> {
     for (port, what) in [
         (settings.rpc_port, "the node's RPC"),
         (settings.wallet_port, "the wallet service"),
         (settings.p2p_port, "the Zcash network"),
     ] {
+        let mut told = false;
+        let mut waited = 0;
         // Binding and dropping at once: only asks whether the port is free.
-        if TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).is_err() {
-            return Err(Error::PortInUse { port, what });
+        while TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).is_err() {
+            if waited >= wait_seconds {
+                return Err(Error::PortInUse { port, what });
+            }
+            if !told {
+                waiting(&crate::rules::words::port_still_closing(port));
+                told = true;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            waited += 1;
         }
     }
     Ok(())

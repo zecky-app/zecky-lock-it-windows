@@ -76,6 +76,7 @@ pub fn open_page(page: String) -> CommandResult<()> {
     let url = match page.as_str() {
         "terms" => "https://zecky.app/terms.html",
         "privacy" => "https://zecky.app/privacy.html",
+        "windows" => "https://zecky.app/windows.html",
         _ => return Err(problem("unknown page")),
     };
     #[cfg(windows)]

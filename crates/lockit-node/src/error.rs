@@ -61,7 +61,7 @@ pub enum Error {
     },
 
     /// Another program is using one of the node's ports.
-    #[error("another program is using port {port} ({what}). Is another node or another copy of Lock it running?")]
+    #[error("Another program already uses Go Max's ports on this PC ({port}, {what}), most likely another Zcash node or a Lock it open in another Windows account. Stop it, then switch Go Max on again.")]
     PortInUse {
         /// The port.
         port: u16,

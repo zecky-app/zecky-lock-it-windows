@@ -30,6 +30,9 @@ window.__calls = [];
       case "keyring_layout": m.hidden = args.hidden; return null;
       case "keyring_select": m.current = args.id; return null;
       case "price_get": return { usd: 40, eur: 37 };
+      case "go_max_prefs": return m.prefs || { plugged_in_only: false, has_battery: false, checked: true, paused: false };
+      case "go_max_check_computer": return m.check;
+      case "check_for_updates": if (m.update instanceof Error || typeof m.update === "string") throw m.update; return m.update;
       default: return null;
     }
   } } };

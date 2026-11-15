@@ -922,3 +922,15 @@ select.input { appearance: auto; }
 .receipt-row.from span, .receipt-row.from strong { color: var(--gold); }
 .receipt-row.from { border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 4px; }
 .dot.gold { background: var(--gold); }
+
+/* ---------- Before you start Go Max (a local check of this PC) ---------- */
+.pc-lines { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.pc-lines li { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.45; color: var(--text); }
+.pc-mark { flex: none; width: 16px; text-align: center; font-weight: 700; color: var(--muted); }
+.pc-mark.ok { color: var(--green); }
+.pc-mark.warn { color: var(--gold); }
+.pc-mark.stop { color: var(--red); }
+#pc-check .prompt { max-width: 440px; gap: 12px; }
+.gm-option { align-self: center; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.gm-option input { accent-color: var(--gold); }
+#gm-check-link { align-self: center; font-size: 12px; }
