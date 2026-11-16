@@ -109,6 +109,12 @@ impl NodeProcess {
 
         let mut command = Command::new(program);
         command.args(args).stdin(Stdio::null()).stdout(out).stderr(err);
+        // Zakura (and Zebra before it) reads any ZAKURA_ or ZEBRA_ variable as
+        // a setting, and stops at an unknown one. Go Max's settings come from
+        // its own config file only.
+        for key in stray_settings(std::env::vars_os().map(|(key, _)| key)) {
+            command.env_remove(key);
+        }
         platform::prepare(&mut command);
         let child = command.spawn().map_err(|source| Error::Spawn { program: name.to_owned(), source })?;
         group.inner.adopt(&child)?;
@@ -330,5 +336,24 @@ mod platform {
 
     fn io(error: windows::core::Error) -> std::io::Error {
         std::io::Error::other(error.message())
+    }
+}
+
+/// Environment variables the node programs would read as settings.
+fn stray_settings(keys: impl Iterator<Item = std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    keys.filter(|key| {
+        let key = key.to_string_lossy().to_ascii_uppercase();
+        ["ZAKURA_", "ZEBRA_", "ZAINO_"].iter().any(|prefix| key.starts_with(prefix))
+    })
+    .collect()
+}
+
+#[cfg(test)]
+mod stray_tests {
+    #[test]
+    fn node_settings_from_the_environment_are_left_out() {
+        let keys = ["ZAKURA_REF", "zebra_network__listen_addr", "ZAINO_X", "PATH", "ZAKURAX"].map(std::ffi::OsString::from);
+        let stray = super::stray_settings(keys.into_iter());
+        assert_eq!(stray, ["ZAKURA_REF", "zebra_network__listen_addr", "ZAINO_X"].map(std::ffi::OsString::from));
     }
 }

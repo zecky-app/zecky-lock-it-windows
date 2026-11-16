@@ -24,11 +24,12 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Pinned upstream sources. Change these on purpose only.
-  ZAKURA_REPO: https://github.com/zakura-core/zakura.git
-  ZAKURA_REF: v1.8.5
-  ZAINO_REPO: https://github.com/zingolabs/zaino.git
-  ZAINO_REF: 84e115affdac40808bc141fa56c8014f4705fd95
+  # Pinned upstream sources. Change these on purpose only. Not named ZAKURA_*:
+  # Zakura reads any ZAKURA_ or ZEBRA_ variable as a setting.
+  UPSTREAM_ZAKURA_REPO: https://github.com/zakura-core/zakura.git
+  UPSTREAM_ZAKURA_REF: v1.8.8
+  UPSTREAM_ZAINO_REPO: https://github.com/zingolabs/zaino.git
+  UPSTREAM_ZAINO_REF: 84e115affdac40808bc141fa56c8014f4705fd95
 
 jobs:
   lock:
@@ -55,8 +56,8 @@ jobs:
           sudo apt-get install -y g++-mingw-w64-x86-64-posix gcc-mingw-w64-x86-64-posix
       - name: Fetch pinned sources
         run: |
-          git clone "$ZAKURA_REPO" zakura && git -C zakura checkout --detach "$ZAKURA_REF"
-          git clone "$ZAINO_REPO" zaino && git -C zaino checkout --detach "$ZAINO_REF"
+          git clone "$UPSTREAM_ZAKURA_REPO" zakura && git -C zakura checkout --detach "$UPSTREAM_ZAKURA_REF"
+          git clone "$UPSTREAM_ZAINO_REPO" zaino && git -C zaino checkout --detach "$UPSTREAM_ZAINO_REF"
       - name: Build
         env:
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc-posix
@@ -85,7 +86,7 @@ jobs:
             echo "::error::a node program still needs a MinGW DLL"; exit 1
           fi
           (cd node && sha256sum *.exe > SHA256SUMS.txt && cat SHA256SUMS.txt)
-          printf 'zakura %s\nzaino %s\n' "$ZAKURA_REF" "$ZAINO_REF" > node/SOURCES.txt
+          printf 'zakura %s\nzaino %s\n' "$UPSTREAM_ZAKURA_REF" "$UPSTREAM_ZAINO_REF" > node/SOURCES.txt
       - uses: actions/upload-artifact@v4
         with:
           name: node-windows-gnu
@@ -101,7 +102,7 @@ jobs:
       - name: Build Zakura with MSVC
         shell: bash
         run: |
-          git clone "$ZAKURA_REPO" zakura && git -C zakura checkout --detach "$ZAKURA_REF"
+          git clone "$UPSTREAM_ZAKURA_REPO" zakura && git -C zakura checkout --detach "$UPSTREAM_ZAKURA_REF"
           cd zakura && cargo build --release --locked -p zakura
 
   go-max-windows:

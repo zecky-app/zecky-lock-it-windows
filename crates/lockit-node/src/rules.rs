@@ -12,7 +12,7 @@
 /// so two weeks ahead, and at the stop it asks: a public server, or wait.
 /// Never by itself.
 pub mod support {
-    /// `MAINNET_EOS_HEIGHT` of Zakura 1.8.5 to 1.8.7: about Dec 5, 2026.
+    /// `MAINNET_EOS_HEIGHT` of Zakura 1.8.5 to 1.8.8: about Dec 5, 2026.
     pub const STOP_HEIGHT: u32 = 3_643_309;
     /// Seconds per block since NU7.
     pub const BLOCK_SECONDS: i64 = 25;

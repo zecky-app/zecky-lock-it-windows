@@ -35,6 +35,9 @@ Needs Windows 10 (1903+) or 11, x64. Go Max needs about 30 GB free.
   accepts no connections, so this PC is never announced as a Zcash node. "What is
   this?" under the switch explains it, and where to help the network more: Zecky
   Rock it, a full node on an Umbrel at home.
+- **Node updated to Zakura 1.8.8** (was 1.8.5): finds other nodes even when the DNS
+  seeds fail, and reads stored blocks faster. Your synced node data carries over; no
+  new first check.
 
 ## Good to know
 
@@ -42,8 +45,9 @@ Needs Windows 10 (1903+) or 11, x64. Go Max needs about 30 GB free.
   A recent PC with an SSD needs about 14 hours; an older laptop or a hard drive
   several days. Use a connection without a data limit. Your wallet works meanwhile,
   from its server.
-- **The node is still Zakura 1.8.5,** which follows the chain up to block 3,643,309
-  (about 5 December). Lock it says so two weeks ahead.
+- **The node follows the chain up to block 3,643,309** (about 5 December), as before:
+  Zakura has not yet released a node that goes further. Lock it says so two weeks
+  ahead.
 - Help for common problems: `READ-ME-FIRST.txt`, next to the app.
 
 ## Disclaimer
