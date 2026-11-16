@@ -14,6 +14,7 @@ use std::sync::{
 };
 
 use lockit_node::rules::{pace, support, words};
+use lockit_node::data_use::{self, DataUse};
 use lockit_node::{GoMax, GoMaxSettings, NodeLayout, NodePrograms, NodeStatus};
 use lockit_tor::{OnionAccess, OnionState};
 use serde::Serialize;
@@ -53,6 +54,8 @@ pub enum GoMaxView {
         support: SupportView,
         /// Paused on battery ("Only sync while plugged in").
         paused: bool,
+        /// The data overview, if the node has run on this PC.
+        data: Option<DataView>,
     },
     /// Starting; `step` says what is happening.
     Starting { step: String },
@@ -81,6 +84,8 @@ pub enum GoMaxView {
         finish_at: Option<i64>,
         /// While the first check runs: where it stands against the spam years.
         spam_line: Option<String>,
+        /// The data overview.
+        data: Option<DataView>,
     },
     /// Stopping.
     Stopping,
@@ -225,6 +230,82 @@ pub struct GoMaxSlot {
     at_tip_since: Mutex<Option<std::time::Instant>>,
     /// The node's height over the last hour, for the expected finish.
     pace: Mutex<pace::Samples>,
+    /// The data overview's running totals.
+    data: Mutex<DataTally>,
+}
+
+/// The running data totals, as loaded from and saved to the node's folder.
+#[derive(Default)]
+struct DataTally {
+    /// Loaded at first use.
+    totals: Option<DataUse>,
+    /// When the totals were last written to disk.
+    saved_at: Option<std::time::Instant>,
+    /// The size of the node's folder, measured at most once a minute.
+    kept: Option<(u64, std::time::Instant)>,
+}
+
+/// The data overview on the Go Max page, in bytes.
+#[derive(Clone, Serialize)]
+pub struct DataView {
+    pub downloaded: u64,
+    pub kept: u64,
+    pub removed: u64,
+    pub uploaded: u64,
+}
+
+/// Runs `f` on the totals, loading them first if needed.
+fn with_totals<R>(app: &AppHandle, f: impl FnOnce(&mut DataUse, &mut DataTally, &std::path::Path) -> R) -> Option<R> {
+    let file = layout(app).ok()?.data_use_file();
+    let slot = app.state::<GoMaxSlot>();
+    let mut tally = slot.data.lock().ok()?;
+    let mut totals = match tally.totals.take() {
+        Some(totals) => totals,
+        None => DataUse::load(&file),
+    };
+    let result = f(&mut totals, &mut tally, &file);
+    tally.totals = Some(totals);
+    Some(result)
+}
+
+/// Reads Zakura's counters (on this computer) and adds what is new. Every
+/// 15 seconds from the watcher while Go Max runs, and once at a stop.
+/// Written to disk at most once a minute, and always when `save` is set.
+pub(crate) fn record_data(app: &AppHandle, save: bool) {
+    let counters = data_use::read(GoMaxSettings::default().metrics_address());
+    with_totals(app, |totals, tally, file| {
+        if let Some(counters) = counters {
+            totals.add(counters);
+        }
+        let due = tally.saved_at.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(60));
+        if (save || due) && file.parent().is_some_and(|dir| dir.exists()) {
+            if totals.save(file).is_ok() {
+                tally.saved_at = Some(std::time::Instant::now());
+            }
+        }
+    });
+}
+
+/// The overview for the page, if there is anything to show.
+fn data_view(app: &AppHandle) -> Option<DataView> {
+    let root = layout(app).ok()?.root().to_path_buf();
+    with_totals(app, |totals, tally, _| {
+        let kept = match tally.kept {
+            Some((bytes, at)) if at.elapsed() < std::time::Duration::from_secs(60) => bytes,
+            _ => {
+                let bytes = data_use::folder_size(&root);
+                tally.kept = Some((bytes, std::time::Instant::now()));
+                bytes
+            }
+        };
+        (totals.downloaded > 0 || kept > 0).then(|| DataView {
+            downloaded: totals.downloaded,
+            kept,
+            removed: totals.removed(kept),
+            uploaded: totals.uploaded,
+        })
+    })
+    .flatten()
 }
 
 fn programs(app: &AppHandle) -> Result<NodePrograms, String> {
@@ -263,6 +344,7 @@ pub fn go_max_view(app: AppHandle, slot: State<'_, GoMaxSlot>) -> GoMaxView {
         has_data: layout(&app).map(|l| l.root().exists()).unwrap_or(false),
         support: support.clone(),
         paused: app.state::<crate::machine::PowerSlot>().paused(),
+        data: data_view(&app),
         problem,
     };
     if slot.retrying.load(Ordering::SeqCst) {
@@ -294,6 +376,7 @@ pub fn go_max_view(app: AppHandle, slot: State<'_, GoMaxSlot>) -> GoMaxView {
                 status,
                 finish_at,
                 spam_line,
+                data: data_view(&app),
                 wallet_ready: node.wallet_ready(),
                 wallet_note: node.wallet_service_note(),
                 onion: slot.onion.lock().ok().and_then(|guard| {
@@ -378,6 +461,8 @@ pub(crate) fn start(app: &AppHandle) -> Result<(), String> {
     let handle = app.clone();
     std::thread::spawn(move || {
         let slot = handle.state::<GoMaxSlot>();
+        // A new Zakura: its counters begin at zero again.
+        with_totals(&handle, |totals, _, _| totals.new_process());
         let mut node = GoMax::new(layout, GoMaxSettings::default(), programs);
         let started = node.start(|step| {
             set(&slot.step, Some(step.to_owned()));
@@ -455,6 +540,10 @@ pub fn go_max_remove_data(app: AppHandle, slot: State<'_, GoMaxSlot>) -> Result<
     if root.exists() {
         std::fs::remove_dir_all(&root).map_err(|e| format!("the node's data could not be removed: {e}"))?;
     }
+    // The totals went with the folder.
+    if let Ok(mut tally) = slot.data.lock() {
+        *tally = DataTally::default();
+    }
     slot.stopped_while_starting.store(false, Ordering::SeqCst);
     set(&slot.problem, None);
     Ok(())
@@ -477,6 +566,7 @@ pub(crate) fn stop(app: &AppHandle) -> Result<(), String> {
     let handle = app.clone();
     std::thread::spawn(move || {
         let slot = handle.state::<GoMaxSlot>();
+        record_data(&handle, true);
         stop_onion(&slot);
         match node.stop() {
             Ok(report) if !report.clean() => set(

@@ -770,6 +770,15 @@
           </div>
         </div>
         <p class="small quiet gm-spam" id="gm-spam" hidden></p>
+        <div class="gm-data" id="gm-data" hidden>
+          <div class="card">
+            <div class="line"><span>Downloaded</span><strong id="data-down"></strong></div>
+            <div class="line"><span>Kept on this PC</span><strong id="data-kept"></strong></div>
+            <div class="line"><span>Removed after check</span><strong id="data-removed"></strong></div>
+            <div class="line"><span>Uploaded</span><strong id="data-up"></strong></div>
+          </div>
+          <p class="small quiet">Every block is checked on this PC first, then old block data is removed. Counted on this PC only; nothing is sent.</p>
+        </div>
         <p class="gm-note" id="gm-reading" hidden></p>
         <p class="gm-note" id="gm-quiet" hidden></p>
         <p class="gm-note" id="gm-unsettled" hidden></p>
@@ -794,7 +803,11 @@
           <span class="gm-label" id="gm-label">SWITCH ON</span>
           <span class="gm-knob"><span class="coin-face big"><svg viewBox="0 0 24 24" aria-hidden="true" id="gm-glyph"></svg></span></span>
         </button>
-        <p class="quiet center small">Private: other nodes cannot connect to this PC.</p>
+        <p class="quiet center small" id="gm-private">Private: your node connects to other Zcash nodes, but nobody can connect to it. <button type="button" class="link-gold inline" id="gm-private-more">What is this?</button></p>
+        <div class="gm-why" id="gm-why" hidden>
+          <p class="small"><strong>Why Go Max is private.</strong> Your node checks every block itself and passes new blocks and transactions on to the nodes it connects to. It does not accept incoming connections, so your internet address is never announced as a Zcash node, and a laptop that sleeps, travels or runs on a data limit isn't asked to serve others.</p>
+          <p class="small"><strong>Want to help the network more?</strong> Zecky Rock it runs a full node on an Umbrel at home, always on. It will be able to open to other nodes by choice, which is where helping counts most: a full node can serve new nodes during their first sync.</p>
+        </div>
         <label class="gm-option" id="gm-plugged-row" hidden><input type="checkbox" id="gm-plugged"> <span>Only sync while plugged in</span></label>
         <button type="button" class="link-gold" id="gm-check-link">Check this computer ›</button>
         <button type="button" class="link-danger" id="gm-remove" hidden>Remove node and its data…</button>

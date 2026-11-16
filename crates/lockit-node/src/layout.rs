@@ -86,6 +86,11 @@ impl NodeLayout {
         self.root.join("tor").join("cache")
     }
 
+    /// The running data totals for the Go Max page (see `data_use`).
+    pub fn data_use_file(&self) -> PathBuf {
+        self.root.join("data-use.json")
+    }
+
     /// The config folder.
     pub fn config_dir(&self) -> PathBuf {
         self.root.join("config")

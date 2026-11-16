@@ -936,3 +936,10 @@ select.input { appearance: auto; }
 #gm-check-link { align-self: center; font-size: 12px; }
 
 .gm-spam { margin: 0; line-height: 1.45; }
+.gm-data { display: flex; flex-direction: column; gap: 6px; }
+
+.gm-data .card .line { font-size: 12px; height: 30px; }
+.gm-why { display: flex; flex-direction: column; gap: 8px; max-width: 460px; align-self: center; color: var(--muted); }
+.gm-why p { margin: 0; line-height: 1.5; }
+.gm-why strong { color: var(--text); font-weight: 500; }
+.link-gold.inline { display: inline; padding: 0; font-size: inherit; }

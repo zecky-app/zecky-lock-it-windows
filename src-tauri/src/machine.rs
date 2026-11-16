@@ -35,7 +35,16 @@ pub struct ComputerCheck {
     has_battery: bool,
     /// Running on battery right now.
     on_battery: bool,
+    /// Whether Windows marks the internet connection as metered (a data
+    /// limit). `None` when Windows did not say.
+    metered: Option<bool>,
+    /// What the first sync downloads, roughly, in GB.
+    download_gb: u64,
 }
+
+/// What a first sync downloads, roughly: the whole chain passes through the
+/// node once to be checked, even though only a little is kept.
+const DOWNLOAD_GB: u64 = 350;
 
 /// Go Max's own preferences on this PC.
 #[derive(Default, Serialize, Deserialize)]
@@ -90,6 +99,8 @@ pub fn go_max_check_computer(app: AppHandle) -> ComputerCheck {
         disk: platform::disk_kind(&data),
         has_battery,
         on_battery,
+        metered: platform::metered(),
+        download_gb: DOWNLOAD_GB,
     }
 }
 
@@ -186,6 +197,11 @@ pub fn watch(app: AppHandle) {
             } else if power.paused() && !on_battery && !slot.busy_now() {
                 power.paused.store(false, Ordering::SeqCst);
                 let _ = crate::go_max::start(&app);
+            }
+
+            // The data overview's counters, on this computer only.
+            if running && !slot.busy_now() {
+                crate::go_max::record_data(&app, false);
             }
 
             // Awake while the node checks the chain; let go when it is up to
@@ -293,6 +309,19 @@ mod platform {
         if answer.IncursSeekPenalty { "hdd" } else { "ssd" }
     }
 
+    /// Whether the internet connection is metered: Windows' own setting
+    /// (Settings → Network → "Metered connection"), set by the user or by a
+    /// mobile network. A fixed or variable cost, roaming or over the limit
+    /// all count. Only asked on this PC; nothing goes over the network.
+    pub fn metered() -> Option<bool> {
+        use windows::Networking::Connectivity::{NetworkCostType, NetworkInformation};
+        let profile = NetworkInformation::GetInternetConnectionProfile().ok()?;
+        let cost = profile.GetConnectionCost().ok()?;
+        let kind = cost.NetworkCostType().ok()?;
+        let limited = kind == NetworkCostType::Fixed || kind == NetworkCostType::Variable;
+        Some(limited || cost.Roaming().unwrap_or(false) || cost.OverDataLimit().unwrap_or(false))
+    }
+
     /// Keeps the PC from sleeping (the screen may still turn off), or lets go.
     pub fn keep_awake(on: bool) {
         let flags = if on { ES_CONTINUOUS | ES_SYSTEM_REQUIRED } else { ES_CONTINUOUS };
@@ -317,4 +346,7 @@ mod platform {
         "unknown"
     }
     pub fn keep_awake(_: bool) {}
+    pub fn metered() -> Option<bool> {
+        None
+    }
 }

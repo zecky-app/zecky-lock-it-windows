@@ -1,6 +1,6 @@
 //! The config files Go Max writes.
 
-use lockit_node::{GoMaxSettings, Listening, NodeLayout};
+use lockit_node::{GoMaxSettings, NodeLayout};
 
 fn parse(text: &str) -> toml::Table {
     text.parse().expect("the written config must be valid TOML")
@@ -26,14 +26,21 @@ fn zakura_is_pruned_private_and_cookie_protected() {
 }
 
 #[test]
-fn helping_the_network_listens_on_all_ipv4_addresses() {
+fn a_peer_target_is_written_and_the_node_stays_private() {
     let layout = NodeLayout::new("/tmp/go-max");
-    let settings = GoMaxSettings { listening: Listening::HelpTheNetwork, peer_target: Some(150), ..Default::default() };
+    let settings = GoMaxSettings { peer_target: Some(150), ..Default::default() };
     let config = parse(&settings.zakura_toml(&layout).unwrap());
-    assert_eq!(config["network"]["listen_addr"].as_str(), Some("0.0.0.0:8233"));
     assert_eq!(config["network"]["peerset_initial_target_size"].as_integer(), Some(150));
-    // RPC stays on this computer whatever the owner chooses.
+    // Go Max is private: nobody can connect in (decided 16 Nov 2026).
+    assert_eq!(config["network"]["listen_addr"].as_str(), Some("127.0.0.1:8233"));
     assert_eq!(config["rpc"]["listen_addr"].as_str(), Some("127.0.0.1:8232"));
+}
+
+#[test]
+fn the_data_counters_are_on_this_computer_only() {
+    let layout = NodeLayout::new("/tmp/go-max");
+    let config = parse(&GoMaxSettings::default().zakura_toml(&layout).unwrap());
+    assert_eq!(config["metrics"]["endpoint_addr"].as_str(), Some("127.0.0.1:8239"));
 }
 
 #[test]

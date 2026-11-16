@@ -59,6 +59,7 @@ fn ports(settings: &GoMaxSettings, wait_seconds: u64, mut waiting: impl FnMut(&s
         (settings.rpc_port, "the node's RPC"),
         (settings.wallet_port, "the wallet service"),
         (settings.p2p_port, "the Zcash network"),
+        (settings.metrics_port, "the node's data counters"),
     ] {
         let mut told = false;
         let mut waited = 0;

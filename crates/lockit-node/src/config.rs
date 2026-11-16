@@ -11,25 +11,9 @@ use toml::{Table, Value};
 
 use crate::{Error, NodeLayout, Result};
 
-/// Whether other Zcash nodes may connect to this one.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Listening {
-    /// Only outgoing connections. The node listens on this computer only, so
-    /// Windows never shows a firewall prompt and the home address is never
-    /// announced as a Zcash node. The quiet default.
-    #[default]
-    Private,
-    /// Accept connections from other nodes, to help the network. Windows will
-    /// ask once whether to allow it; the app must say so before it happens.
-    HelpTheNetwork,
-}
-
 /// The choices the owner can make about Go Max. Everything else is fixed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct GoMaxSettings {
-    /// Whether other nodes may connect in.
-    pub listening: Listening,
     /// How many outgoing peers to aim for. `None` keeps Zakura's default.
     pub peer_target: Option<u32>,
     /// Zcash P2P port (legacy stack only, as on the Mac).
@@ -47,18 +31,20 @@ pub struct GoMaxSettings {
     pub rpc_port: u16,
     /// Zaino's light-wallet (gRPC) port, loopback only.
     pub wallet_port: u16,
+    /// Zakura's metrics, loopback only: the data counters on the Go Max page.
+    pub metrics_port: u16,
 }
 
 impl Default for GoMaxSettings {
     fn default() -> Self {
         Self {
-            listening: Listening::Private,
             peer_target: None,
             initial_peers: None,
             p2p_port: 8233,
             tx_retention: RETENTION_SYNCING,
             rpc_port: 8232,
             wallet_port: 8137,
+            metrics_port: 8239,
         }
     }
 }
@@ -71,15 +57,16 @@ pub const RETENTION_SYNCING: u32 = 10_000;
 pub const RETENTION_AT_TIP: u32 = 100_000;
 
 impl GoMaxSettings {
-    /// The address other nodes would connect to.
+    /// Where the node listens for other Zcash nodes: on this computer only,
+    /// so nobody can connect in, Windows never shows a firewall prompt and
+    /// this PC's address is never announced as a Zcash node.
+    ///
+    /// Decided 16 Nov 2026: Go Max stays private; open mode only on Rock it.
     ///
     /// Always IPv4. Zakura's own default is `[::]`, which makes the node stop
     /// at start-up on a PC where IPv6 is switched off.
     fn listen_ip(&self) -> Ipv4Addr {
-        match self.listening {
-            Listening::Private => Ipv4Addr::LOCALHOST,
-            Listening::HelpTheNetwork => Ipv4Addr::UNSPECIFIED,
-        }
+        Ipv4Addr::LOCALHOST
     }
 
     fn loopback(port: u16) -> String {
@@ -89,6 +76,11 @@ impl GoMaxSettings {
     /// The address Lock it connects to for wallet data.
     pub fn wallet_address(&self) -> SocketAddr {
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, self.wallet_port))
+    }
+
+    /// The address of Zakura's metrics (Prometheus text).
+    pub fn metrics_address(&self) -> SocketAddr {
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, self.metrics_port))
     }
 
     /// The address of Zakura's RPC.
@@ -134,6 +126,10 @@ impl GoMaxSettings {
         rpc.insert("enable_cookie_auth".into(), true.into());
         rpc.insert("cookie_dir".into(), path(&layout.zakura_rpc())?);
 
+        // The data counters for the Go Max page, on this computer only.
+        let mut metrics = Table::new();
+        metrics.insert("endpoint_addr".into(), Self::loopback(self.metrics_port).into());
+
         let mut tracing = Table::new();
         tracing.insert("use_color".into(), false.into());
         tracing.insert("force_use_color".into(), false.into());
@@ -143,6 +139,7 @@ impl GoMaxSettings {
         root.insert("consensus".into(), Value::Table(consensus));
         root.insert("state".into(), Value::Table(state));
         root.insert("rpc".into(), Value::Table(rpc));
+        root.insert("metrics".into(), Value::Table(metrics));
         root.insert("tracing".into(), Value::Table(tracing));
         write_toml("zakurad.toml", root)
     }
