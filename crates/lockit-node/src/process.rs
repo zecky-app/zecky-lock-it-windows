@@ -291,6 +291,14 @@ mod platform {
     }
 
     pub fn prepare(command: &mut Command) {
+        // A program started with Ctrl-C ignored passes that on to everything
+        // it starts, and the node would then never hear the clean stop
+        // (GitHub's Windows runners start programs that way). Take it back
+        // first, so the node programs listen for Ctrl-C.
+        // SAFETY: a plain flag on this process; no handler is installed.
+        unsafe {
+            let _ = SetConsoleCtrlHandler(None, false);
+        }
         // A console of its own, without a window: needed for the clean stop.
         command.creation_flags(CREATE_NO_WINDOW.0);
     }
