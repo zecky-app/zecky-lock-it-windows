@@ -2767,6 +2767,19 @@ function renderSupport(view) {
   $("gm-wait").hidden = !support.ask;
 }
 
+/// The expected end of the first check: measured on this PC, the spam
+/// years weighed in. Rounded, because it is an estimate.
+function renderFinish(view) {
+  const running = !!view.spam_line;
+  $("fact-finish-row").hidden = !running;
+  if (!running) return;
+  if (!view.finish_at) { $("fact-finish").textContent = "Measuring speed…"; return; }
+  const left = view.finish_at - Date.now() / 1000;
+  const step = left > 3 * 3600 ? 3600 : 600;
+  const at = Math.round(view.finish_at / step) * step;
+  $("fact-finish").textContent = left < 600 ? "In a few minutes" : `About ${dateTime(at)}`;
+}
+
 function renderGoMax(view) {
   lastView = view;
   nodeMessage.textContent = "";
@@ -2775,6 +2788,8 @@ function renderGoMax(view) {
   showNote("gm-reading", view.reading_note);
   showNote("gm-quiet", view.wallet_quiet);
   showNote("gm-unsettled", view.unsettled);
+  showNote("gm-spam", view.spam_line);
+  renderFinish(view);
   renderSupport(view);
   const stopped = view.state === "off" && (view.stopped_while_starting || view.retrying);
   $("gm-stopped").hidden = !stopped;

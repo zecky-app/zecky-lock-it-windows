@@ -760,6 +760,7 @@
         <p class="lead center" id="node-lead">Your own Zcash node, on this PC. It needs about 30 GB free; the first check takes from about 14 hours to a few days, depending on the computer.</p>
         <div class="card" id="node-facts" hidden>
           <div class="line"><span>Checked up to</span><strong id="fact-height"></strong></div>
+          <div class="line" id="fact-finish-row" hidden><span>Expected finish</span><strong id="fact-finish"></strong></div>
           <div class="line"><span>Peers</span><strong id="fact-peers"></strong></div>
           <div class="line"><span>Wallet service</span><strong id="fact-wallet"></strong></div>
           <div class="line"><span>On disk</span><strong id="fact-disk"></strong></div>
@@ -768,6 +769,7 @@
             <p class="onion" id="fact-onion-address"></p>
           </div>
         </div>
+        <p class="small quiet gm-spam" id="gm-spam" hidden></p>
         <p class="gm-note" id="gm-reading" hidden></p>
         <p class="gm-note" id="gm-quiet" hidden></p>
         <p class="gm-note" id="gm-unsettled" hidden></p>

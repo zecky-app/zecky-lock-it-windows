@@ -934,3 +934,5 @@ select.input { appearance: auto; }
 .gm-option { align-self: center; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); cursor: pointer; }
 .gm-option input { accent-color: var(--gold); }
 #gm-check-link { align-self: center; font-size: 12px; }
+
+.gm-spam { margin: 0; line-height: 1.45; }

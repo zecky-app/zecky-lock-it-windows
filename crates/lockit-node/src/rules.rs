@@ -132,6 +132,101 @@ pub mod reading {
     }
 }
 
+/// How long the first check still takes, with the spam years counted in.
+///
+/// Speed is measured on this PC: blocks checked in the last hour. Blocks
+/// are not equal, though. From mid-2022 to early 2023 someone filled most
+/// blocks with spam (shielded transactions with hundreds of outputs, up to
+/// 2 MB a block), and the chain grew from about 30 GB to well over 100 GB.
+/// So each stretch of the chain gets a weight, roughly its work per block,
+/// and the estimate measures speed in that work rather than in blocks. A
+/// node in the spam years then knows the rest will go faster, and a node
+/// before them knows they are coming. Only the ratios are guessed; the
+/// speed is this PC's own, and the estimate corrects itself as it goes.
+pub mod pace {
+    use std::collections::VecDeque;
+
+    /// The spam years, roughly: from mid-June 2022 (shortly after NU5 at
+    /// 1,687,104) until the spam faded in 2023.
+    pub const SPAM_START: u32 = 1_710_000;
+    /// See [`SPAM_START`].
+    pub const SPAM_END: u32 = 2_100_000;
+    /// Canopy: before it, blocks are taken on Zakura's built-in checkpoints.
+    const CANOPY: u32 = 1_046_400;
+
+    /// From this height on, this much work per block (relative).
+    const STRETCHES: [(u32, f64); 4] = [(0, 1.0), (CANOPY, 3.0), (SPAM_START, 20.0), (SPAM_END, 4.0)];
+
+    /// The work to check every block below `height`.
+    pub fn work(height: u32) -> f64 {
+        let mut total = 0.0;
+        for (i, &(from, weight)) in STRETCHES.iter().enumerate() {
+            if height <= from {
+                break;
+            }
+            let until = STRETCHES.get(i + 1).map_or(height, |next| next.0.min(height));
+            total += f64::from(until - from) * weight;
+        }
+        total
+    }
+
+    /// Speed is taken over the last hour…
+    pub const WINDOW_SECONDS: i64 = 3_600;
+    /// …and only once there is a quarter of an hour of it.
+    pub const MIN_SECONDS: i64 = 900;
+
+    /// The node's height over the last hour.
+    #[derive(Default)]
+    pub struct Samples {
+        list: VecDeque<(i64, u32)>,
+    }
+
+    impl Samples {
+        /// Note the height now. A lower height than before (the node
+        /// started over) begins a fresh measurement.
+        pub fn add(&mut self, now: i64, height: u32) {
+            if self.list.back().is_some_and(|&(_, last)| height < last) {
+                self.list.clear();
+            }
+            self.list.push_back((now, height));
+            while self.list.front().is_some_and(|&(at, _)| now - at > WINDOW_SECONDS) {
+                self.list.pop_front();
+            }
+        }
+
+        /// Start over (Go Max was switched off or paused).
+        pub fn clear(&mut self) {
+            self.list.clear();
+        }
+
+        /// When the node should reach `tip`, in Unix seconds: `None` while
+        /// there is too little to go on or nothing moved.
+        pub fn finish(&self, tip: u32) -> Option<i64> {
+            let &(first_at, first) = self.list.front()?;
+            let &(last_at, last) = self.list.back()?;
+            let seconds = last_at - first_at;
+            if seconds < MIN_SECONDS || last <= first || tip <= last {
+                return None;
+            }
+            let speed = (work(last) - work(first)) / seconds as f64;
+            let left = (work(tip) - work(last)) / speed;
+            Some(last_at + left.round() as i64)
+        }
+    }
+
+    /// The line about the spam years, while the first check runs.
+    pub fn spam_line(height: u32) -> String {
+        if height < SPAM_START {
+            "Ahead: the spam years, blocks 1,710,000 to 2,100,000 (2022–23). Most blocks there are full of spam, so this is the slowest stretch. The expected finish already counts it.".into()
+        } else if height < SPAM_END {
+            let done = (height - SPAM_START) * 100 / (SPAM_END - SPAM_START);
+            format!("Now in the spam years, blocks 1,710,000 to 2,100,000 (2022–23): {done}% of this stretch done. It is the slowest part; after block 2,100,000 it goes much faster.")
+        } else {
+            "The spam years are done. The rest goes much faster.".into()
+        }
+    }
+}
+
 /// The words, the same as on Lock it Mac (Windows: "this PC").
 pub mod words {
     fn grouped(n: u32) -> String {
@@ -279,6 +374,43 @@ mod tests {
     const NOW: i64 = 1_794_600_000;
 
     // ---- 6. No early "needs an update" during the first sync ----
+
+    #[test]
+    fn spam_years_weigh_more_and_the_finish_counts_them() {
+        use super::pace::*;
+        assert_eq!(work(0), 0.0);
+        // A spam block is much more work than one before or after.
+        assert!(work(SPAM_START + 1) - work(SPAM_START) > 4.0 * (work(SPAM_END + 1) - work(SPAM_END)));
+        // 7,200 blocks an hour in the spam years, as on a tester's laptop.
+        let mut s = Samples::default();
+        let t = 1_763_200_000;
+        s.add(t, 1_855_000);
+        assert_eq!(s.finish(3_560_000), None, "one sample is not a speed");
+        s.add(t + 3_600, 1_862_200);
+        let finish = s.finish(3_560_000).unwrap();
+        // At spam speed the rest would take (3,560,000 - 1,862,200) / 7,200
+        // = 236 hours; counted with the faster rest it is far less.
+        let hours = (finish - (t + 3_600)) / 3_600;
+        assert!(hours > 30 && hours < 236, "{hours} hours");
+        // The spam that is left alone: 237,800 blocks at 7,200 an hour.
+        let spam_left = f64::from(SPAM_END - 1_862_200) / 7_200.0;
+        assert!(hours as f64 > spam_left, "the spam left must fit in");
+        // Nothing moved, or the node started over: no estimate.
+        let mut still = Samples::default();
+        still.add(t, 100);
+        still.add(t + 1_000, 100);
+        assert_eq!(still.finish(200), None);
+        still.add(t + 2_000, 50);
+        assert_eq!(still.finish(200), None);
+    }
+
+    #[test]
+    fn the_spam_line_says_where_the_node_is() {
+        use super::pace::spam_line;
+        assert!(spam_line(1_000_000).starts_with("Ahead: the spam years"));
+        assert!(spam_line(1_905_000).contains(": 50% of this stretch done"));
+        assert!(spam_line(2_200_000).starts_with("The spam years are done"));
+    }
 
     #[test]
     fn the_estimate_counts_only_near_the_tip() {

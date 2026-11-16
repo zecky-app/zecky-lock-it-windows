@@ -13,7 +13,7 @@ use std::sync::{
     Mutex,
 };
 
-use lockit_node::rules::{support, words};
+use lockit_node::rules::{pace, support, words};
 use lockit_node::{GoMax, GoMaxSettings, NodeLayout, NodePrograms, NodeStatus};
 use lockit_tor::{OnionAccess, OnionState};
 use serde::Serialize;
@@ -76,6 +76,11 @@ pub enum GoMaxView {
         unsettled: Option<String>,
         /// This node version and the network's height.
         support: SupportView,
+        /// While the first check runs: when it should be done (Unix
+        /// seconds), once there is a quarter of an hour of speed to go on.
+        finish_at: Option<i64>,
+        /// While the first check runs: where it stands against the spam years.
+        spam_line: Option<String>,
     },
     /// Stopping.
     Stopping,
@@ -218,6 +223,8 @@ pub struct GoMaxSlot {
     problem: Mutex<Option<String>>,
     /// When the node first reached the newest block, for the half-minute hold.
     at_tip_since: Mutex<Option<std::time::Instant>>,
+    /// The node's height over the last hour, for the expected finish.
+    pace: Mutex<pace::Samples>,
 }
 
 fn programs(app: &AppHandle) -> Result<NodePrograms, String> {
@@ -273,19 +280,28 @@ pub fn go_max_view(app: AppHandle, slot: State<'_, GoMaxSlot>) -> GoMaxView {
     };
     match guard.as_mut() {
         Some(node) => match node.check() {
-            Ok(()) => GoMaxView::On {
+            Ok(()) => {
+                let status = node.status().ok();
+                // The network's height: the server's, else the clock's.
+                let heard = crate::wallet::network_heard(&app);
+                let tip = if heard > 0 { heard } else { support::estimated_tip(now()) };
+                let (finish_at, spam_line) = status.as_ref().map_or((None, None), |s| slot.first_check(s, tip));
+                GoMaxView::On {
                 reading_note: crate::wallet::node_notes(&app).0,
                 wallet_quiet: crate::wallet::node_notes(&app).1.then(|| words::WALLET_QUIET.to_owned()),
                 unsettled: crate::wallet::node_notes(&app).2,
                 support: support.clone(),
-                status: node.status().ok(),
+                status,
+                finish_at,
+                spam_line,
                 wallet_ready: node.wallet_ready(),
                 wallet_note: node.wallet_service_note(),
                 onion: slot.onion.lock().ok().and_then(|guard| {
                     guard.as_ref().map(|onion| OnionView { address: onion.address().to_owned(), state: onion.state() })
                 }),
                 onion_problem: get(&slot.onion_problem),
-            },
+                }
+            }
             Err(error) => {
                 // A program ended by itself: stop the other one (off the
                 // window's thread, it can take a while) and say why.
@@ -451,6 +467,7 @@ pub(crate) fn stop(app: &AppHandle) -> Result<(), String> {
     if slot.busy.swap(true, Ordering::SeqCst) {
         return Err("Go Max is busy".into());
     }
+    slot.forget_pace();
     let node = slot.node.lock().ok().and_then(|mut guard| guard.take());
     let Some(mut node) = node else {
         slot.busy.store(false, Ordering::SeqCst);
@@ -514,10 +531,38 @@ impl GoMaxSlot {
         match self.status_now() {
             Some(status) => {
                 let network = status.estimated_height.min(support::plausible_max(now()));
-                status.progress < 0.999 || status.height.saturating_add(words::UP_TO_DATE_BLOCKS) < network
+                let catching_up =
+                    status.progress < 0.999 || status.height.saturating_add(words::UP_TO_DATE_BLOCKS) < network;
+                // Every 15 seconds from the watcher: the speed behind the
+                // expected finish, also while the page is closed.
+                if let Ok(mut pace) = self.pace.lock() {
+                    if catching_up {
+                        pace.add(now(), status.height);
+                    } else {
+                        pace.clear();
+                    }
+                }
+                catching_up
             }
             None => self.node.lock().map(|g| g.is_some()).unwrap_or(false),
         }
+    }
+
+    /// Forget the measured speed: the node was switched off or paused.
+    pub fn forget_pace(&self) {
+        if let Ok(mut pace) = self.pace.lock() {
+            pace.clear();
+        }
+    }
+
+    /// The expected finish and the spam-years line, while the first check
+    /// runs. `tip` is the network's height.
+    fn first_check(&self, status: &NodeStatus, tip: u32) -> (Option<i64>, Option<String>) {
+        if tip == 0 || status.height.saturating_add(words::UP_TO_DATE_BLOCKS) >= tip {
+            return (None, None);
+        }
+        let finish = self.pace.lock().ok().and_then(|pace| pace.finish(tip));
+        (finish, Some(pace::spam_line(status.height)))
     }
 
     /// The node's numbers now, if it runs and answers. Never waits.
