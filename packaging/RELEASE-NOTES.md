@@ -1,4 +1,4 @@
-# Zecky Lock it for Windows 0.1.0 beta 3 (draft)
+# Zecky Lock it for Windows 0.1.0 beta 3
 
 A calm, self-custody Zcash wallet for Windows, with Go Max: your own pruned Zcash
 node, optional, on your PC. Free and open source (Apache-2.0).

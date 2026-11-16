@@ -1,4 +1,4 @@
-Zecky Lock it for Windows - 0.1.0 beta 2
+Zecky Lock it for Windows - 0.1.0 beta 3
 
 A calm, self-custody Zcash wallet. Your 24 words stay on this PC, sealed by
 the keys you choose (Windows Hello, a passphrase, a Zecky code, a security
