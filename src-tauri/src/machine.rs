@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+use lockit_node::rules::battery;
+
 use crate::go_max::GoMaxSlot;
 
 const GB: u64 = 1_000_000_000;
@@ -40,6 +42,9 @@ pub struct ComputerCheck {
     metered: Option<bool>,
     /// What the first sync downloads, roughly, in GB.
     download_gb: u64,
+    /// The node's data is already here (on battery, an up-to-date node keeps
+    /// running).
+    has_node_data: bool,
 }
 
 /// What a first sync downloads, roughly: the whole chain passes through the
@@ -56,6 +61,27 @@ struct Prefs {
     checked: bool,
     /// Where the node's data is kept, if not in the default place.
     data_dir: Option<std::path::PathBuf>,
+    /// The node with this data has been up to date at least once: a start on
+    /// battery need not wait for the charger.
+    ever_up_to_date: bool,
+}
+
+/// Note that the node is up to date (written once).
+fn mark_up_to_date(app: &AppHandle) {
+    let mut prefs = load(app);
+    if !prefs.ever_up_to_date {
+        prefs.ever_up_to_date = true;
+        save(app, &prefs);
+    }
+}
+
+/// The node's data is gone or starts over: its first check is heavy again.
+pub(crate) fn forget_up_to_date(app: &AppHandle) {
+    let mut prefs = load(app);
+    if prefs.ever_up_to_date {
+        prefs.ever_up_to_date = false;
+        save(app, &prefs);
+    }
 }
 
 /// The default place for the node's data: next to the wallet, on the system
@@ -219,6 +245,7 @@ pub fn go_max_check_computer(app: AppHandle) -> ComputerCheck {
         on_battery,
         metered: platform::metered(),
         download_gb: DOWNLOAD_GB,
+        has_node_data: used > 0,
     }
 }
 
@@ -292,26 +319,39 @@ impl PowerSlot {
     }
 }
 
-/// Whether a start should wait because the PC is on battery.
+/// Whether a start should wait because the PC is on battery: only for a node
+/// that has never been up to date.
 pub fn hold_on_battery(app: &AppHandle) -> bool {
-    plugged_in_only(app) && platform::power().1
+    plugged_in_only(app) && battery::hold_at_start(platform::power().1, load(app).ever_up_to_date)
 }
 
 /// Watches power every 15 seconds on one thread: keeps the PC awake while
-/// the node catches up (the request belongs to this thread), pauses Go Max
-/// on battery when the owner wants that, and carries on at the charger.
+/// the node catches up (the request belongs to this thread), pauses a
+/// catching-up node after about a minute on battery when the owner wants
+/// that, and carries on at the charger. Up to date, the node keeps running.
 pub fn watch(app: AppHandle) {
     std::thread::spawn(move || {
         let mut awake = false;
+        let mut on_battery_since: Option<i64> = None;
         loop {
             let slot = app.state::<GoMaxSlot>();
             let power = app.state::<PowerSlot>();
             let on_battery = platform::power().1;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64);
+            on_battery_since = if on_battery { on_battery_since.or(Some(now)) } else { None };
             let running = slot.running();
+            let settled = running && !slot.busy_now();
+            // Asked once a look: it also feeds the expected finish.
+            let catching_up = running && slot.catching_up();
+            if settled && !catching_up {
+                mark_up_to_date(&app);
+            }
 
             // Never while Go Max is between steps (starting, stopping, or
             // moving its data): only a running node is paused.
-            if running && !slot.busy_now() && on_battery && plugged_in_only(&app) {
+            if settled && plugged_in_only(&app) && battery::pause(catching_up, on_battery_since, now) {
                 power.paused.store(true, Ordering::SeqCst);
                 let _ = crate::go_max::stop(&app);
             } else if power.paused() && !on_battery && !slot.busy_now() {
@@ -326,7 +366,7 @@ pub fn watch(app: AppHandle) {
 
             // Awake while the node checks the chain; let go when it is up to
             // date, paused or off (as Lock it Mac's beginActivity).
-            let want = running && slot.catching_up();
+            let want = catching_up;
             if want != awake {
                 platform::keep_awake(want);
                 awake = want;

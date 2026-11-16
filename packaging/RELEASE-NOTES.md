@@ -36,6 +36,9 @@ Needs Windows 10 (1903+) or 11, x64. Go Max needs about 30 GB free.
   and recommends one: an SSD with room to spare. Change it later from "Check this
   computer and drive" while Go Max is off: move the node's data (copied and checked,
   then the old copy is removed) or start fresh on the new drive.
+- **Battery, like Lock it Mac.** "Only sync while plugged in" now pauses only while
+  the node is catching up, and only after about a minute on battery, so a short
+  unplug changes nothing. Up to date, the node keeps running on battery.
 - **Go Max is private, and says why.** Your node connects to other Zcash nodes but
   accepts no connections, so this PC is never announced as a Zcash node. "What is
   this?" under the switch explains it, and where to help the network more: Zecky

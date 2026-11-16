@@ -61,10 +61,12 @@ impl DataUse {
     /// Block data removed after it was checked: everything checked and
     /// stored minus what is still kept on this PC. Never below zero.
     ///
-    /// Zakura counts stored block data only on its newer network stack and
-    /// with an extra build option; Go Max runs the long-standing stack, so
-    /// that counter usually stays at zero. Then what was downloaded stands
-    /// in for it: during a first sync nearly all of it is block data.
+    /// `sync.block.payload.committed.bytes` never counts on Go Max: Zakura
+    /// counts it only in its newer network stack and with the `sync-metrics`
+    /// build option, and Go Max runs `p2p_stack = "legacy"` with the standard
+    /// build. So in practice Removed = Downloaded − Kept: during a first sync
+    /// nearly everything downloaded is block data. The counter is still used
+    /// if a future node build reports it.
     pub fn removed(&self, kept: u64) -> u64 {
         let checked = if self.committed > 0 { self.committed } else { self.downloaded };
         checked.saturating_sub(kept)

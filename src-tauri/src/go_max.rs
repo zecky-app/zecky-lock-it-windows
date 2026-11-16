@@ -344,6 +344,7 @@ pub fn go_max_set_data_drive(app: AppHandle, slot: State<'_, GoMaxSlot>, root: S
         let result = if has_data { std::fs::remove_dir_all(&from) } else { Ok(()) };
         if result.is_ok() {
             crate::machine::set_data_dir(&app, &to);
+            crate::machine::forget_up_to_date(&app);
         }
         done(&slot);
         return result.map_err(|e| format!("the old node data could not be removed: {e}"));
@@ -645,10 +646,11 @@ pub fn go_max_remove_data(app: AppHandle, slot: State<'_, GoMaxSlot>) -> Result<
     if root.exists() {
         std::fs::remove_dir_all(&root).map_err(|e| format!("the node's data could not be removed: {e}"))?;
     }
-    // The totals went with the folder.
+    // The totals went with the folder, and the next start is a first check.
     if let Ok(mut tally) = slot.data.lock() {
         *tally = DataTally::default();
     }
+    crate::machine::forget_up_to_date(&app);
     slot.stopped_while_starting.store(false, Ordering::SeqCst);
     set(&slot.problem, None);
     Ok(())

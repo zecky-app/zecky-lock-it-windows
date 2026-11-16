@@ -74,8 +74,10 @@ Go Max is slow
   keeps the PC awake while Go Max catches up. Your wallet works meanwhile.
 
 Go Max says "Paused while on battery"
-  "Only sync while plugged in" is on (the default on laptops). Connect the
-  charger and it carries on, or switch the option off on the Go Max page.
+  "Only sync while plugged in" is on (the default on laptops). It pauses
+  only while the node is catching up, after about a minute on battery; a
+  node that is up to date keeps running. Connect the charger and it carries
+  on, or switch the option off on the Go Max page.
 
 Go Max stopped while starting
   Press Try again. Still not working? Quit Lock it, open it again; if it

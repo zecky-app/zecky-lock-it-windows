@@ -69,6 +69,16 @@ async def main():
                 t.check(f"start not blocked (metered {metered})", await pg.is_enabled("#pc-start"))
                 if metered:
                     await pg.screenshot(path="/tmp/data-check.png")
+            # On battery: a node with data keeps going up to date (no warning);
+            # a first start says plug in.
+            for has_data, want, mark in [(True, "On battery. Catching up waits for the charger; up to date, the node keeps running.", "ok"),
+                                         (False, "On battery: plug in to sync.", "warn")]:
+                check = dict(good, has_battery=True, on_battery=True, has_node_data=has_data)
+                pg = await t.page_with(b, base, {"goMax": OFF_VIEW, "check": check, "prefs": dict(prefs, has_battery=True)})
+                await pg.click("#go-max-coin"); await pg.wait_for_timeout(300)
+                await pg.click("#node-toggle"); await pg.wait_for_timeout(300)
+                marks = await pg.eval_on_selector_all("#pc-lines li", "ls => ls.filter(l => l.textContent.includes('battery')).map(l => [l.textContent, l.querySelector('.pc-mark').className])")
+                t.check(f"battery line (data {has_data})", len(marks) == 1 and want in marks[0][0] and marks[0][1] == f"pc-mark {mark}", marks)
             # The overview, with the numbers as given.
             pg = await t.page_with(b, base, {"goMax": t.on(STATUS, data=DATA), "check": good, "prefs": dict(prefs, checked=True)})
             await pg.click("#go-max-coin"); await pg.wait_for_timeout(400)

@@ -2629,7 +2629,7 @@ const CHAPTERS = [
   ], [
     "Until the node is up to date, Lock it keeps using your server. When a wallet still has older blocks to check, Lock it reads those from your server.",
     "Go Max is private. The node connects to other Zcash nodes on the internet, like every node, and passes new blocks and transactions on to them; they see this PC's internet address, never your wallet, addresses or balance. It accepts no connections from outside, so this PC is never announced as a Zcash node. To help the network more, Zecky Rock it runs a full node on an Umbrel at home, always on.",
-    "It runs while Lock it is open. While it catches up, Lock it keeps the PC from sleeping (the screen may still turn off); on a laptop it can pause on battery (Only sync while plugged in). Its files live in %LOCALAPPDATA%\\app.zecky.lockit\\go-max, or on the drive you choose in "Check this computer and drive": Lock it recommends an SSD with room to spare.",
+    "It runs while Lock it is open. While it catches up, Lock it keeps the PC from sleeping (the screen may still turn off). With “Only sync while plugged in” on a laptop, catching up waits for the charger, while a node that is up to date keeps running on battery. Its files live in %LOCALAPPDATA%\\app.zecky.lockit\\go-max, or on the drive you choose in “Check this computer and drive”: Lock it recommends an SSD with room to spare.",
     "Before the first start, Lock it checks this PC's free space, memory, drive, power and whether the connection is metered. The check is read from Windows on this PC; nothing is sent.",
   ]],
   ["What others can see", "The server.", [
@@ -3072,9 +3072,11 @@ async function showComputerCheck(starting) {
     ? pcLine("warn", `Data: this connection is metered. The first sync downloads about ${c.download_gb} GB; better to use one without a data limit.`)
     : pcLine("ok", `Data: the first sync downloads about ${c.download_gb} GB. Use a connection without a data limit.`));
   if (c.has_battery) {
-    lines.append(c.on_battery
-      ? pcLine("warn", "On battery: plug in to sync.")
-      : pcLine("ok", "Plugged in."));
+    lines.append(!c.on_battery
+      ? pcLine("ok", "Plugged in.")
+      : c.has_node_data
+        ? pcLine("ok", "On battery. Catching up waits for the charger; up to date, the node keeps running.")
+        : pcLine("warn", "On battery: plug in to sync."));
   }
   await renderDrives(starting);
   pcCheckStarts = starting && lastView && lastView.state === "off" && !lastView.paused;

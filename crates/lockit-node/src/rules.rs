@@ -132,6 +132,28 @@ pub mod reading {
     }
 }
 
+/// "Only sync while plugged in": when Go Max waits for the charger. The same
+/// rule as Lock it Mac (decided 16 Nov 2026). Only the heavy part waits: a
+/// node that is up to date is light (a block every 75 seconds) and keeps
+/// running on battery. A short unplug changes nothing.
+pub mod battery {
+    /// On battery this long, in a row, before a catching-up node pauses.
+    pub const PAUSE_AFTER_SECONDS: i64 = 60;
+
+    /// Whether to pause the node now: it is checking or catching up, and the
+    /// PC has been on battery for about a minute. `on_battery_since` is when
+    /// the PC went on battery (`None`: on the charger).
+    pub fn pause(catching_up: bool, on_battery_since: Option<i64>, now: i64) -> bool {
+        catching_up && on_battery_since.is_some_and(|since| now - since >= PAUSE_AFTER_SECONDS)
+    }
+
+    /// Whether a start on battery waits for the charger: only for a node that
+    /// has never been up to date (its first check is all heavy work).
+    pub fn hold_at_start(on_battery: bool, ever_up_to_date: bool) -> bool {
+        on_battery && !ever_up_to_date
+    }
+}
+
 /// How long the first check still takes, with the spam years counted in.
 ///
 /// Speed is measured on this PC: blocks checked in the last hour. Blocks
@@ -374,6 +396,24 @@ mod tests {
     const NOW: i64 = 1_794_600_000;
 
     // ---- 6. No early "needs an update" during the first sync ----
+
+    #[test]
+    fn only_catching_up_waits_for_the_charger_and_not_at_once() {
+        use super::battery::*;
+        let t = 1_000;
+        // Up to date: keeps running on battery, however long.
+        assert!(!pause(false, Some(t), t + 3_600));
+        // Catching up: a short unplug changes nothing; after a minute it pauses.
+        assert!(!pause(true, Some(t), t + 15));
+        assert!(!pause(true, Some(t), t + 59));
+        assert!(pause(true, Some(t), t + 60));
+        // On the charger: never.
+        assert!(!pause(true, None, t));
+        // At start: wait only if the node was never up to date.
+        assert!(hold_at_start(true, false));
+        assert!(!hold_at_start(true, true));
+        assert!(!hold_at_start(false, false));
+    }
 
     #[test]
     fn spam_years_weigh_more_and_the_finish_counts_them() {
