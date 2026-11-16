@@ -122,3 +122,71 @@ mod platform {
         Ok(free_to_caller)
     }
 }
+
+/// Where to keep the node: one drive, as Lock it sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DriveFacts {
+    /// Free space now, counting the node's own data if it is already there.
+    pub free: u64,
+    /// `Some(true)` for an SSD, `Some(false)` for a hard drive, `None` if
+    /// Windows did not say.
+    pub ssd: Option<bool>,
+    /// The drive Windows runs from (usually C:).
+    pub system: bool,
+}
+
+/// Room to spare: twice what a first start needs.
+pub const ROOMY_BYTES: u64 = 2 * FIRST_START_BYTES;
+
+/// Whether the node fits on this drive.
+pub fn fits(drive: &DriveFacts) -> bool {
+    drive.free >= FIRST_START_BYTES
+}
+
+/// The drive Lock it recommends, as an index into `drives`: one the node fits
+/// on, an SSD before an unknown drive before a hard drive, then one with room
+/// to spare, then the system drive (nothing to set up), then the most free
+/// space. `None` when the node fits nowhere.
+pub fn recommend(drives: &[DriveFacts]) -> Option<usize> {
+    drives
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| fits(d))
+        .max_by_key(|(_, d)| {
+            let speed = match d.ssd {
+                Some(true) => 2,
+                None => 1,
+                Some(false) => 0,
+            };
+            (speed, d.free >= ROOMY_BYTES, d.system, d.free)
+        })
+        .map(|(i, _)| i)
+}
+
+#[cfg(test)]
+mod drive_tests {
+    use super::*;
+
+    fn drive(free_gb: u64, ssd: Option<bool>, system: bool) -> DriveFacts {
+        DriveFacts { free: free_gb * GB, ssd, system }
+    }
+
+    #[test]
+    fn an_ssd_with_room_is_recommended() {
+        // C: is a roomy SSD: keep it simple.
+        assert_eq!(recommend(&[drive(200, Some(true), true), drive(900, Some(false), false)]), Some(0));
+        // C: SSD nearly full, D: hard drive with room: the node fits on D: only.
+        assert_eq!(recommend(&[drive(20, Some(true), true), drive(900, Some(false), false)]), Some(1));
+        // C: SSD that only just fits, D: SSD with room: D:.
+        assert_eq!(recommend(&[drive(40, Some(true), true), drive(300, Some(true), false)]), Some(1));
+        // C: hard drive, D: SSD with room: the SSD.
+        assert_eq!(recommend(&[drive(500, Some(false), true), drive(100, Some(true), false)]), Some(1));
+        // Two roomy SSDs besides C:: the one with more space.
+        assert_eq!(
+            recommend(&[drive(10, Some(true), true), drive(100, Some(true), false), drive(400, Some(true), false)]),
+            Some(2)
+        );
+        // Nowhere to fit.
+        assert_eq!(recommend(&[drive(10, Some(true), true), drive(29, None, false)]), None);
+    }
+}

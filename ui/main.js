@@ -2629,7 +2629,7 @@ const CHAPTERS = [
   ], [
     "Until the node is up to date, Lock it keeps using your server. When a wallet still has older blocks to check, Lock it reads those from your server.",
     "Go Max is private. The node connects to other Zcash nodes on the internet, like every node, and passes new blocks and transactions on to them; they see this PC's internet address, never your wallet, addresses or balance. It accepts no connections from outside, so this PC is never announced as a Zcash node. To help the network more, Zecky Rock it runs a full node on an Umbrel at home, always on.",
-    "It runs while Lock it is open. While it catches up, Lock it keeps the PC from sleeping (the screen may still turn off); on a laptop it can pause on battery (Only sync while plugged in). Its files live in %LOCALAPPDATA%\\app.zecky.lockit\\go-max.",
+    "It runs while Lock it is open. While it catches up, Lock it keeps the PC from sleeping (the screen may still turn off); on a laptop it can pause on battery (Only sync while plugged in). Its files live in %LOCALAPPDATA%\\app.zecky.lockit\\go-max, or on the drive you choose in "Check this computer and drive": Lock it recommends an SSD with room to spare.",
     "Before the first start, Lock it checks this PC's free space, memory, drive, power and whether the connection is metered. The check is read from Windows on this PC; nothing is sent.",
   ]],
   ["What others can see", "The server.", [
@@ -2837,7 +2837,8 @@ function renderGoMax(view) {
   if (view.state === "starting" || view.state === "stopping") {
     setRing(view.state, 1);
     nodePercent.textContent = "";
-    nodeState.textContent = view.state === "starting" ? "Starting" : "Stopping";
+    const moving = view.state === "starting" && (view.step || "").startsWith("Moving");
+    nodeState.textContent = moving ? "Moving" : view.state === "starting" ? "Starting" : "Stopping";
     nodeLead.textContent = view.state === "starting" ? `${view.step}.` : "Letting the node finish its work.";
     nodeFacts.hidden = true;
     nodeToggle.disabled = true;
@@ -3075,12 +3076,89 @@ async function showComputerCheck(starting) {
       ? pcLine("warn", "On battery: plug in to sync.")
       : pcLine("ok", "Plugged in."));
   }
+  await renderDrives(starting);
   pcCheckStarts = starting && lastView && lastView.state === "off" && !lastView.paused;
   $("pc-start").hidden = !pcCheckStarts && !(lastView && lastView.state === "off" && !lastView.paused);
   $("pc-start").disabled = !c.enough_space;
   $("pc-not-now").textContent = $("pc-start").hidden ? "Close" : "Not now";
   $("pc-check").hidden = false;
 }
+
+/// Where to keep the node: this PC's internal drives, one recommended. The
+/// place changes only while Go Max is off; with data already there, the
+/// owner chooses to move it or start fresh.
+let movingTo = null;
+async function renderDrives(starting) {
+  let choice;
+  try { choice = await invoke("go_max_drives"); } catch { $("pc-where").hidden = true; return; }
+  $("pc-where").hidden = false;
+  $("pc-move").hidden = true;
+  movingTo = null;
+  const box = $("pc-drives");
+  box.replaceChildren();
+  for (const d of choice.drives) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pc-drive" + (d.current ? " on" : "");
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", d.current ? "true" : "false");
+    b.disabled = choice.running || (!d.fits && !d.current);
+    const kind = d.disk === "ssd" ? "SSD" : d.disk === "hdd" ? "Hard drive" : "Drive";
+    const name = document.createElement("span");
+    name.className = "pc-drive-name";
+    name.textContent = `${d.root.replace(/\\$/, "")}${d.label ? ` ${d.label}` : ""}`;
+    const facts = document.createElement("span");
+    facts.className = "pc-drive-facts";
+    facts.textContent = d.fits || d.current ? `${kind} · ${numbers.format(d.free_gb)} GB free` : `${kind} · ${numbers.format(d.free_gb)} GB free · not enough space`;
+    b.append(name, facts);
+    if (d.recommended) {
+      const tag = document.createElement("span");
+      tag.className = "pc-drive-tag";
+      tag.textContent = "Recommended";
+      b.append(tag);
+    }
+    b.addEventListener("click", () => chooseDrive(d, choice, starting));
+    box.append(b);
+  }
+  const note = $("pc-where-note");
+  const rec = choice.drives.find((d) => d.recommended);
+  if (choice.running) {
+    note.textContent = "Switch Go Max off to change where the node is kept.";
+  } else if (rec) {
+    note.textContent = rec.disk === "ssd"
+      ? "Recommended: an SSD with room to spare. A node checks blocks fastest there."
+      : "Recommended: the drive with the most room. An SSD would be faster, if this PC has one with space.";
+  } else {
+    note.textContent = "No drive has about 30 GB free. Free up space on one of them first.";
+  }
+  note.hidden = false;
+}
+
+async function chooseDrive(d, choice, starting) {
+  if (d.current || choice.running) return;
+  const here = choice.drives.find((x) => x.current);
+  if (choice.data_gb > 0) {
+    movingTo = d.root;
+    $("pc-move-text").textContent = `The node's data (${choice.data_gb.toFixed(1)} GB) is on ${here ? here.root.replace(/\\$/, "") : "this PC"}. Move it: it is copied to ${d.root.replace(/\\$/, "")} and checked, then the old copy is removed, and the node carries on where it was. Start fresh: the old data is removed, and the first check starts again on ${d.root.replace(/\\$/, "")}.`;
+    $("pc-move").hidden = false;
+    return;
+  }
+  try { await invoke("go_max_set_data_drive", { root: d.root, mode: "fresh" }); } catch (problem) { say(nodeMessage, describe(problem)); }
+  showComputerCheck(starting && pcCheckStarts);
+}
+
+async function applyMove(mode) {
+  if (!movingTo) return;
+  const root = movingTo;
+  movingTo = null;
+  try {
+    await invoke("go_max_set_data_drive", { root, mode });
+  } catch (problem) { say(nodeMessage, describe(problem)); }
+  if (mode === "move") { $("pc-check").hidden = true; refreshGoMax(); }
+  else showComputerCheck(pcCheckStarts);
+}
+$("pc-move-it").addEventListener("click", () => applyMove("move"));
+$("pc-fresh").addEventListener("click", () => applyMove("fresh"));
 
 $("pc-start").addEventListener("click", async () => {
   $("pc-check").hidden = true;

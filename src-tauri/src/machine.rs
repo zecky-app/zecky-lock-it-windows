@@ -54,6 +54,124 @@ struct Prefs {
     plugged_in_only: Option<bool>,
     /// The check was shown once before the first switch-on.
     checked: bool,
+    /// Where the node's data is kept, if not in the default place.
+    data_dir: Option<std::path::PathBuf>,
+}
+
+/// The default place for the node's data: next to the wallet, on the system
+/// drive.
+fn default_data_dir(app: &AppHandle) -> std::path::PathBuf {
+    app.path().app_local_data_dir().unwrap_or_default().join("go-max")
+}
+
+/// Where the node's data is kept now.
+pub(crate) fn data_dir(app: &AppHandle) -> std::path::PathBuf {
+    load(app).data_dir.unwrap_or_else(|| default_data_dir(app))
+}
+
+/// Remembers where the node's data is kept (`None`: the default place).
+pub(crate) fn set_data_dir(app: &AppHandle, dir: &std::path::Path) {
+    let mut prefs = load(app);
+    prefs.data_dir = (dir != default_data_dir(app)).then(|| dir.to_path_buf());
+    save(app, &prefs);
+}
+
+/// Where the node's data would go on the drive `root`: the default place on
+/// the system drive, else a folder of its own at the top of that drive.
+pub(crate) fn data_dir_on(app: &AppHandle, root: &str) -> std::path::PathBuf {
+    if same_drive(&default_data_dir(app), root) {
+        default_data_dir(app)
+    } else {
+        std::path::Path::new(root).join("ZeckyLockIt").join("go-max")
+    }
+}
+
+fn same_drive(path: &std::path::Path, root: &str) -> bool {
+    let path = path.to_string_lossy().to_ascii_lowercase();
+    let root = root.to_ascii_lowercase();
+    path.starts_with(&root) || (root == "/" && path.starts_with('/'))
+}
+
+/// One drive in the list, as the sheet shows it.
+#[derive(Serialize)]
+pub struct DriveView {
+    /// "C:\", as Windows names it.
+    root: String,
+    /// Its name, if it has one ("Data").
+    label: Option<String>,
+    /// Free space in GB, counting the node's data if it is here already.
+    free_gb: u64,
+    /// "ssd", "hdd" or "unknown".
+    disk: &'static str,
+    /// The drive Windows runs from.
+    system: bool,
+    /// The node's data is kept here now.
+    current: bool,
+    /// The node fits.
+    fits: bool,
+    /// Lock it's recommendation.
+    recommended: bool,
+    /// The folder the node would use on it.
+    path: String,
+}
+
+/// The drives to choose from, and where the node's data is now.
+#[derive(Serialize)]
+pub struct DriveChoice {
+    drives: Vec<DriveView>,
+    /// Node data already kept (GB), 0 if none.
+    data_gb: f64,
+    /// Go Max runs: the place cannot change now.
+    running: bool,
+}
+
+/// The drives Go Max can use: this PC's internal drives, with the one Lock it
+/// recommends. Read from Windows on this PC; nothing is sent.
+#[tauri::command]
+pub fn go_max_drives(app: AppHandle) -> DriveChoice {
+    let current = data_dir(&app);
+    let used = dir_size(&current);
+    let mut drives: Vec<DriveView> = platform::fixed_drives()
+        .into_iter()
+        .map(|(root, label)| {
+            let here = same_drive(&current, &root);
+            let free = lockit_node::checks::free_bytes(std::path::Path::new(&root)).unwrap_or(0)
+                + if here { used } else { 0 };
+            let disk = platform::disk_kind(std::path::Path::new(&root));
+            DriveView {
+                fits: lockit_node::checks::fits(&lockit_node::checks::DriveFacts { free, ssd: None, system: false })
+                    && (here || free >= used),
+                free_gb: free / GB,
+                disk,
+                system: same_drive(&default_data_dir(&app), &root),
+                current: here,
+                recommended: false,
+                path: data_dir_on(&app, &root).display().to_string(),
+                label,
+                root,
+            }
+        })
+        .collect();
+    let facts: Vec<_> = drives
+        .iter()
+        .map(|d| lockit_node::checks::DriveFacts {
+            free: if d.fits { d.free_gb * GB } else { 0 },
+            ssd: match d.disk {
+                "ssd" => Some(true),
+                "hdd" => Some(false),
+                _ => None,
+            },
+            system: d.system,
+        })
+        .collect();
+    if let Some(best) = lockit_node::checks::recommend(&facts) {
+        drives[best].recommended = true;
+    }
+    DriveChoice {
+        drives,
+        data_gb: (used as f64 / 1e8).round() / 10.0,
+        running: app.state::<GoMaxSlot>().running(),
+    }
 }
 
 fn prefs_path(app: &AppHandle) -> Option<std::path::PathBuf> {
@@ -83,7 +201,7 @@ fn plugged_in_only(app: &AppHandle) -> bool {
 /// Runs the check. Local only.
 #[tauri::command]
 pub fn go_max_check_computer(app: AppHandle) -> ComputerCheck {
-    let data = app.path().app_local_data_dir().unwrap_or_default().join("go-max");
+    let data = data_dir(&app);
     // Space already used by the node counts as available to it.
     let used = dir_size(&data);
     let free = lockit_node::checks::free_bytes(&data).unwrap_or(0).saturating_add(used);
@@ -191,7 +309,9 @@ pub fn watch(app: AppHandle) {
             let on_battery = platform::power().1;
             let running = slot.running();
 
-            if running && on_battery && plugged_in_only(&app) {
+            // Never while Go Max is between steps (starting, stopping, or
+            // moving its data): only a running node is paused.
+            if running && !slot.busy_now() && on_battery && plugged_in_only(&app) {
                 power.paused.store(true, Ordering::SeqCst);
                 let _ = crate::go_max::stop(&app);
             } else if power.paused() && !on_battery && !slot.busy_now() {
@@ -322,6 +442,35 @@ mod platform {
         Some(limited || cost.Roaming().unwrap_or(false) || cost.OverDataLimit().unwrap_or(false))
     }
 
+    /// This PC's internal drives ("C:\\", its label). USB sticks, network
+    /// and CD drives are left out: a node there breaks when it goes away.
+    pub fn fixed_drives() -> Vec<(String, Option<String>)> {
+        use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW};
+        const DRIVE_FIXED: u32 = 3;
+        // SAFETY: no arguments.
+        let mask = unsafe { GetLogicalDrives() };
+        (0..26u8)
+            .filter(|i| mask & (1 << i) != 0)
+            .filter_map(|i| {
+                let root = format!("{}:\\", char::from(b'A' + i));
+                let wide: Vec<u16> = root.encode_utf16().chain(Some(0)).collect();
+                // SAFETY: `wide` is null-terminated and outlives the call.
+                if unsafe { GetDriveTypeW(PCWSTR(wide.as_ptr())) } != DRIVE_FIXED {
+                    return None;
+                }
+                let mut name = [0u16; 261];
+                // SAFETY: `wide` is null-terminated; `name` is a valid buffer.
+                let label = unsafe {
+                    GetVolumeInformationW(PCWSTR(wide.as_ptr()), Some(&mut name), None, None, None, None)
+                }
+                .ok()
+                .map(|_| String::from_utf16_lossy(&name[..name.iter().position(|&c| c == 0).unwrap_or(0)]))
+                .filter(|l| !l.trim().is_empty());
+                Some((root, label))
+            })
+            .collect()
+    }
+
     /// Keeps the PC from sleeping (the screen may still turn off), or lets go.
     pub fn keep_awake(on: bool) {
         let flags = if on { ES_CONTINUOUS | ES_SYSTEM_REQUIRED } else { ES_CONTINUOUS };
@@ -348,5 +497,8 @@ mod platform {
     pub fn keep_awake(_: bool) {}
     pub fn metered() -> Option<bool> {
         None
+    }
+    pub fn fixed_drives() -> Vec<(String, Option<String>)> {
+        vec![("/".into(), None)]
     }
 }

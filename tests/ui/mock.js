@@ -32,6 +32,11 @@ window.__calls = [];
       case "price_get": return { usd: 40, eur: 37 };
       case "go_max_prefs": return m.prefs || { plugged_in_only: false, has_battery: false, checked: true, paused: false };
       case "go_max_check_computer": return m.check;
+      case "go_max_drives": if (!m.drives) throw "no drives"; return m.drives;
+      case "go_max_set_data_drive":
+        if (m.drives) for (const d of m.drives.drives) d.current = d.root === args.root;
+        if (m.drives && args.mode === "fresh") m.drives.data_gb = 0;
+        return null;
       case "check_for_updates": if (m.update instanceof Error || typeof m.update === "string") throw m.update; return m.update;
       default: return null;
     }

@@ -31,6 +31,11 @@ Needs Windows 10 (1903+) or 11, x64. Go Max needs about 30 GB free.
 - **Data in "Before you start Go Max":** the first sync downloads about 350 GB. If
   Windows marks the connection as metered, Lock it says so. It never stops you
   starting.
+- **Choose where the node is kept.** "Before you start Go Max" lists this PC's
+  internal drives with their free space and whether each is an SSD or a hard drive,
+  and recommends one: an SSD with room to spare. Change it later from "Check this
+  computer and drive" while Go Max is off: move the node's data (copied and checked,
+  then the old copy is removed) or start fresh on the new drive.
 - **Go Max is private, and says why.** Your node connects to other Zcash nodes but
   accepts no connections, so this PC is never announced as a Zcash node. "What is
   this?" under the switch explains it, and where to help the network more: Zecky

@@ -314,8 +314,113 @@ fn programs(app: &AppHandle) -> Result<NodePrograms, String> {
 }
 
 fn layout(app: &AppHandle) -> Result<NodeLayout, String> {
-    let data = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
-    Ok(NodeLayout::new(data.join("go-max")))
+    Ok(NodeLayout::new(crate::machine::data_dir(app)))
+}
+
+/// Keeps the node's data on another drive (Go Max must be off). With data
+/// already there, `mode` says what happens to it: "move" copies it, checks
+/// the copy and only then removes the old one; "fresh" removes it and the
+/// node starts over on the new drive. Returns at once; a move runs on its
+/// own and shows on the page.
+#[tauri::command]
+pub fn go_max_set_data_drive(app: AppHandle, slot: State<'_, GoMaxSlot>, root: String, mode: String) -> Result<(), String> {
+    if slot.node.lock().map(|g| g.is_some()).unwrap_or(true) || slot.busy.swap(true, Ordering::SeqCst) {
+        return Err("switch Go Max off first".into());
+    }
+    let from = crate::machine::data_dir(&app);
+    let to = crate::machine::data_dir_on(&app, &root);
+    let done = |slot: &GoMaxSlot| {
+        if let Ok(mut tally) = slot.data.lock() {
+            *tally = DataTally::default();
+        }
+        slot.busy.store(false, Ordering::SeqCst);
+    };
+    if from == to {
+        done(&slot);
+        return Ok(());
+    }
+    let has_data = from.exists() && data_use::folder_size(&from) > 0;
+    if !has_data || mode == "fresh" {
+        let result = if has_data { std::fs::remove_dir_all(&from) } else { Ok(()) };
+        if result.is_ok() {
+            crate::machine::set_data_dir(&app, &to);
+        }
+        done(&slot);
+        return result.map_err(|e| format!("the old node data could not be removed: {e}"));
+    }
+    if to.exists() && data_use::folder_size(&to) > 0 {
+        done(&slot);
+        return Err(format!("{} is not empty", to.display()));
+    }
+    set(&slot.problem, None);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let slot = handle.state::<GoMaxSlot>();
+        let total = data_use::folder_size(&from);
+        let gb = |bytes: u64| format!("{:.1}", bytes as f64 / 1e9);
+        let mut copied = 0u64;
+        let mut last = std::time::Instant::now();
+        let mut progress = |bytes: u64| {
+            copied += bytes;
+            if last.elapsed() >= std::time::Duration::from_millis(500) {
+                last = std::time::Instant::now();
+                set(&slot.step, Some(format!("Moving the node's data · {} of {} GB", gb(copied), gb(total))));
+                let _ = handle.emit("go-max", "moving");
+            }
+        };
+        set(&slot.step, Some(format!("Moving the node's data · 0.0 of {} GB", gb(total))));
+        let result = copy_tree(&from, &to, &mut progress).and_then(|()| {
+            // The copy must be whole before the original goes.
+            let copy = data_use::folder_size(&to);
+            if copy == total {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(format!("the copy has {copy} bytes, the original {total}")))
+            }
+        });
+        match result {
+            Ok(()) => {
+                crate::machine::set_data_dir(&handle, &to);
+                if std::fs::remove_dir_all(&from).is_err() {
+                    set(&slot.problem, Some(format!("Moved. The old copy in {} could not be removed; you can delete it yourself.", from.display())));
+                }
+            }
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&to);
+                set(&slot.problem, Some(format!("The node's data could not be moved ({error}). It stays where it was.")));
+            }
+        }
+        set(&slot.step, None);
+        done(&slot);
+        let _ = handle.emit("go-max", "changed");
+    });
+    Ok(())
+}
+
+/// Copies a folder with everything in it, telling `progress` the bytes.
+fn copy_tree(from: &std::path::Path, to: &std::path::Path, progress: &mut impl FnMut(u64)) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &target, progress)?;
+        } else {
+            let mut source = std::fs::File::open(entry.path())?;
+            let mut sink = std::fs::File::create(&target)?;
+            let mut buffer = vec![0u8; 4 * 1024 * 1024];
+            loop {
+                let read = std::io::Read::read(&mut source, &mut buffer)?;
+                if read == 0 {
+                    break;
+                }
+                std::io::Write::write_all(&mut sink, &buffer[..read])?;
+                progress(read as u64);
+            }
+            sink.sync_all()?;
+        }
+    }
+    Ok(())
 }
 
 fn installed(app: &AppHandle) -> bool {

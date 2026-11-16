@@ -809,7 +809,7 @@
           <p class="small"><strong>Want to help the network more?</strong> Zecky Rock it runs a full node on an Umbrel at home, always on. It will be able to open to other nodes by choice, which is where helping counts most: a full node can serve new nodes during their first sync.</p>
         </div>
         <label class="gm-option" id="gm-plugged-row" hidden><input type="checkbox" id="gm-plugged"> <span>Only sync while plugged in</span></label>
-        <button type="button" class="link-gold" id="gm-check-link">Check this computer ›</button>
+        <button type="button" class="link-gold" id="gm-check-link">Check this computer and drive ›</button>
         <button type="button" class="link-danger" id="gm-remove" hidden>Remove node and its data…</button>
       </div>
     </section>
@@ -821,6 +821,18 @@
       <p class="eyebrow center">GO MAX</p>
       <h2 class="prompt-title center">Before you start Go Max</h2>
       <ul class="pc-lines" id="pc-lines"></ul>
+      <div class="pc-where" id="pc-where">
+        <p class="pc-where-title">Where to keep the node</p>
+        <div class="pc-drives" id="pc-drives" role="radiogroup" aria-label="Drive for the node"></div>
+        <p class="small quiet" id="pc-where-note" hidden></p>
+        <div class="pc-move" id="pc-move" hidden>
+          <p class="small" id="pc-move-text"></p>
+          <div class="pc-move-actions">
+            <button type="button" class="secondary" id="pc-move-it">Move it</button>
+            <button type="button" class="secondary" id="pc-fresh">Start fresh there</button>
+          </div>
+        </div>
+      </div>
       <p class="small quiet" id="pc-expect">The first check works the processor hard for about 14 hours to a few days, depending on the computer; the fan may run and the PC gets warm. After that it is light: one block about every 25 seconds. Go Max uses about 15 to 22 GB. You can switch it off any time; your wallet works the same without it.</p>
       <p class="small quiet">Checked on this PC only. Nothing is sent anywhere.</p>
       <div class="sheet-actions">

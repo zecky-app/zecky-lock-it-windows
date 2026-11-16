@@ -18,13 +18,15 @@ Keep this folder together:
 
 Needs: Windows 10 (1903 or later) or 11, x64, internet, Microsoft Edge
 WebView2 (already on almost every Windows 10/11 PC). Go Max needs about
-30 GB free on drive C:. Seal it needs a webcam.
+30 GB free on the drive it uses: C: unless you choose another. Seal it
+needs a webcam.
 
 Where your wallet is kept: %LOCALAPPDATA%\app.zecky.lockit
   wallet-lock.json   your 24 words, sealed by your keys
   keyring.json       extra wallets' words, sealed with the main words
   wallet\            the wallet's own files (no words in them)
-  go-max\            Go Max's node data
+  go-max\            Go Max's node data (or <drive>:\ZeckyLockIt\go-max
+                     on the drive you chose in "Check this computer and drive")
 Removing the app does not remove this folder.
 
 Your 24 words are shown once, when you create a wallet. Write them on
