@@ -29,7 +29,12 @@ env:
   UPSTREAM_ZAKURA_REPO: https://github.com/zakura-core/zakura.git
   UPSTREAM_ZAKURA_REF: v1.8.9
   UPSTREAM_ZAINO_REPO: https://github.com/zingolabs/zaino.git
-  UPSTREAM_ZAINO_REF: 84e115affdac40808bc141fa56c8014f4705fd95
+  # Zaino: the same build as Lock it Mac and Rock it (Mac docs/NODE_UPDATES.md):
+  # branch feat/nu7 (zingolabs/zaino#1655) at this commit, plus the two Rock it
+  # patches in zaino-patches/. Zaino's main branch does not know NU7 and its
+  # wallet service stops after block 3,543,405. Change this only together
+  # with the Mac.
+  UPSTREAM_ZAINO_REF: aaf8122a703704e05147d984f08ff82c789860ad
 
 jobs:
   lock:
@@ -50,6 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
@@ -61,6 +67,8 @@ jobs:
         run: |
           git clone "$UPSTREAM_ZAKURA_REPO" zakura && git -C zakura checkout --detach "$UPSTREAM_ZAKURA_REF"
           git clone "$UPSTREAM_ZAINO_REPO" zaino && git -C zaino checkout --detach "$UPSTREAM_ZAINO_REF"
+          test "$(git -C zaino rev-parse HEAD)" = "$UPSTREAM_ZAINO_REF"
+          git -C zaino apply "$GITHUB_WORKSPACE"/zaino-patches/*.patch
       - name: Build
         env:
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc-posix
@@ -98,7 +106,7 @@ jobs:
             echo "::error::zakurad was built without --features sprout"; exit 1
           fi
           (cd node && sha256sum *.exe > SHA256SUMS.txt && cat SHA256SUMS.txt)
-          printf 'zakura %s\nzaino %s\n' "$UPSTREAM_ZAKURA_REF" "$UPSTREAM_ZAINO_REF" > node/SOURCES.txt
+          printf 'zakura %s\nzaino %s (feat/nu7) + zaino-patches\n' "$UPSTREAM_ZAKURA_REF" "$UPSTREAM_ZAINO_REF" > node/SOURCES.txt
       - uses: actions/upload-artifact@v4
         with:
           name: node-windows-gnu

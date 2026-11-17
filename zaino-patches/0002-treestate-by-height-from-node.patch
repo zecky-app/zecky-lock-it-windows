@@ -1,0 +1,19 @@
+diff --git a/packages/zaino-state/src/indexer/node_backed_indexer.rs b/packages/zaino-state/src/indexer/node_backed_indexer.rs
+index fd5877a..4c53257 100644
+--- a/packages/zaino-state/src/indexer/node_backed_indexer.rs
++++ b/packages/zaino-state/src/indexer/node_backed_indexer.rs
+@@ -942,6 +942,14 @@ impl<
+         &self,
+         hash_or_height: String,
+     ) -> Result<zaino_primitives::types::Treestate, Self::Error> {
++        // Zecky Rock it patch: a height is answered straight from the node with a
++        // single z_gettreestate call. The known-block check below fetches the whole
++        // block when the finalised state is an ephemeral passthrough, which made
++        // every lookup cost a full block download on a small node.
++        if hash_or_height.parse::<u32>().is_ok() {
++            return Ok(self.indexer.get_treestate_by_id(hash_or_height).await?);
++        }
++
+         let snapshot = self.indexer.snapshot_nonfinalized_state();
+         if !self
+             .indexer
