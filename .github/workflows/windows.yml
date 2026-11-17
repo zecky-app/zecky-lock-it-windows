@@ -75,7 +75,10 @@ jobs:
           # Windows target must be added to that toolchain, not only to stable.
           (cd zakura && rustup target add x86_64-pc-windows-gnu)
           (cd zaino && rustup target add x86_64-pc-windows-gnu)
-          (cd zakura && cargo build --release --locked -p zakura --target x86_64-pc-windows-gnu)
+          # Go Max checks every block itself (checkpoint_sync = false), so the
+          # node needs Sprout JoinSplit checking: opt-in since Zakura 1.8.8.
+          # Without it the node stalls for good at block 2,713,001.
+          (cd zakura && cargo build --release --locked -p zakura --features sprout --target x86_64-pc-windows-gnu)
           (cd zaino && cargo build --release --locked -p zainod --target x86_64-pc-windows-gnu)
       - name: Collect
         run: |
@@ -106,7 +109,7 @@ jobs:
         shell: bash
         run: |
           git clone "$UPSTREAM_ZAKURA_REPO" zakura && git -C zakura checkout --detach "$UPSTREAM_ZAKURA_REF"
-          cd zakura && cargo build --release --locked -p zakura
+          cd zakura && cargo build --release --locked -p zakura --features sprout
 
   go-max-windows:
     name: Go Max start and clean stop on Windows
