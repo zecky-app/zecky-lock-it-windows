@@ -6,9 +6,9 @@
 #   lock            the lock and Go Max crates' tests (Linux, fast)
 #   node            Zakura and Zaino for Windows, built with MinGW (GNU) on
 #                   Linux, C++ runtime linked statically; SHA-256 of each
-#   node-msvc       the same with Microsoft's toolchain on Windows. Expected
-#                   to fail until Zakura's RocksDB fork links with MSVC; it
-#                   is here to tell us when it does. Never blocks the rest.
+#   node-msvc       the same with Microsoft's toolchain on Windows. Builds
+#                   fine since v1.8.5; kept as a check while we ship the GNU
+#                   build. Never blocks the rest.
 #   go-max-windows  on a real Windows runner: start Zakura and Zaino, read the
 #                   status, stop them cleanly with Ctrl-C, three times
 #   app             the Lock it app for Windows (Tauri), with the node inside
@@ -105,7 +105,7 @@ jobs:
           path: node/
 
   node-msvc:
-    name: Node for Windows (MSVC, expected to fail)
+    name: Node for Windows (MSVC, check only)
     runs-on: windows-latest
     timeout-minutes: 120
     continue-on-error: true
