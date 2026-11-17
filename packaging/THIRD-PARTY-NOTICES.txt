@@ -2,7 +2,7 @@ Zecky Lock it for Windows includes, unchanged or built from source:
 
 - librustzcash crates (zcash_client_backend, zcash_client_sqlite, pczt, orchard,
   sapling-crypto, ...): MIT or Apache-2.0, Electric Coin Company and contributors.
-- Zakura 1.8.8 (Zcash node, fork of Zebra): MIT or Apache-2.0.
+- Zakura 1.8.9 (Zcash node, fork of Zebra): MIT or Apache-2.0.
 - Zaino 0.10.1 (indexer): Apache-2.0, Zingo Labs.
 - Sapling parameters (sapling-spend.params, sapling-output.params): Zcash.
 - Tauri 2 and WebView2Loader: MIT or Apache-2.0 / Microsoft.

@@ -27,7 +27,7 @@ env:
   # Pinned upstream sources. Change these on purpose only. Not named ZAKURA_*:
   # Zakura reads any ZAKURA_ or ZEBRA_ variable as a setting.
   UPSTREAM_ZAKURA_REPO: https://github.com/zakura-core/zakura.git
-  UPSTREAM_ZAKURA_REF: v1.8.8
+  UPSTREAM_ZAKURA_REF: v1.8.9
   UPSTREAM_ZAINO_REPO: https://github.com/zingolabs/zaino.git
   UPSTREAM_ZAINO_REF: 84e115affdac40808bc141fa56c8014f4705fd95
 
@@ -77,6 +77,8 @@ jobs:
           (cd zaino && rustup target add x86_64-pc-windows-gnu)
           # Go Max checks every block itself (checkpoint_sync = false), so the
           # node needs Sprout JoinSplit checking: opt-in since Zakura 1.8.8.
+          # Since 1.8.9 a build without it also skips the Sprout tree and marks
+          # the database, which a build with it then refuses to open.
           # Without it the node stalls for good at block 2,713,001.
           (cd zakura && cargo build --release --locked -p zakura --features sprout --target x86_64-pc-windows-gnu)
           (cd zaino && cargo build --release --locked -p zainod --target x86_64-pc-windows-gnu)
@@ -90,6 +92,10 @@ jobs:
           for f in node/*.exe; do x86_64-w64-mingw32-objdump -p "$f" | grep 'DLL Name' | sort -u; done
           if x86_64-w64-mingw32-objdump -p node/*.exe | grep -i -E 'libstdc|libgcc|libwinpthread'; then
             echo "::error::a node program still needs a MinGW DLL"; exit 1
+          fi
+          # The Sprout checker must be in the node (see the Build step).
+          if ! grep -a -q 'zakura-consensus/src/primitives/groth16.rs' node/zakurad.exe; then
+            echo "::error::zakurad was built without --features sprout"; exit 1
           fi
           (cd node && sha256sum *.exe > SHA256SUMS.txt && cat SHA256SUMS.txt)
           printf 'zakura %s\nzaino %s\n' "$UPSTREAM_ZAKURA_REF" "$UPSTREAM_ZAINO_REF" > node/SOURCES.txt

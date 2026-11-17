@@ -27,6 +27,14 @@ Needs Windows 10 (1903+) or 11, x64. Go Max needs about 30 GB free.
   without it. Beta 4's node has it. Your node's data is fine (Zakura retries such a
   block instead of marking it bad): install beta 4 and Go Max carries on from where
   it stopped.
+- **Node updated to Zakura 1.8.9** (was 1.8.8): less CPU at the tip and during sync,
+  quicker reconnects after a restart, stricter limits on oversized blocks and on the
+  node's local counters. It still follows the chain up to block 3,643,309 (about
+  5 December).
+- **One way only:** the first start of beta 4 upgrades Go Max's data to Zakura's
+  new database format, in place, without a new first check ("Upgrading the chain
+  state" while it starts). After that, beta 3 or earlier can no longer open it. Stay
+  on beta 4 or later.
 
 ## New in beta 3
 

@@ -133,6 +133,14 @@ impl GoMax {
         }
         self.layout.create()?;
         crate::checks::before_start(&self.layout, &self.settings, &mut progress)?;
+        // A node folder from an older Zakura: put its database where this
+        // node looks, so it is upgraded in place instead of started over.
+        if crate::db_upgrade::move_for_upgrade(&self.layout.zakura_state())
+            .map_err(|e| Error::io("moving the chain state to the new node version", e))?
+            .is_some()
+        {
+            progress("Upgrading the chain state");
+        }
         self.settings.write_configs(&self.layout)?;
         // A cookie left from an earlier run is stale; Zakura writes a new one.
         let _ = std::fs::remove_file(self.layout.cookie_file());

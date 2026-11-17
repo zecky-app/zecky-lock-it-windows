@@ -13,7 +13,7 @@ Keep this folder together:
   Zecky Lock it.exe      the app
   WebView2Loader.dll     must stay next to the app
   params\                the Sapling files a payment needs (from Zcash)
-  node\zakurad.exe       Zakura 1.8.8 (Go Max's node)
+  node\zakurad.exe       Zakura 1.8.9 (Go Max's node)
   node\zainod.exe        Zaino 0.10.1 (Go Max's wallet service)
 
 Needs: Windows 10 (1903 or later) or 11, x64, internet, Microsoft Edge

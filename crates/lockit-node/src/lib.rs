@@ -29,6 +29,7 @@
 pub mod checks;
 mod config;
 pub mod data_use;
+pub mod db_upgrade;
 mod error;
 mod layout;
 pub mod process;
