@@ -1,17 +1,18 @@
-# Zecky Lock it for Windows 0.1.0 beta 4
+# Zecky Lock it for Windows 0.1.0 beta 5
 
 A calm, self-custody Zcash wallet for Windows, with Go Max: your own pruned Zcash
 node, optional, on your PC. Free and open source (Apache-2.0).
 **Beta: use small amounts only (under 0.1 ZEC).**
 
-Install it over beta 3 or beta 2: your wallet and Go Max's data stay.
+Install it over beta 4: your wallet and Go Max's data stay, and the node carries on
+where it is (no new sync).
 
 ## Downloads
 
 | File | What |
 |---|---|
-| `ZeckyLockIt-0.1.0-beta.4-setup.exe` | Installer. Per-user, no admin rights needed. |
-| `ZeckyLockIt-0.1.0-beta.4-portable.zip` | The same app as a folder: unzip and run `Zecky Lock it.exe`. |
+| `ZeckyLockIt-0.1.0-beta.5-setup.exe` | Installer. Per-user, no admin rights needed. |
+| `ZeckyLockIt-0.1.0-beta.5-portable.zip` | The same app as a folder: unzip and run `Zecky Lock it.exe`. |
 | `SHA256SUMS.txt`, `SHA256SUMS.txt.asc` | Checksums, and my signature on them. |
 | `zecky-release-key.asc` | My public signing key. Fingerprint: `5FAF 9FC6 6F04 5B5F 7148 4960 77EB 552B C4BF DDD8`. |
 
@@ -19,7 +20,15 @@ Install it over beta 3 or beta 2: your wallet and Go Max's data stay.
 
 Needs Windows 10 (1903+) or 11, x64. Go Max needs about 30 GB free.
 
-## What's new in beta 4
+## What's new in beta 5
+
+- **Fix: Lock it now moves to your own node once Go Max is up to date.** In beta 4
+  the node synced fine, but its wallet service (Zaino) did not know the NU7 network
+  upgrade (block 3,543,405) and stopped there, so Lock it stayed on zec.rocks. Beta 5
+  ships the same Zaino as Lock it for Mac (the NU7 build). Nothing else changed: same
+  node (Zakura 1.8.9), same data, no new sync.
+
+## New in beta 4
 
 - **Fix: Go Max no longer stops at block 2,713,001.** In beta 3 the node stopped for
   good there, at the first old-style (Sprout) transaction it had to check: since
