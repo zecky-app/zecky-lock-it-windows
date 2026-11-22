@@ -262,6 +262,61 @@ pub struct ScanProgress {
     pub of: usize,
 }
 
+/// Limits for what a scanned part may announce (Lock it Mac, audit 22 Nov
+/// 2026): a huge part count or message length would allocate without limit.
+/// A Seal it transaction is a few kilobytes in a few dozen parts.
+pub const MAX_PARTS: u64 = 1000;
+/// The largest message a sequence of parts may announce.
+pub const MAX_MESSAGE: u64 = 10 * 1024 * 1024;
+
+/// Refuses a part whose numbering ("n-m") or whose own header announces 0
+/// parts, more than 1,000 parts, or a message of 0 bytes or over 10 MB.
+fn check_part_lengths(numbering: &str, text: &str) -> Result<()> {
+    let refused = || bad("the moving code announces an impossible length");
+    let (_, of) = numbering.split_once('-').ok_or_else(|| bad("the moving code's numbering"))?;
+    let of: u64 = of.parse().map_err(|_| bad("the moving code's numbering"))?;
+    if !(1..=MAX_PARTS).contains(&of) {
+        return Err(refused());
+    }
+    let (_, cbor) = ur::decode(text).map_err(|_| bad("the code is damaged"))?;
+    let (parts, length) = part_header(&cbor).ok_or_else(|| bad("the code is damaged"))?;
+    if !(1..=MAX_PARTS).contains(&parts) || !(1..=MAX_MESSAGE).contains(&length) {
+        return Err(refused());
+    }
+    Ok(())
+}
+
+/// Part count and message length from a part's CBOR header:
+/// [sequence, part count, message length, checksum, data].
+fn part_header(cbor: &[u8]) -> Option<(u64, u64)> {
+    fn uint(bytes: &[u8], at: &mut usize) -> Option<u64> {
+        let first = *bytes.get(*at)?;
+        if first >> 5 != 0 {
+            return None;
+        }
+        *at += 1;
+        let extra = match first & 0x1f {
+            n @ 0..=23 => return Some(n as u64),
+            24 => 1,
+            25 => 2,
+            26 => 4,
+            27 => 8,
+            _ => return None,
+        };
+        let raw = bytes.get(*at..*at + extra)?;
+        *at += extra;
+        Some(raw.iter().fold(0u64, |v, b| (v << 8) | *b as u64))
+    }
+    if cbor.first() != Some(&0x85) {
+        return None;
+    }
+    let mut at = 1;
+    let _sequence = uint(cbor, &mut at)?;
+    let parts = uint(cbor, &mut at)?;
+    let length = uint(cbor, &mut at)?;
+    Some((parts, length))
+}
+
 /// Collects scanned QR strings until the message is complete.
 pub struct UrScan {
     expected: String,
@@ -307,6 +362,7 @@ impl UrScan {
                 self.message = Some(message);
             }
             3 => {
+                check_part_lengths(parts[1], text)?;
                 if let Some((n, of)) = parts[1].split_once('-') {
                     if let (Ok(n), Ok(of)) = (n.parse::<usize>(), of.parse::<usize>()) {
                         self.of = of;
@@ -334,6 +390,66 @@ impl UrScan {
     /// The whole message, once complete.
     pub fn message(&self) -> Option<&[u8]> {
         self.message.as_deref()
+    }
+}
+
+#[cfg(test)]
+mod length_tests {
+    use super::*;
+
+    /// A part with this header: [seq, parts, length, checksum, b"ab"].
+    fn part(seq: u64, parts: u64, length: u64) -> String {
+        fn uint(out: &mut Vec<u8>, v: u64) {
+            if v < 24 {
+                out.push(v as u8);
+            } else if v <= 0xff {
+                out.extend([24, v as u8]);
+            } else if v <= 0xffff {
+                out.push(25);
+                out.extend((v as u16).to_be_bytes());
+            } else if v <= 0xffff_ffff {
+                out.push(26);
+                out.extend((v as u32).to_be_bytes());
+            } else {
+                out.push(27);
+                out.extend(v.to_be_bytes());
+            }
+        }
+        let mut cbor = vec![0x85];
+        for v in [seq, parts, length, 7] {
+            uint(&mut cbor, v);
+        }
+        cbor.extend([0x42, b'a', b'b']);
+        format!("ur:zcash-pczt/{seq}-{parts}/{}", ur::bytewords::encode(&cbor, ur::bytewords::Style::Minimal))
+    }
+
+    /// Audit 22 Nov 2026 (Mac): 0 parts trapped the reader; a huge count or
+    /// length allocated without limit.
+    #[test]
+    fn impossible_part_and_message_lengths_are_refused() {
+        let mut scan = UrScan::new(UR_PCZT);
+        for (seq, parts, length) in [(1, 0, 100), (1, 1_001, 100), (1, 5, 0), (1, 5, 10 * 1024 * 1024 + 1), (1, 5, u32::MAX as u64)] {
+            let text = part(seq, parts, length);
+            let text = if parts == 0 { text.replace("/1-0/", "/1-1/") } else { text };
+            assert!(scan.receive(&text).is_err(), "{seq}-{parts}, {length} bytes must be refused");
+        }
+        assert!(scan.receive("ur:zcash-pczt/1-0/lpad").is_err(), "0 parts in the numbering");
+        assert!(scan.receive("ur:zcash-pczt/1-99999999/lpad").is_err(), "too many parts in the numbering");
+        assert_eq!(part_header(&[0x85, 1, 5, 25, 0x01, 0x00, 7]), Some((5, 256)));
+    }
+
+    #[test]
+    fn a_normal_moving_code_still_reads() {
+        let message: Vec<u8> = (0..900u32).map(|i| (i % 251) as u8).collect();
+        let frames = ur_frames(UR_PCZT, &message).unwrap();
+        assert!(frames.len() > 1);
+        let mut scan = UrScan::new(UR_PCZT);
+        for frame in frames.iter().cycle().take(frames.len() * 3) {
+            if scan.receive(frame).unwrap().done {
+                break;
+            }
+        }
+        assert_eq!(scan.message(), Some(&message[..]));
     }
 }
 
