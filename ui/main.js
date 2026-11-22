@@ -401,6 +401,7 @@ function renderHome() {
   lockin.hidden = !(upToDate && b.transparent > 0);
   if (!ironwood.hidden) ironwood.innerHTML = `${hidden ? "Part of your Zcash is in the old Orchard pool" : `${amountText(b.orchard)} in the old Orchard pool`} · <strong>Move it to Ironwood ›</strong>`;
   if (!lockin.hidden) lockin.innerHTML = `${hidden ? "Zcash waiting outside the lock" : `+${amountText(b.transparent)} waiting outside the lock`} · <strong>Lock it in ›</strong>`;
+  checkOutside();
   const ring = $("milestone");
   Lockart.milestone(ring, Holding.progress(days ?? 0), days !== null && Holding.reachedToday(days));
   ring.classList.toggle("dim", days === null);
@@ -1387,10 +1388,23 @@ document.addEventListener("keydown", (event) => {
   else if (!layer.hidden && !sending) ($("sheet-send").hidden ? closeSheet() : closeSend());
 });
 
-// Receive
+// Receive: Shielded | Transparent, as on Lock it iPhone and Mac.
+function showReceiveTab(transparent) {
+  $("receive-tab-shielded").classList.toggle("on", !transparent);
+  $("receive-tab-transparent").classList.toggle("on", transparent);
+  $("receive-shielded").hidden = transparent;
+  $("receive-transparent").hidden = !transparent;
+  const head = $("sheet-receive");
+  head.querySelector(".sheet-title").textContent = transparent ? "Transparent address" : "Receive";
+  head.querySelector(".sheet-sub").textContent = transparent
+    ? "Visible to everyone, like Bitcoin. Only for senders that cannot pay a shielded address."
+    : "Your shielded address. Payments to it stay private.";
+  say($("receive-message"), "", true);
+}
+
 $("home-receive").addEventListener("click", async () => {
   openSheet("receive");
-  say($("receive-message"), "", true);
+  showReceiveTab(false);
   try {
     const receive = await invoke("wallet_receive");
     $("receive-address").textContent = receive.address;
@@ -1400,14 +1414,57 @@ $("home-receive").addEventListener("click", async () => {
   }
 });
 
-$("receive-copy").addEventListener("click", async () => {
+$("receive-tab-shielded").addEventListener("click", () => showReceiveTab(false));
+$("receive-t-back").addEventListener("click", () => showReceiveTab(false));
+$("receive-tab-transparent").addEventListener("click", async () => {
+  showReceiveTab(true);
+  if ($("receive-t-address").textContent) return;
   try {
-    await navigator.clipboard.writeText($("receive-address").textContent);
+    const receive = await invoke("wallet_receive_transparent");
+    $("receive-t-address").textContent = receive.address;
+    $("receive-t-qr").src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(receive.qr);
+  } catch (problem) {
+    showReceiveTab(false);
+    say($("receive-message"), `No transparent address could be shown. ${describe(problem)}`);
+  }
+});
+
+async function copyAddress(id) {
+  try {
+    await navigator.clipboard.writeText($(id).textContent);
     say($("receive-message"), "Copied.", true);
   } catch {
     say($("receive-message"), "Select the address and copy it by hand.");
   }
-});
+}
+$("receive-copy").addEventListener("click", () => copyAddress("receive-address"));
+$("receive-t-copy").addEventListener("click", () => copyAddress("receive-t-address"));
+
+// Zcash that arrived on the transparent address: asked once per new amount,
+// only when up to date and nothing else is open; after it is locked in (the
+// amount goes down), the next arrival is news again (as on Lock it Mac).
+const OutsideNotice = {
+  key: "outside.lastAsked",
+  get lastAsked() { return Number(localStorageGet(this.key)) || 0; },
+  set lastAsked(v) { localStorageSet(this.key, String(v)); },
+  shouldAsk(amount, upToDate, busy, lastAsked) { return amount > 0 && amount > lastAsked && upToDate && !busy; },
+};
+
+function checkOutside() {
+  if (!overview || !overview.balance) return;
+  const amount = overview.balance.transparent || 0;
+  const upToDate = overview.sync.state === "up_to_date";
+  const busy = !layer.hidden || [...document.querySelectorAll(".scrim")].some((s) => !s.hidden);
+  if (OutsideNotice.shouldAsk(amount, upToDate, busy, OutsideNotice.lastAsked)) {
+    OutsideNotice.lastAsked = amount;
+    $("outside-text").textContent = `${prefs.hidden ? "It" : amountText(amount)} is visible to everyone on the blockchain until you lock it in. Locking it in moves it into your private lock.`;
+    $("outside-prompt").hidden = false;
+  } else if (amount < OutsideNotice.lastAsked) {
+    OutsideNotice.lastAsked = amount;
+  }
+}
+$("outside-later").addEventListener("click", () => { $("outside-prompt").hidden = true; });
+$("outside-lockin").addEventListener("click", () => { $("outside-prompt").hidden = true; openMove("lock_in"); });
 
 // Activity
 function renderActivity() {
@@ -2610,7 +2667,7 @@ const CHAPTERS = [
     "Milestones bring no notifications, badges or pop-ups.",
   ]],
   ["Receive and send", "Waiting times, fees and what can't be undone.", [
-    "Receive gives you a shielded address: amount, sender and receiver are encrypted on the blockchain. It is safe to share; only your 24 words must stay secret.",
+    "Receive gives you a shielded address: amount, sender and receiver are encrypted on the blockchain. It is safe to share; only your 24 words must stay secret. Its Transparent tab is only for senders that cannot pay a shielded address.",
     "Nothing leaves without a receipt first: who receives what, the network fee and what leaves the lock. A payment cannot be reversed once sent.",
   ], [
     "Zcash you receive can be used after 10 confirmations, your own change after 3. A block comes about every 25 seconds since the NU7 upgrade.",
@@ -2639,8 +2696,12 @@ const CHAPTERS = [
     "Every change is listed in Activity › The lock.",
   ]],
   ["Private by default", "Amounts, senders and addresses stay hidden.", [
-    "Lock it only hands out shielded addresses, so amounts, senders and receivers stay private on the blockchain.",
-  ], []],
+    "Receive shows a shielded address, so amounts, senders and receivers stay private on the blockchain.",
+    "For a sender that cannot pay a shielded address, such as some exchanges, Receive has a Transparent tab with the wallet's transparent address. What arrives there is public until you lock it in; Lock it asks you to as soon as it arrives.",
+  ], [
+    "Zcash that arrives on a transparent address is locked in with one step, with your keys. A transparent address works like Bitcoin: its payments are visible to everyone until you lock them in. Lock it never pays from it except to lock it in.",
+    "The Transparent tab shows the same address each time, as on Lock it iPhone and Mac, so payments to it can be linked to each other. Use it only when the shielded address is not accepted.",
+  ]],
   ["Go Max", "Your own Zcash node, inside Lock it.", [
     "Go Max runs a Zcash node in Lock it on this PC. It checks the blocks itself and keeps only recent blocks in full. When it is up to date, Lock it reads the chain from it instead of a server.",
     "It needs about 30 GB free to start and uses about 15 to 22 GB. The first check takes from about 14 hours to a few days, depending on the computer; older laptops and hard drives are the slow end. While it runs, the Go Max page shows when it should be done, with the slow 2022–23 spam years (blocks 1,710,000 to 2,100,000) counted in.",

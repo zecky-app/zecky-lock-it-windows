@@ -507,6 +507,26 @@ impl Wallet {
         Ok(address.encode(&MainNetwork))
     }
 
+    /// The wallet's transparent address, for senders that cannot pay a
+    /// shielded one (some exchanges). One fixed address per wallet: its
+    /// first external transparent address, the same in every Zcash wallet
+    /// restored from these words. What arrives there is public until it is
+    /// locked in.
+    pub fn transparent_address(&self) -> Result<String> {
+        use zcash_client_backend::data_api::Account as _;
+        use zcash_transparent::keys::IncomingViewingKey as _;
+        let db = self.db()?;
+        let account = self.account(&db)?;
+        let ufvk = db
+            .get_account(account)
+            .map_err(db_err)?
+            .and_then(|a| a.ufvk().cloned())
+            .ok_or_else(|| other("this wallet has no viewing key"))?;
+        let transparent = ufvk.p2pkh().ok_or_else(|| other("this wallet has no transparent part"))?;
+        let (address, _) = transparent.derive_external_ivk().map_err(other)?.default_address();
+        Ok(zcash_keys::address::Address::Transparent(address).encode(&MainNetwork))
+    }
+
     /// Works out a payment and its fee. Nothing is signed or sent.
     ///
     /// Same fee rule, change and input selection as the engine (ZIP 317,
@@ -920,6 +940,25 @@ mod tests {
         let birthday = AccountBirthday::from_parts(zcash_client_backend::data_api::chain::ChainState::empty(BlockHeight::from_u32(SAPLING_ACTIVATION - 1), BlockHash([0; 32])), None);
         wallet.create_from_birthday(&seed, &birthday, SAPLING_ACTIVATION + 10).unwrap();
         (dir, wallet, seed)
+    }
+
+    /// The Transparent tab: one fixed t1 address per wallet, which the
+    /// wallet watches (so what arrives there shows as outside the lock).
+    #[test]
+    fn the_transparent_address_is_fixed_and_watched() {
+        let (_dir, wallet, _seed) = fresh();
+        let first = wallet.transparent_address().unwrap();
+        assert!(first.starts_with("t1"), "{first}");
+        assert_eq!(wallet.transparent_address().unwrap(), first, "the same each time");
+        let db = wallet.db().unwrap();
+        let account = wallet.account(&db).unwrap();
+        let watched: Vec<String> = db
+            .get_transparent_receivers(account, true, false)
+            .unwrap()
+            .into_keys()
+            .map(|a| zcash_keys::address::Address::Transparent(a).encode(&MainNetwork))
+            .collect();
+        assert!(watched.contains(&first), "the wallet must watch it for arrivals");
     }
 
     #[test]

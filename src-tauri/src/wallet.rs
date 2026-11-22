@@ -617,6 +617,21 @@ pub async fn wallet_receive(app: AppHandle) -> CommandResult<Receive> {
     .map_err(|e| problem(e.to_string()))?
 }
 
+/// The wallet's transparent address and its QR code, for the Transparent
+/// tab of Receive (as on Lock it iPhone and Mac): one fixed address per
+/// wallet, for senders that cannot pay a shielded address.
+#[tauri::command]
+pub async fn wallet_receive_transparent(app: AppHandle) -> CommandResult<Receive> {
+    let wallet = wallet(&app)?;
+    tauri::async_runtime::spawn_blocking(move || -> CommandResult<Receive> {
+        let address = wallet.transparent_address()?;
+        let qr = lockit_wallet::qr_svg(&address)?;
+        Ok(Receive { address, qr })
+    })
+    .await
+    .map_err(|e| problem(e.to_string()))?
+}
+
 /// The newest payments in and out.
 #[tauri::command]
 pub async fn wallet_activity(app: AppHandle) -> CommandResult<Vec<Activity>> {

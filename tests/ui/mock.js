@@ -12,8 +12,8 @@ window.__calls = [];
   window.__m = m;
   const overview = () => ({
     exists: true, keys: [{ kind: "device_hello", label: "This PC" }],
-    balance: { spendable: 2240000, pending: 0, total: 2240000, scanned_height: 3600000, chain_tip: 3600000, progress: 1, birthday: 3100000, to_scan: [], orchard: 0, ironwood: 0, sapling: 0, transparent: 0 },
-    sync: { state: "up_to_date", server: "zec.rocks", problem: null }, unsent: false, lock_open: m.lockOpen, problems: [],
+    balance: { spendable: 2240000, pending: 0, total: 2240000, scanned_height: 3600000, chain_tip: 3600000, progress: 1, birthday: 3100000, to_scan: [], orchard: 0, ironwood: 0, sapling: 0, transparent: m.transparent || 0 },
+    sync: { state: m.syncing ? "syncing" : "up_to_date", server: "zec.rocks", problem: null }, unsent: false, lock_open: m.lockOpen, problems: [],
     settings: { server: null, tor: true, wait: 0, ask_on_start: false, current: m.current, names: {}, order: [], hidden: m.hidden },
     wallets: m.wallets,
   });
@@ -24,6 +24,8 @@ window.__calls = [];
       case "first_run": return { terms_accepted: true, tour_seen: true };
       case "lock_rules": return { phase: { phase: "none" }, ask_on_start: false, contacts: [], only_saved: false, security_keys: [], log: [], time_lock_hours: 0 };
       case "wallet_activity": return [];
+      case "wallet_receive": return { address: "u1shieldedexample", qr: "<svg xmlns='http://www.w3.org/2000/svg'/>" };
+      case "wallet_receive_transparent": return { address: "t1TransparentExampleAddress0000000", qr: "<svg xmlns='http://www.w3.org/2000/svg'/>" };
       case "go_max_view": return m.goMax;
       case "settings_get": return { settings: { tor: true, wait: 0 }, reading_from: "zec.rocks", version: "0.1.5" };
       case "wallet_prepare": return { to: args.to, amount: 1000000, fee: 15000, total: 1015000 };

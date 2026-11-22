@@ -323,9 +323,25 @@
         <button type="button" class="done" data-close>Done</button>
       </div>
       <div class="receive-body">
-        <img id="receive-qr" class="qr" alt="QR code of your address">
-        <p class="address" id="receive-address"></p>
-        <button type="button" class="secondary" id="receive-copy">Copy address</button>
+        <div class="chips receive-tabs" role="tablist">
+          <button type="button" class="chip on" id="receive-tab-shielded" role="tab">Shielded</button>
+          <button type="button" class="chip" id="receive-tab-transparent" role="tab">Transparent</button>
+        </div>
+        <div id="receive-shielded">
+          <img id="receive-qr" class="qr" alt="QR code of your address">
+          <p class="address" id="receive-address"></p>
+          <button type="button" class="secondary" id="receive-copy">Copy address</button>
+        </div>
+        <div id="receive-transparent" hidden>
+          <div class="public-frame">
+            <span class="public-badge">PUBLIC</span>
+            <img id="receive-t-qr" class="qr" alt="QR code of your transparent address, which is public">
+          </div>
+          <p class="address" id="receive-t-address"></p>
+          <button type="button" class="secondary" id="receive-t-copy">Copy address</button>
+          <p class="public-warning">⚠ Anyone can see what arrives here and where it came from. Lock it asks you to lock it in as soon as it arrives; after that it is private again. Prefer your shielded address whenever the sender can pay it.</p>
+          <button type="button" class="link-gold" id="receive-t-back">Back to your shielded address</button>
+        </div>
         <p id="receive-message" class="message calm" role="status" aria-live="polite"></p>
       </div>
     </section>
@@ -843,6 +859,17 @@
   </div>
 
   <!-- ===== Time lock: ask, or wait (TimeLockPrompt) ===== -->
+  <div class="scrim" id="outside-prompt" hidden>
+    <div class="prompt" role="alertdialog" aria-labelledby="outside-title">
+      <h2 class="prompt-title center" id="outside-title">Zcash arrived on your transparent address</h2>
+      <p class="prompt-intro" id="outside-text"></p>
+      <div class="sheet-actions">
+        <button type="button" class="brass" id="outside-lockin">Lock it in</button>
+        <button type="button" class="secondary" id="outside-later">Later</button>
+      </div>
+    </div>
+  </div>
+
   <div class="scrim" id="timelock-prompt" hidden>
     <div class="prompt">
       <div class="prompt-ring tl-ring"><div class="prompt-lock" data-padlock="timelock"></div><span class="tl-clock">◷</span></div>

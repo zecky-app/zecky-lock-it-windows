@@ -329,6 +329,7 @@ pub fn run() {
             wallet::wallet_forget_words,
             wallet::wallet_create,
             wallet::wallet_receive,
+            wallet::wallet_receive_transparent,
             wallet::wallet_activity,
             wallet::wallet_prepare,
             wallet::wallet_open_lock,
