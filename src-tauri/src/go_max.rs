@@ -228,6 +228,8 @@ pub struct GoMaxSlot {
     problem: Mutex<Option<String>>,
     /// When the node first reached the newest block, for the half-minute hold.
     at_tip_since: Mutex<Option<std::time::Instant>>,
+    /// The node's last good answer, for a slow moment near the tip.
+    last_status: Mutex<Option<(NodeStatus, std::time::Instant)>>,
     /// The node's height over the last hour, for the expected finish.
     pace: Mutex<pace::Samples>,
     /// The data overview's running totals.
@@ -763,18 +765,48 @@ impl GoMaxSlot {
     }
 
     /// The node's numbers now, if it runs and answers. Never waits.
+    ///
+    /// A busy node sometimes answers slowly near the tip: then the last
+    /// answer from under a minute and a half ago stands in, so the page
+    /// does not flash "not answering" between two good answers.
     pub fn status_now(&self) -> Option<NodeStatus> {
         if self.busy.load(Ordering::SeqCst) {
             return None;
         }
-        let guard = self.node.try_lock().ok()?;
-        guard.as_ref()?.status().ok()
+        let live = match self.node.try_lock() {
+            Ok(guard) => match guard.as_ref() {
+                Some(node) => node.status().ok(),
+                None => {
+                    self.forget_last_status();
+                    return None;
+                }
+            },
+            Err(_) => None,
+        };
+        let mut last = self.last_status.lock().ok()?;
+        match live {
+            Some(status) => {
+                *last = Some((status.clone(), std::time::Instant::now()));
+                Some(status)
+            }
+            None => last
+                .as_ref()
+                .filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(90))
+                .map(|(status, _)| status.clone()),
+        }
+    }
+
+    fn forget_last_status(&self) {
+        if let Ok(mut last) = self.last_status.lock() {
+            *last = None;
+        }
     }
 
     /// The node's height, if wallets can read from it now: the wallet
     /// service answers and the node has caught up with the network. Never
     /// waits for a busy Go Max.
-    pub fn own_node_height(&self) -> Option<u32> {
+    /// `heard` is the newest height a wallet server reported (0 if none).
+    pub fn own_node_height(&self, heard: u32) -> Option<u32> {
         if self.busy.load(Ordering::SeqCst) {
             return None;
         }
@@ -784,7 +816,7 @@ impl GoMaxSlot {
             return None;
         }
         let status = node.status().ok()?;
-        let at_tip = status.estimated_height > 0 && status.height + 2 >= status.estimated_height;
+        let at_tip = status.caught_up(heard);
         // Lock it moves to the node only once it has stayed at the newest
         // block for half a minute (as on the Mac): no back and forth while
         // it is just arriving.

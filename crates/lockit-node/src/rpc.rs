@@ -41,8 +41,52 @@ pub struct NodeStatus {
 
 impl NodeStatus {
     /// Whether the node has caught up with the network, within two blocks.
-    pub fn caught_up(&self) -> bool {
-        self.estimated_height > 0 && self.height + 2 >= self.estimated_height
+    ///
+    /// Judged against real heights: the newest header the node has from its
+    /// peers, and `heard`, the newest height a wallet server reported (0 when
+    /// unknown). The node's own estimate (last block plus time since, divided
+    /// by the block time) runs a few blocks ahead since NU7's 25-second
+    /// blocks, because miners' timestamps lag; it counts only when nothing
+    /// else is known, and then with a margin of eight blocks.
+    pub fn caught_up(&self, heard: u32) -> bool {
+        let reference = self.headers.max(heard);
+        if reference > 0 {
+            return self.height.saturating_add(2) >= reference;
+        }
+        self.estimated_height > 0 && self.height.saturating_add(8) >= self.estimated_height
+    }
+}
+
+#[cfg(test)]
+mod caught_up_tests {
+    use super::NodeStatus;
+
+    fn status(height: u32, headers: u32, estimated_height: u32) -> NodeStatus {
+        NodeStatus { height, headers, estimated_height, progress: 1.0, peers: 8, inbound_peers: 0, pruned: true, size_on_disk: 0 }
+    }
+
+    #[test]
+    fn an_estimate_a_few_blocks_ahead_does_not_hold_it_back() {
+        // 19 Nov: node at the tip, estimate 4 ahead, headers equal to the node.
+        assert!(status(3_590_000, 3_590_000, 3_590_004).caught_up(3_590_000));
+    }
+
+    #[test]
+    fn real_headers_ahead_mean_behind() {
+        assert!(!status(3_590_000, 3_590_010, 3_590_010).caught_up(0));
+    }
+
+    #[test]
+    fn the_wallet_server_counts() {
+        assert!(!status(3_590_000, 3_590_000, 0).caught_up(3_590_005));
+        assert!(status(3_590_000, 3_590_000, 0).caught_up(3_590_002));
+    }
+
+    #[test]
+    fn only_the_estimate_known() {
+        assert!(status(100, 0, 106).caught_up(0));
+        assert!(!status(100, 0, 120).caught_up(0));
+        assert!(!status(100, 0, 0).caught_up(0));
     }
 }
 

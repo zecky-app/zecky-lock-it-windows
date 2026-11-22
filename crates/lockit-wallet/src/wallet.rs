@@ -80,6 +80,17 @@ pub struct PreparedPayment {
     pub to: String,
 }
 
+impl PreparedPayment {
+    /// The block height the payment was worked out for. Its "valid until"
+    /// block follows from this when it is signed.
+    pub fn target_height(&self) -> u32 {
+        match &self.proposal {
+            Planned::Notes(proposal) => proposal.min_target_height().into(),
+            Planned::Shielding(proposal) => proposal.min_target_height().into(),
+        }
+    }
+}
+
 /// A worked-out payment: a normal one (shielded inputs), or locking in
 /// transparent Zcash (transparent inputs only).
 enum Planned {
@@ -380,7 +391,7 @@ impl Wallet {
         let tx = db.get_transaction(txid).map_err(db_err)?.ok_or_else(|| other("the signed payment was not stored"))?;
         let mut bytes = Vec::new();
         tx.write(&mut bytes).map_err(other)?;
-        Ok(SignedPayment { txids: vec![txid.to_string()], raw: vec![bytes] })
+        Ok(SignedPayment { txids: vec![txid.to_string()], raw: vec![bytes], expiry_height: u32::from(tx.expiry_height()) })
     }
 
     /// Removes the selected wallet from the key ring (never the main one).
@@ -665,9 +676,14 @@ impl Wallet {
             .into_iter()
             .collect(),
         };
-        let mut signed = SignedPayment { txids: Vec::new(), raw: Vec::new() };
+        let mut signed = SignedPayment { txids: Vec::new(), raw: Vec::new(), expiry_height: 0 };
         for txid in txids.iter() {
             let tx = db.get_transaction(*txid).map_err(db_err)?.ok_or_else(|| other("the signed payment was not stored"))?;
+            let expiry = u32::from(tx.expiry_height());
+            // The earliest "valid until" of its transactions (0 = no limit).
+            if expiry > 0 && (signed.expiry_height == 0 || expiry < signed.expiry_height) {
+                signed.expiry_height = expiry;
+            }
             let mut bytes = Vec::new();
             tx.write(&mut bytes).map_err(other)?;
             signed.txids.push(txid.to_string());
@@ -739,6 +755,23 @@ pub struct SignedPayment {
     /// Transaction id(s), as shown by block explorers.
     pub txids: Vec<String>,
     raw: Vec<Vec<u8>>,
+    /// The last block in which the network still takes it (0 = no limit).
+    pub expiry_height: u32,
+}
+
+impl SignedPayment {
+    /// A short name for messages: "Payment 3f9a2c…".
+    pub fn short_name(&self) -> String {
+        match self.txids.first() {
+            Some(txid) => format!("Payment {}…", &txid[..txid.len().min(6)]),
+            None => "The payment".into(),
+        }
+    }
+
+    /// Whether the network no longer takes it at `tip`.
+    pub fn expired_at(&self, tip: u32) -> bool {
+        self.expiry_height > 0 && tip > self.expiry_height
+    }
 }
 
 /// One line of the wallet's history.

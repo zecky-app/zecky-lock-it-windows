@@ -1,24 +1,43 @@
-# Zecky Lock it for Windows 0.1.0 beta 5
+# Zecky Lock it for Windows 0.1.0 beta 6
 
 A calm, self-custody Zcash wallet for Windows, with Go Max: your own pruned Zcash
 node, optional, on your PC. Free and open source (Apache-2.0).
 **Beta: use small amounts only (under 0.1 ZEC).**
 
-Install it over beta 4: your wallet and Go Max's data stay, and the node carries on
+Install it over beta 5: your wallet and Go Max's data stay, and the node carries on
 where it is (no new sync).
 
 ## Downloads
 
 | File | What |
 |---|---|
-| `ZeckyLockIt-0.1.0-beta.5-setup.exe` | Installer. Per-user, no admin rights needed. |
-| `ZeckyLockIt-0.1.0-beta.5-portable.zip` | The same app as a folder: unzip and run `Zecky Lock it.exe`. |
+| `ZeckyLockIt-0.1.0-beta.6-setup.exe` | Installer. Per-user, no admin rights needed. |
+| `ZeckyLockIt-0.1.0-beta.6-portable.zip` | The same app as a folder: unzip and run `Zecky Lock it.exe`. |
 | `SHA256SUMS.txt`, `SHA256SUMS.txt.asc` | Checksums, and my signature on them. |
 | `zecky-release-key.asc` | My public signing key. Fingerprint: `5FAF 9FC6 6F04 5B5F 7148 4960 77EB 552B C4BF DDD8`. |
 
 **Check before you run it:** see `VERIFY.txt`.
 
 Needs Windows 10 (1903+) or 11, x64. Go Max needs about 30 GB free.
+
+## What's new in beta 6
+
+- **Lock it moves to your own node reliably.** Go Max now counts as up to date
+  against real heights (the blocks its peers announce, and zec.rocks), not the
+  node's own time-based guess. Since NU7's 25-second blocks that guess ran a few
+  blocks ahead, so the move to your own node could take hours.
+- **"Your own node (Go Max)" in Settings › Network.** Pick it once Go Max is up to
+  date; no address to type. While Go Max is off or catching up, Lock it reads from
+  zec.rocks and says so.
+- **Sending waits until the wallet is up to date.** Right after starting, a payment
+  could be built on an old view of the chain and refused as expired. Now Lock it
+  says "Catching up. You can send in a moment". A payment that expired before it got
+  through is named and dropped: it was never paid.
+- Small: no "node not answering" flashing during a slow moment, the Go Max page no
+  longer shows a network height below the node's, dates in English, "since Canopy"
+  wording, and the licence field matches the LICENSE file (Apache 2.0).
+
+Same node as beta 5: Zakura 1.8.9 and the NU7 build of Zaino.
 
 ## What's new in beta 5
 

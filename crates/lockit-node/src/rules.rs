@@ -263,6 +263,33 @@ pub mod words {
         out
     }
 
+    /// Send is asked while the wallet is still catching up.
+    pub fn catching_up_before_send(blocks_left: u32) -> String {
+        if blocks_left == 0 {
+            "Lock it is checking for new blocks. You can send in a moment.".into()
+        } else {
+            format!(
+                "Catching up. You can send in a moment ({} block{} left).",
+                grouped(blocks_left),
+                if blocks_left == 1 { "" } else { "s" }
+            )
+        }
+    }
+
+    /// A payment that never got through has expired: it was never paid.
+    pub fn waiting_payment_expired(name: &str) -> String {
+        format!("{name} expired and was never paid. Work out a new one.")
+    }
+
+    /// A worked-out payment waited too long before signing.
+    pub const WORK_OUT_AGAIN: &str = "This payment was worked out a while ago. Work it out again, so the network still takes it.";
+
+    /// "Your own node (Go Max)" is chosen, but the node can't serve the
+    /// wallet yet (off, catching up, or its wallet service is starting).
+    pub fn own_node_not_ready(server: &str) -> String {
+        format!("Go Max is not up to date yet, so Lock it reads from {server} meanwhile. It moves to your own node by itself once it is.")
+    }
+
     /// Why Lock it reads from a server although the node is up to date.
     pub fn older_blocks(from: u32, server: &str) -> String {
         format!(

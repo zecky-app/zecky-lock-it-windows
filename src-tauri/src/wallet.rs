@@ -54,6 +54,8 @@ pub struct WalletSlot {
     prepared: Mutex<Option<PreparedPayment>>,
     /// A payment signed but not yet accepted by any server.
     unsent: Mutex<Option<SignedPayment>>,
+    /// When a sync round last finished well, in this session.
+    last_synced: Mutex<Option<std::time::Instant>>,
     sync: Mutex<SyncView>,
     nudge: Mutex<Option<mpsc::Sender<()>>>,
     /// The words while the lock is open (after "Really open the lock?" and
@@ -244,9 +246,13 @@ pub(crate) fn save_settings(app: &AppHandle, settings: &Settings) -> CommandResu
     fs::write(settings_path(app)?, json).map_err(|e| problem(format!("the settings could not be saved: {e}")))
 }
 
+/// The address the server choice stores for "Your own node (Go Max)".
+pub(crate) const OWN_NODE_CHOICE: (&str, u16) = ("127.0.0.1", 8137);
+
 fn server_for(choice: &Option<(String, u16)>) -> Server {
     match choice {
         None => Server::default_public(),
+        Some((host, port)) if host == OWN_NODE_CHOICE.0 && *port == OWN_NODE_CHOICE.1 => Server::OwnNode { port: *port },
         Some((host, 443)) if lockit_wallet::PUBLIC_SERVERS.contains(&host.as_str()) => Server::Public { host: host.clone() },
         Some((host, port)) => Server::Custom { host: host.clone(), port: *port },
     }
@@ -271,7 +277,13 @@ fn reading_server(app: &AppHandle, _wallet: &Wallet) -> Server {
 fn choose_server(app: &AppHandle, wallet: &Wallet) -> (Server, Option<String>) {
     use lockit_node::rules::{reading, words};
     let chosen = chosen_server(app);
-    let Some(node) = app.state::<GoMaxSlot>().own_node_height() else { return (chosen, None) };
+    // "Your own node (Go Max)" chosen by hand: while the node can't serve
+    // the wallet, Lock it reads from the default public server and says so.
+    let fallback = if matches!(chosen, Server::OwnNode { .. }) { Server::default_public() } else { chosen.clone() };
+    let Some(node) = app.state::<GoMaxSlot>().own_node_height(network_heard(app)) else {
+        let note = matches!(chosen, Server::OwnNode { .. }).then(|| words::own_node_not_ready(&fallback.label()));
+        return (fallback, note);
+    };
     let own = Server::OwnNode { port: 8137 };
     let oldest = wallet.oldest_to_scan().ok().flatten();
     let has = match oldest {
@@ -280,8 +292,8 @@ fn choose_server(app: &AppHandle, wallet: &Wallet) -> (Server, Option<String>) {
     };
     match reading::missing(oldest, node, has) {
         Some(from) => {
-            let label = chosen.label();
-            (chosen, Some(words::older_blocks(from, &label)))
+            let label = fallback.label();
+            (fallback, Some(words::older_blocks(from, &label)))
         }
         None => (own, None),
     }
@@ -342,6 +354,9 @@ pub fn start_syncing(app: AppHandle) {
                             match runtime().block_on(wallet.sync(&server)) {
                                 Ok(()) => {
                                     failures = 0;
+                                    if let Ok(mut at) = slot.last_synced.lock() {
+                                        *at = Some(std::time::Instant::now());
+                                    }
                                     set_sync(&app, "up_to_date", &server, None);
                                     if let Ok(mut reading_now) = slot.reading.lock() {
                                         *reading_now = Some(server.clone());
@@ -639,6 +654,43 @@ fn parse_zec(text: &str) -> CommandResult<u64> {
     Ok(zats)
 }
 
+/// A payment may only be worked out once the wallet has caught up in this
+/// session (a good sync round in the last two minutes, and at most two
+/// blocks behind). Otherwise it would be built on an old view of the chain:
+/// after a day off, its "valid until" block can already be in the past, and
+/// the network refuses it as expired (found on Lock it Mac build 12).
+fn ready_to_send(app: &AppHandle, slot: &WalletSlot, wallet: &Wallet) -> CommandResult<()> {
+    let fresh = slot
+        .last_synced
+        .lock()
+        .ok()
+        .and_then(|at| *at)
+        .is_some_and(|at| at.elapsed() < Duration::from_secs(120));
+    let balance = wallet.balance().ok();
+    let tip = balance.as_ref().map(|b| b.chain_tip).unwrap_or(0).max(network_heard(app));
+    let scanned = balance.as_ref().map(|b| b.scanned_height).unwrap_or(0);
+    let left = tip.saturating_sub(scanned);
+    if fresh && left <= 2 {
+        return Ok(());
+    }
+    nudge(slot);
+    Err(problem(lockit_node::rules::words::catching_up_before_send(if fresh || left > 2 { left } else { 0 })))
+}
+
+/// A signed payment that never got through and has since expired is
+/// dropped: it was never paid. Says so once; a payment that is still valid
+/// keeps waiting for "Send again".
+fn check_waiting_payment(app: &AppHandle, slot: &WalletSlot) -> CommandResult<()> {
+    let mut unsent = slot.unsent.lock().map_err(|_| problem("the app is in an unknown state"))?;
+    let Some(waiting) = unsent.as_ref() else { return Ok(()) };
+    if waiting.expired_at(network_heard(app)) {
+        let name = waiting.short_name();
+        *unsent = None;
+        return Err(problem(lockit_node::rules::words::waiting_payment_expired(&name)));
+    }
+    Err(problem(format!("{} is still waiting to be handed to the network; send that one first", waiting.short_name())))
+}
+
 /// Works out a payment and its fee. Nothing is signed or sent.
 #[tauri::command]
 pub async fn wallet_prepare(
@@ -648,9 +700,7 @@ pub async fn wallet_prepare(
     amount: String,
     memo: Option<String>,
 ) -> CommandResult<Prepared> {
-    if slot.unsent.lock().map(|u| u.is_some()).unwrap_or(false) {
-        return Err(problem("a payment is still waiting to be handed to the network; send that one first"));
-    }
+    check_waiting_payment(&app, &slot)?;
     let zats = parse_zec(&amount)?;
     if let Some(policy) = read_lock(&app)?.map(|v| v.policy) {
         if policy.only_saved && !policy.contacts.iter().any(|c| c.address == to.trim()) {
@@ -658,6 +708,7 @@ pub async fn wallet_prepare(
         }
     }
     let wallet = wallet(&app)?;
+    ready_to_send(&app, &slot, &wallet)?;
     let payment = tauri::async_runtime::spawn_blocking(move || wallet.prepare(&to, zats, memo.as_deref()))
         .await
         .map_err(|e| problem(e.to_string()))??;
@@ -688,10 +739,15 @@ pub(crate) async fn broadcast(app: &AppHandle, slot: &WalletSlot, signed: Signed
             Ok(Sent { txids: signed.txids, accepted_by })
         }
         (signed, Err(error)) => {
+            let name = signed.short_name();
+            if signed.expired_at(network_heard(app)) {
+                // Refused because it is too late: never paid, nothing to resend.
+                return Err(problem(lockit_node::rules::words::waiting_payment_expired(&name)));
+            }
             if let Ok(mut unsent) = slot.unsent.lock() {
                 *unsent = Some(signed);
             }
-            Err(Problem { unsent: true, ..problem(format!("signed, but not handed to the network yet: {error}")) })
+            Err(Problem { unsent: true, ..problem(format!("{name} is signed, but not handed to the network yet: {error}")) })
         }
     }
 }
@@ -849,6 +905,9 @@ pub async fn wallet_send(app: AppHandle, slot: State<'_, WalletSlot>, over_tor: 
         .ok_or_else(|| problem("the lock closed; open it again to send"))?;
     let payment = slot.prepared.lock().map_err(|_| problem("the app is in an unknown state"))?.take()
         .ok_or_else(|| problem("work out the payment again"))?;
+    if worked_out_too_long_ago(&app, &payment) {
+        return Err(problem(lockit_node::rules::words::WORK_OUT_AGAIN));
+    }
     let phrase = match signing_phrase(&app, &phrase) {
         Ok(phrase) => phrase,
         Err(error) => {
@@ -889,11 +948,20 @@ pub async fn wallet_send(app: AppHandle, slot: State<'_, WalletSlot>, over_tor: 
     sent
 }
 
+/// A worked-out payment older than 20 blocks (about 8 minutes) is not
+/// signed: its "valid until" block would be close, so it is worked out again.
+fn worked_out_too_long_ago(app: &AppHandle, payment: &PreparedPayment) -> bool {
+    network_heard(app) > payment.target_height().saturating_add(20)
+}
+
 /// Hands a signed payment that did not get through to the network again.
 #[tauri::command]
 pub async fn wallet_send_again(app: AppHandle, slot: State<'_, WalletSlot>, over_tor: bool) -> CommandResult<Sent> {
     let signed = slot.unsent.lock().map_err(|_| problem("the app is in an unknown state"))?.take()
         .ok_or_else(|| problem("there is no payment waiting"))?;
+    if signed.expired_at(network_heard(&app)) {
+        return Err(problem(lockit_node::rules::words::waiting_payment_expired(&signed.short_name())));
+    }
     broadcast(&app, &slot, signed, over_tor).await
 }
 
@@ -901,10 +969,9 @@ pub async fn wallet_send_again(app: AppHandle, slot: State<'_, WalletSlot>, over
 /// "lock_in" (transparent Zcash into the lock). Nothing leaves the wallet.
 #[tauri::command]
 pub async fn wallet_plan_move(app: AppHandle, slot: State<'_, WalletSlot>, kind: String) -> CommandResult<Prepared> {
-    if slot.unsent.lock().map(|u| u.is_some()).unwrap_or(false) {
-        return Err(problem("a payment is still waiting to be handed to the network; send that one first"));
-    }
+    check_waiting_payment(&app, &slot)?;
     let wallet = wallet(&app)?;
+    ready_to_send(&app, &slot, &wallet)?;
     let payment = tauri::async_runtime::spawn_blocking(move || match kind.as_str() {
         "ironwood" => wallet.prepare_ironwood_move(),
         "lock_in" => wallet.prepare_lock_in(),
@@ -925,6 +992,9 @@ pub async fn wallet_do_move(app: AppHandle, window: WebviewWindow, slot: State<'
     let over_tor = load_settings(&app).tor;
     let payment = slot.prepared.lock().map_err(|_| problem("the app is in an unknown state"))?.take()
         .ok_or_else(|| problem("work out the move again"))?;
+    if worked_out_too_long_ago(&app, &payment) {
+        return Err(problem(lockit_node::rules::words::WORK_OUT_AGAIN));
+    }
     let opened = match open_fully(&app, &window, typed).await {
         Ok(opened) => opened,
         Err(error) => {

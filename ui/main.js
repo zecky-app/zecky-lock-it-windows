@@ -472,7 +472,7 @@ function renderHome() {
   refreshCoin();
 }
 
-const dateTime = (seconds) => new Date(seconds * 1000).toLocaleString(undefined, { weekday: "long", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const dateTime = (seconds) => new Date(seconds * 1000).toLocaleString("en-GB", { weekday: "long", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 function renderTimeLockLine() {
   const line = $("timelock-line");
@@ -1434,7 +1434,7 @@ function renderActivity() {
     const when = document.createElement("span");
     when.className = "when";
     when.textContent = item.expired ? "Did not go through; nothing left the lock"
-      : item.height ? `${new Date((item.time || 0) * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} · block ${numbers.format(item.height)}`
+      : item.height ? `${new Date((item.time || 0) * 1000).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })} · block ${numbers.format(item.height)}`
       : "Waiting for a block";
     line.title = item.txid;
     line.append(what, amount, when);
@@ -1503,7 +1503,7 @@ function renderSync() {
       const row = document.createElement("div");
       row.className = "problem";
       const time = document.createElement("time");
-      time.textContent = new Date(p.at * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      time.textContent = new Date(p.at * 1000).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
       const text = document.createElement("span");
       text.textContent = p.message;
       row.append(time, text);
@@ -1934,6 +1934,11 @@ $("held-line").addEventListener("click", () => {
 
 // ---------- Settings (SettingsView) ----------
 
+// "Your own node (Go Max)" in the server choice: Zaino on this PC.
+const OWN_NODE = -2;
+const OWN_NODE_ADDRESS = ["127.0.0.1", 8137];
+let goMaxReady = false;
+function isOwnNode(server) { return !!server && server[0] === OWN_NODE_ADDRESS[0] && server[1] === OWN_NODE_ADDRESS[1]; }
 const PRESETS = [["Default", "zec.rocks"], ["Europe", "eu.zec.rocks"], ["North America", "na.zec.rocks"], ["South America", "sa.zec.rocks"], ["Asia Pacific", "ap.zec.rocks"]];
 const PAGE_TEXT = {
   overview: ["Settings", null],
@@ -1984,7 +1989,7 @@ function renderSettings() {
   // Overview
   $("net-block").textContent = b.chain_tip ? `Block ${numbers.format(b.chain_tip)}` : "Catching up…";
   $("net-pace").textContent = b.chain_tip ? (b.chain_tip >= NU7_HEIGHT ? "A block every 25 seconds, since NU7" : "A block every 75 seconds") : "";
-  $("row-network").textContent = s.server ? `${s.server[0]}${s.server[1] === 443 ? "" : ":" + s.server[1]}` : "zec.rocks";
+  $("row-network").textContent = !s.server ? "zec.rocks" : isOwnNode(s.server) ? "Your own node (Go Max)" : `${s.server[0]}${s.server[1] === 443 ? "" : ":" + s.server[1]}`;
   $("row-display").textContent = `${{ dark: "Dark", light: "Light", auto: "Same as this PC" }[themeChoice()]} · Value ${currency() === "none" ? "None" : currency().toUpperCase()}`;
   const keys = overview ? overview.keys.map((k) => KEY_NAMES[k.kind]) : [];
   $("row-security").textContent = keys.join(" + ");
@@ -1996,7 +2001,7 @@ function renderSettings() {
   $("row-keys").textContent = `${keys.length} ${keys.length === 1 ? "key" : "keys"}${s.wait ? ` · wait ${s.wait} s` : ""}`;
   $("row-about").textContent = settingsView ? `Version ${settingsView.version}` : "";
   // Network
-  serverChoice = !s.server ? 0 : s.server[1] === 443 ? PRESETS.findIndex(([, h]) => h === s.server[0]) : -1;
+  serverChoice = !s.server ? 0 : isOwnNode(s.server) ? OWN_NODE : s.server[1] === 443 ? PRESETS.findIndex(([, h]) => h === s.server[0]) : -1;
   if (s.server && serverChoice === -1 && !$("server-own").value) $("server-own").value = `${s.server[0]}:${s.server[1]}`;
   renderServerChips();
   $("settings-tor").checked = s.tor;
@@ -2061,18 +2066,26 @@ function renderSettings() {
 function renderServerChips() {
   const chips = $("server-chips");
   chips.textContent = "";
-  [...PRESETS.map(([label], i) => [i, label]), [-1, "Your own"]].forEach(([i, label]) => {
+  [...PRESETS.map(([label], i) => [i, label]), [OWN_NODE, "Your own node (Go Max)"], [-1, "Other"]].forEach(([i, label]) => {
     const chip = document.createElement("button");
     chip.type = "button";
     chip.className = `chip${i === serverChoice ? " on" : ""}`;
     chip.textContent = label;
+    if (i === OWN_NODE && !goMaxReady && serverChoice !== OWN_NODE) {
+      chip.disabled = true;
+      chip.title = "Switch on Go Max; you can pick it once it is up to date.";
+    }
     chip.addEventListener("click", () => { serverChoice = i; say($("server-note"), ""); renderServerChips(); });
     chips.append(chip);
   });
-  $("server-shown").textContent = serverChoice >= 0 ? `${PRESETS[serverChoice][1]}:443` : "Your own node (Rock it) or server: host:port";
+  $("server-shown").textContent = serverChoice >= 0 ? `${PRESETS[serverChoice][1]}:443`
+    : serverChoice === OWN_NODE ? `Go Max on this PC · ${OWN_NODE_ADDRESS[0]}:${OWN_NODE_ADDRESS[1]}`
+    : "Your own node (Rock it) or server: host:port";
   $("server-own").hidden = serverChoice !== -1;
   const own = serverChoice === -1 ? $("server-own").value.trim().split(":")[0] : "";
-  $("server-why").textContent = serverChoice === -1 && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|localhost)/.test(own)
+  $("server-why").textContent = serverChoice === OWN_NODE
+    ? "Go Max, the node on this PC: Lock it reads the chain from it directly and nothing leaves this PC for reading. While Go Max is off or catching up, Lock it reads from zec.rocks and says so."
+    : serverChoice === -1 && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|localhost)/.test(own)
     ? "Your own node on your home network, without TLS: the traffic stays inside your home. Lock it cannot check that this address is really your node. On another Wi-Fi, a stranger's device with the same numbers could answer: it cannot take anything, but it could hide or delay payments. Away from home, use your node's Tailscale address."
     : serverChoice === -1 && /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(own)
       ? "Your own node through Tailscale: the connection is encrypted by Tailscale and only reaches your tailnet. Lock it cannot prove it is your node, so only use the address your node shows you."
@@ -2090,6 +2103,7 @@ $("server-use").addEventListener("click", async () => {
   let host = null;
   let port = null;
   if (serverChoice > 0) { host = PRESETS[serverChoice][1]; port = 443; }
+  if (serverChoice === OWN_NODE) { [host, port] = OWN_NODE_ADDRESS; }
   if (serverChoice === -1) {
     const text = $("server-own").value.trim();
     const m = text.match(/^\[?([^\]]+?)\]?(?::(\d{1,5}))?$/);
@@ -2340,7 +2354,7 @@ function renderSecurityKeys() {
     const name = document.createElement("span");
     name.textContent = key.role === "backup" ? "Backup key" : "Security key";
     const added = document.createElement("small");
-    added.textContent = key.added ? `added ${new Date(key.added * 1000).toLocaleDateString(undefined, { dateStyle: "medium" })}` : "added in an earlier test build";
+    added.textContent = key.added ? `added ${new Date(key.added * 1000).toLocaleDateString("en-GB", { dateStyle: "medium" })}` : "added in an earlier test build";
     grow.append(name, added);
     const remove = document.createElement("button");
     remove.type = "button";
@@ -2573,7 +2587,7 @@ async function renderLockLog() {
     what.textContent = e.text;
     const when = document.createElement("span");
     when.className = "when";
-    when.textContent = new Date(e.at * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    when.textContent = new Date(e.at * 1000).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
     line.append(what, when);
     list.append(line);
   }
@@ -2879,7 +2893,7 @@ function renderGoMax(view) {
     nodeLead.textContent = `${numbers.format(behind)} block${behind === 1 ? "" : "s"} to catch up. Lock it reads from ${chosenServerLabel()} meanwhile.`;
   } else {
     nodeState.textContent = "Catching up";
-    nodeLead.textContent = `Checking the blocks since the beginning. You can keep using this PC; Lock it reads from ${chosenServerLabel()} until the node has caught up.`;
+    nodeLead.textContent = `Checking every block since Canopy (2020). You can keep using this PC; Lock it reads from ${chosenServerLabel()} until the node has caught up.`;
   }
   const network = netHeight > 0 ? ` of ${numbers.format(netHeight)}` : "";
   $("fact-height").textContent = `${numbers.format(status.height)}${network}`;
@@ -2956,8 +2970,13 @@ const GLYPHS = {
 /// The network's height: the wallet's server knows it best; the node's own
 /// estimate runs ahead while it is far behind.
 function networkHeight(status) {
-  const known = overview && overview.balance && overview.balance.chain_tip;
-  return known > 0 ? known : status && status.estimated_height > 0 ? status.estimated_height : 0;
+  // The newest height anyone told Lock it: the wallet's server, the node's
+  // headers from its peers, the node itself. Never below the node, so the
+  // page can't say "3,583,364 of 3,583,363".
+  const known = (overview && overview.balance && overview.balance.chain_tip) || 0;
+  const seen = status ? Math.max(status.headers || 0, status.height || 0) : 0;
+  const best = Math.max(known, seen);
+  return best > 0 ? best : status && status.estimated_height > 0 ? status.estimated_height : 0;
 }
 
 function nodeProgress(status) {
@@ -2970,6 +2989,7 @@ function nodeProgress(status) {
 async function refreshCoin() {
   let view;
   try { view = await invoke("go_max_view"); } catch { return; }
+  goMaxReady = view.state === "on" && !!view.wallet_ready && !!view.status && nodeProgress(view.status).caughtUp;
   const button = $("go-max-coin");
   const coin = $("coin");
   const sub = $("coin-sub");
