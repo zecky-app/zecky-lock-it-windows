@@ -92,6 +92,11 @@ pub struct Unsigned {
 pub async fn sealit_start(app: AppHandle, slot: State<'_, WalletSlot>, seal: State<'_, SealSlot>) -> CommandResult<Unsigned> {
     let payment = w::take_prepared(&slot)?;
     let wallet = w::wallet(&app)?;
+    // Signing on the phone starts here: the same rules as signing on the PC.
+    if w::worked_out_too_long_ago(&app, &payment) {
+        return Err(crate::problem(lockit_node::rules::words::WORK_OUT_AGAIN));
+    }
+    w::ready_to_send(&app, &slot, &wallet)?;
     let (full, frames) = tauri::async_runtime::spawn_blocking(move || -> CommandResult<(Vec<u8>, Vec<String>)> {
         let (full, parts) = wallet.seal_start(&payment)?;
         let frames = parts.iter().map(|p| lockit_wallet::qr_svg(p)).collect::<Result<Vec<_>, _>>()?;

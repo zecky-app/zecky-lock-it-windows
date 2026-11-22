@@ -695,10 +695,14 @@ impl Wallet {
     /// Hands a signed payment to the network: over Tor to two public servers
     /// (the default, as on Lock it Mac), or directly to `reading_from`.
     /// Returns the servers that accepted it.
-    pub async fn broadcast(&self, signed: &SignedPayment, reading_from: &Server, over_tor: bool) -> Result<Vec<String>> {
+    /// Hands the payment's transactions to the network, in order. A payment
+    /// can be two transactions (TEX: shielded to a temporary address of this
+    /// wallet, then on to the receiver). On a refusal, says how many had
+    /// already gone through, so "nothing was sent" is only said when true.
+    pub async fn broadcast(&self, signed: &SignedPayment, reading_from: &Server, over_tor: bool) -> std::result::Result<Vec<String>, (usize, Error)> {
         let mut accepted_by = Vec::new();
-        for bytes in &signed.raw {
-            accepted_by = net::submit(bytes, reading_from, over_tor, &self.tor_dir()).await?;
+        for (done, bytes) in signed.raw.iter().enumerate() {
+            accepted_by = net::submit(bytes, reading_from, over_tor, &self.tor_dir()).await.map_err(|e| (done, e))?;
         }
         Ok(accepted_by)
     }
@@ -713,7 +717,9 @@ impl Wallet {
         conn.busy_timeout(std::time::Duration::from_secs(15)).map_err(db_err)?;
         let mut statement = conn
             .prepare(
-                "SELECT txid, mined_height, account_balance_delta, block_time, expired_unmined
+                "SELECT txid, mined_height, account_balance_delta, block_time, expired_unmined, fee_paid,
+                        (SELECT o.to_address FROM v_tx_outputs o
+                          WHERE o.txid = v_transactions.txid AND o.to_address LIKE 'tex1%' LIMIT 1)
                  FROM v_transactions
                  WHERE account_uuid = ?2
                  ORDER BY (mined_height IS NULL) DESC, mined_height DESC
@@ -730,10 +736,15 @@ impl Wallet {
                     change: row.get(2)?,
                     time: row.get::<_, Option<i64>>(3)?,
                     expired: row.get::<_, Option<bool>>(4)?.unwrap_or(false),
+                    fee: row.get::<_, Option<i64>>(5)?.map(|f| f.max(0) as u64),
+                    tex_receiver: row.get::<_, Option<String>>(6)?,
+                    tex_step: None,
+                    title: String::new(),
                 })
             })
             .map_err(db_err)?;
-        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db_err)
+        let list = rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db_err)?;
+        Ok(Activity::mark(list))
     }
 
     /// The wallet's unified full viewing key: sees everything, spends nothing.
@@ -768,6 +779,14 @@ impl SignedPayment {
         }
     }
 
+    /// The part still to be handed over after the first `done` went through.
+    pub fn without_first(mut self, done: usize) -> SignedPayment {
+        let done = done.min(self.raw.len());
+        self.raw.drain(..done);
+        self.txids.drain(..done.min(self.txids.len()));
+        self
+    }
+
     /// Whether the network no longer takes it at `tip`.
     pub fn expired_at(&self, tip: u32) -> bool {
         self.expiry_height > 0 && tip > self.expiry_height
@@ -787,12 +806,99 @@ pub struct Activity {
     pub time: Option<i64>,
     /// It never made it into a block and has expired.
     pub expired: bool,
+    /// The network fee, for payments out.
+    pub fee: Option<u64>,
+    /// For a payment to a TEX address (ZIP 320): the tex1 receiver.
+    pub tex_receiver: Option<String>,
+    /// 1 or 2: which step of a TEX payment this is.
+    pub tex_step: Option<u8>,
+    /// "Locked", "Released", "TEX payment" or "TEX payment · forwarding fee".
+    pub title: String,
+}
+
+impl Activity {
+    /// A payment to a TEX address is two transactions: step 1 takes the
+    /// Zcash from the private pool to a temporary transparent address of this
+    /// wallet (the tex1 receiver is recorded on it), step 2 forwards it, so
+    /// only its fee leaves the wallet. Step 2 is a payment out that is only a
+    /// fee, in the same block as a step 1 (or, not yet in a block, within
+    /// five minutes of it). Both get the tex1 receiver and a title.
+    pub fn mark(mut items: Vec<Activity>) -> Vec<Activity> {
+        let steps1: Vec<usize> = (0..items.len()).filter(|&i| items[i].change < 0 && items[i].tex_receiver.is_some()).collect();
+        for &i in &steps1 {
+            items[i].tex_step = Some(1);
+        }
+        for i in 0..items.len() {
+            let item = &items[i];
+            let fee_only = item.change < 0 && item.tex_receiver.is_none()
+                && item.fee.is_some_and(|f| f > 0 && item.change.unsigned_abs() == f);
+            if !fee_only {
+                continue;
+            }
+            let matched = steps1.iter().copied().find(|&j| {
+                let (a, b) = (&items[i], &items[j]);
+                match (a.height, b.height) {
+                    (Some(x), Some(y)) => x == y,
+                    _ => match (a.time, b.time) {
+                        (Some(x), Some(y)) => (x - y).abs() <= 300,
+                        _ => a.height.is_none() && b.height.is_none() && a.expired == b.expired,
+                    },
+                }
+            });
+            if let Some(j) = matched {
+                items[i].tex_step = Some(2);
+                items[i].tex_receiver = items[j].tex_receiver.clone();
+            }
+        }
+        for item in &mut items {
+            item.title = match item.tex_step {
+                Some(1) => "TEX payment".into(),
+                Some(2) => "TEX payment · forwarding fee".into(),
+                _ if item.change > 0 => "Locked".into(),
+                _ => "Released".into(),
+            };
+        }
+        items
+    }
 }
 
 use crate::SAPLING_ACTIVATION;
 
 fn db_err(error: impl std::fmt::Display) -> Error {
     Error::Database(error.to_string())
+}
+
+#[cfg(test)]
+mod tex_tests {
+    use super::Activity;
+
+    fn item(change: i64, height: Option<u32>, time: Option<i64>, fee: u64, tex: Option<&str>) -> Activity {
+        Activity { txid: String::new(), height, change, time, expired: false, fee: Some(fee), tex_receiver: tex.map(String::from), tex_step: None, title: String::new() }
+    }
+
+    /// Seen 21 Nov 2026 on Mac: step 2 of a TEX payment showed as "Sent −0.000 ZEC".
+    #[test]
+    fn both_steps_of_a_tex_payment_are_named() {
+        let tex = "tex18qayysmdg7qqk4qta0vh0xss8ngx3qytyj4828";
+        let marked = Activity::mark(vec![
+            item(-110_000, Some(3_597_827), Some(1_795_211_580), 10_000, Some(tex)),
+            item(-15_000, Some(3_597_827), Some(1_795_211_580), 15_000, None),
+            item(-15_000, Some(3_590_000), Some(1_795_125_180), 15_000, None),
+            item(50_000, Some(3_590_001), None, 0, None),
+        ]);
+        assert_eq!(marked[0].title, "TEX payment");
+        assert_eq!(marked[1].title, "TEX payment · forwarding fee");
+        assert_eq!(marked[1].tex_receiver.as_deref(), Some(tex));
+        assert_eq!(marked[2].title, "Released", "a fee-only payment in another block is not a TEX step");
+        assert_eq!(marked[3].title, "Locked");
+    }
+
+    #[test]
+    fn a_waiting_pair_is_matched_too() {
+        let tex = "tex1abc";
+        let marked = Activity::mark(vec![item(-110_000, None, None, 10_000, Some(tex)), item(-15_000, None, None, 15_000, None)]);
+        assert_eq!(marked.iter().map(|a| a.title.as_str()).collect::<Vec<_>>(), ["TEX payment", "TEX payment · forwarding fee"]);
+    }
 }
 
 #[cfg(test)]

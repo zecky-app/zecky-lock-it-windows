@@ -249,6 +249,39 @@ pub mod pace {
     }
 }
 
+/// Up to date for sending: both heights known and the wallet at most 3
+/// blocks behind the network (Lock it Mac's SyncMath.nearlyCurrent).
+pub fn nearly_current(network: u32, wallet: u32) -> bool {
+    network > 0 && wallet > 0 && network.saturating_sub(wallet) <= 3
+}
+
+#[cfg(test)]
+mod send_rule_tests {
+    use super::{nearly_current, words};
+
+    /// Mac 21 Nov 2026: a payment priced about 1,000 blocks behind expired.
+    #[test]
+    fn nothing_is_built_before_the_wallet_is_up_to_date() {
+        assert!(nearly_current(3_597_825, 3_597_825));
+        assert!(nearly_current(3_597_825, 3_597_822), "a few blocks behind counts as up to date");
+        assert!(!nearly_current(3_597_825, 3_597_821));
+        assert!(!nearly_current(3_597_825, 3_596_744));
+        assert!(!nearly_current(0, 0));
+        assert!(!nearly_current(3_597_825, 0));
+        assert_eq!(
+            words::catching_up_before_send(3_596_744, 3_597_825),
+            "Lock it is still catching up (block 3,596,744 of 3,597,825). You can send once it says Up to date. Nothing was sent."
+        );
+    }
+
+    #[test]
+    fn a_partly_sent_payment_never_says_nothing_was_sent() {
+        let text = words::partly_refused("-25: expired");
+        assert!(text.starts_with("Only part of this payment went through"));
+        assert!(!text.contains("Nothing was sent"));
+    }
+}
+
 /// The words, the same as on Lock it Mac (Windows: "this PC").
 pub mod words {
     fn grouped(n: u32) -> String {
@@ -263,17 +296,21 @@ pub mod words {
         out
     }
 
-    /// Send is asked while the wallet is still catching up.
-    pub fn catching_up_before_send(blocks_left: u32) -> String {
-        if blocks_left == 0 {
-            "Lock it is checking for new blocks. You can send in a moment.".into()
-        } else {
-            format!(
-                "Catching up. You can send in a moment ({} block{} left).",
-                grouped(blocks_left),
-                if blocks_left == 1 { "" } else { "s" }
-            )
+    /// Send is asked while the wallet is still catching up (as Lock it Mac).
+    pub fn catching_up_before_send(wallet: u32, network: u32) -> String {
+        if wallet == 0 || network == 0 {
+            return "Lock it is still catching up with the Zcash network. You can send once it says Up to date.".into();
         }
+        format!(
+            "Lock it is still catching up (block {} of {}). You can send once it says Up to date. Nothing was sent.",
+            grouped(wallet),
+            grouped(network)
+        )
+    }
+
+    /// A payment of two transactions (TEX) of which the first went through.
+    pub fn partly_refused(why: &str) -> String {
+        format!("Only part of this payment went through: the first step was sent, the next was refused ({why}). Your Zcash is not lost: it is on a temporary address of this wallet. Check Activity before sending again.")
     }
 
     /// A payment that never got through has expired: it was never paid.

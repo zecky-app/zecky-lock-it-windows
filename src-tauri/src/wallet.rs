@@ -654,12 +654,13 @@ fn parse_zec(text: &str) -> CommandResult<u64> {
     Ok(zats)
 }
 
-/// A payment may only be worked out once the wallet has caught up in this
-/// session (a good sync round in the last two minutes, and at most two
-/// blocks behind). Otherwise it would be built on an old view of the chain:
-/// after a day off, its "valid until" block can already be in the past, and
-/// the network refuses it as expired (found on Lock it Mac build 12).
-fn ready_to_send(app: &AppHandle, slot: &WalletSlot, wallet: &Wallet) -> CommandResult<()> {
+/// Nothing is priced or signed until the wallet is up to date: a good sync
+/// round in this session (the last two minutes) and at most 3 blocks behind
+/// the network, the same rule as Lock it Mac. A payment built on an old view
+/// of the chain gets a "valid until" block that can already be in the past,
+/// and the network refuses it as expired (Mac, 21 Nov 2026: about 1,000
+/// blocks behind right after starting).
+pub(crate) fn ready_to_send(app: &AppHandle, slot: &WalletSlot, wallet: &Wallet) -> CommandResult<()> {
     let fresh = slot
         .last_synced
         .lock()
@@ -667,15 +668,16 @@ fn ready_to_send(app: &AppHandle, slot: &WalletSlot, wallet: &Wallet) -> Command
         .and_then(|at| *at)
         .is_some_and(|at| at.elapsed() < Duration::from_secs(120));
     let balance = wallet.balance().ok();
-    let tip = balance.as_ref().map(|b| b.chain_tip).unwrap_or(0).max(network_heard(app));
+    let network = balance.as_ref().map(|b| b.chain_tip).unwrap_or(0).max(network_heard(app));
     let scanned = balance.as_ref().map(|b| b.scanned_height).unwrap_or(0);
-    let left = tip.saturating_sub(scanned);
-    if fresh && left <= 2 {
+    if fresh && nearly_current(network, scanned) {
         return Ok(());
     }
     nudge(slot);
-    Err(problem(lockit_node::rules::words::catching_up_before_send(if fresh || left > 2 { left } else { 0 })))
+    Err(problem(lockit_node::rules::words::catching_up_before_send(if fresh { scanned } else { 0 }, network)))
 }
+
+use lockit_node::rules::nearly_current;
 
 /// A signed payment that never got through and has since expired is
 /// dropped: it was never paid. Says so once; a payment that is still valid
@@ -738,7 +740,16 @@ pub(crate) async fn broadcast(app: &AppHandle, slot: &WalletSlot, signed: Signed
             nudge(slot);
             Ok(Sent { txids: signed.txids, accepted_by })
         }
-        (signed, Err(error)) => {
+        (signed, Err((done, error))) => {
+            if done > 0 {
+                // Part went through (TEX step 1): keep only the rest waiting.
+                let rest = signed.without_first(done);
+                if let Ok(mut unsent) = slot.unsent.lock() {
+                    *unsent = Some(rest);
+                }
+                nudge(slot);
+                return Err(Problem { unsent: true, ..problem(lockit_node::rules::words::partly_refused(&error.to_string())) });
+            }
             let name = signed.short_name();
             if signed.expired_at(network_heard(app)) {
                 // Refused because it is too late: never paid, nothing to resend.
@@ -908,6 +919,7 @@ pub async fn wallet_send(app: AppHandle, slot: State<'_, WalletSlot>, over_tor: 
     if worked_out_too_long_ago(&app, &payment) {
         return Err(problem(lockit_node::rules::words::WORK_OUT_AGAIN));
     }
+    ready_to_send(&app, &slot, &wallet(&app)?)?;
     let phrase = match signing_phrase(&app, &phrase) {
         Ok(phrase) => phrase,
         Err(error) => {
@@ -950,7 +962,7 @@ pub async fn wallet_send(app: AppHandle, slot: State<'_, WalletSlot>, over_tor: 
 
 /// A worked-out payment older than 20 blocks (about 8 minutes) is not
 /// signed: its "valid until" block would be close, so it is worked out again.
-fn worked_out_too_long_ago(app: &AppHandle, payment: &PreparedPayment) -> bool {
+pub(crate) fn worked_out_too_long_ago(app: &AppHandle, payment: &PreparedPayment) -> bool {
     network_heard(app) > payment.target_height().saturating_add(20)
 }
 
@@ -995,6 +1007,7 @@ pub async fn wallet_do_move(app: AppHandle, window: WebviewWindow, slot: State<'
     if worked_out_too_long_ago(&app, &payment) {
         return Err(problem(lockit_node::rules::words::WORK_OUT_AGAIN));
     }
+    ready_to_send(&app, &slot, &wallet(&app)?)?;
     let opened = match open_fully(&app, &window, typed).await {
         Ok(opened) => opened,
         Err(error) => {
@@ -1406,3 +1419,4 @@ mod tests {
         assert!(parse_zec("").is_err());
     }
 }
+

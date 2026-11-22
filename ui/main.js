@@ -1427,15 +1427,17 @@ function renderActivity() {
     const line = document.createElement("li");
     const what = document.createElement("span");
     what.className = "what";
-    what.textContent = item.change > 0 ? "Locked" : "Released";
+    what.textContent = item.title || (item.change > 0 ? "Locked" : "Released");
     const amount = document.createElement("span");
     amount.className = `amount ${item.change > 0 ? "in" : "out"}`;
     amount.textContent = prefs.hidden ? HIDDEN : `${item.change > 0 ? "+" : "−"}${exact(Math.abs(item.change))}`;
     const when = document.createElement("span");
     when.className = "when";
-    when.textContent = item.expired ? "Did not go through; nothing left the lock"
+    const tex = item.tex_receiver ? `${item.tex_step === 2 ? "Forwarded to" : "To"} ${shortAddress(item.tex_receiver)} · ` : "";
+    if (item.tex_step === 2 && !prefs.hidden) amount.textContent = `Fee only · −${exact(Math.abs(item.change))}`;
+    when.textContent = tex + (item.expired ? "Did not go through; nothing left the lock"
       : item.height ? `${new Date((item.time || 0) * 1000).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })} · block ${numbers.format(item.height)}`
-      : "Waiting for a block";
+      : "Waiting for a block");
     line.title = item.txid;
     line.append(what, amount, when);
     list.append(line);
@@ -2612,7 +2614,9 @@ const CHAPTERS = [
     "Nothing leaves without a receipt first: who receives what, the network fee and what leaves the lock. A payment cannot be reversed once sent.",
   ], [
     "Zcash you receive can be used after 10 confirmations, your own change after 3. A block comes about every 25 seconds since the NU7 upgrade.",
-    "A payment that could not be delivered is kept, and Try again sends that same payment. Do not pay again meanwhile. If it is never delivered, it expires after about 40 blocks and nothing leaves the lock.",
+    "Nothing is priced or signed until Lock it is up to date, at most 3 blocks behind the network. A payment built on an old view of the chain would expire before it arrives, so right after starting Lock it says it is still catching up.",
+    "A payment that could not be delivered is kept, and Try again sends that same payment. Do not pay again meanwhile. If it is never delivered, it expires after about 40 blocks and nothing leaves the lock; Lock it then says so and lets it go.",
+    "Paying a TEX address (tex1…) takes two steps, as the address asks: the Zcash goes to a temporary transparent address of this wallet, then on to the receiver. Activity shows them as “TEX payment” and “TEX payment · forwarding fee”. If only the first step went through, Lock it says so: the Zcash is on that temporary address, not lost.",
     "Sending to a transparent address is public: its amount and destination. A private note only goes to a shielded address.",
   ]],
   ["Your 24 words", "They are your Zcash. Keep them on paper.", [
