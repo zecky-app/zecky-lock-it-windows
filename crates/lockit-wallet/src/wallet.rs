@@ -135,6 +135,8 @@ pub struct AccountInfo {
 pub const KEYRING_SOURCE: &str = "lockit-keyring";
 /// Key source marking Seal it wallets (watch-only on this PC).
 pub const SEALIT_SOURCE: &str = "sealit";
+/// Where a Cupcake wallet starts looking: NU7 (Cupcake added Zcash after it).
+const CUPCAKE_BIRTHDAY: u32 = 3_543_405;
 
 impl Wallet {
     /// The wallet in `dir`. Nothing is created until [`Wallet::create`].
@@ -259,11 +261,16 @@ impl Wallet {
             }
         }
         let index = zip32::AccountId::try_from(account.index).map_err(|_| Error::Other("the phone sent an unusable account number".into()))?;
-        let derivation = Zip32Derivation::new(zip32::fingerprint::SeedFingerprint::from_bytes(export.seed_fingerprint), index);
+        // Cupcake's QR has no seed fingerprint: no derivation is recorded,
+        // which is also how a Cupcake wallet is told apart later. Its QR has
+        // no birthday and its wallet may hold Zcash already: look from NU7 on
+        // (Cupcake added Zcash after it), as Lock it Mac does.
+        let derivation = export.seed_fingerprint.map(|f| Zip32Derivation::new(zip32::fingerprint::SeedFingerprint::from_bytes(f), index));
+        let birthday = if export.from_cupcake() { Some(CUPCAKE_BIRTHDAY) } else { birthday };
         let (birthday, tip) = Self::birthday_from(server, birthday).await?;
         let mut db = self.db()?;
         let imported = db
-            .import_account_ufvk(name, &ufvk, &birthday, AccountPurpose::Spending { derivation: Some(derivation) }, Some(SEALIT_SOURCE))
+            .import_account_ufvk(name, &ufvk, &birthday, AccountPurpose::Spending { derivation }, Some(SEALIT_SOURCE))
             .map_err(db_err)?;
         db.update_chain_tip(BlockHeight::from_u32(tip)).map_err(db_err)?;
         Ok(imported.id().expose_uuid().to_string())
@@ -301,6 +308,20 @@ impl Wallet {
         net::has_block(server, height).await
     }
 
+    /// Whether the wallet on screen is signed on Cupcake: paired from its QR,
+    /// so no seed fingerprint was recorded.
+    pub fn is_cupcake(&self) -> Result<bool> {
+        use zcash_client_backend::data_api::{Account as _, AccountPurpose, AccountSource};
+        let db = self.db()?;
+        let account = self.account(&db)?;
+        Ok(db.get_account(account).map_err(db_err)?.is_some_and(|a| {
+            matches!(
+                a.source(),
+                AccountSource::Imported { purpose: AccountPurpose::Spending { derivation: None }, key_source } if key_source.as_deref() == Some(SEALIT_SOURCE)
+            )
+        }))
+    }
+
     /// Whether the wallet on screen is signed on a phone with Seal it.
     pub fn is_sealit(&self) -> Result<bool> {
         let db = self.db()?;
@@ -311,6 +332,9 @@ impl Wallet {
     /// Seal it, step 1: the payment as a PCZT. Returns the full PCZT (kept
     /// here, for the proofs) and the QR frames of the redacted copy for the
     /// phone.
+    ///
+    /// For Cupcake the frames carry the whole PCZT, in its layout: it signs
+    /// and then makes the proofs itself (as Zkool does).
     pub fn seal_start(&self, payment: &PreparedPayment) -> Result<(Vec<u8>, Vec<String>)> {
         use pczt::roles::redactor::Redactor;
         let Planned::Notes(proposal) = &payment.proposal else {
@@ -330,9 +354,15 @@ impl Wallet {
         )
         .map_err(other)?;
         if pczt.has_data_in_pool(zcash_protocol::PoolType::SAPLING) {
-            return Err(Error::Address("Seal it can't sign to or from an old Sapling address. Use a u1… or t1… address.".into()));
+            return Err(Error::Address("A signing phone can't sign to or from an old Sapling address. Use a u1… or t1… address.".into()));
         }
         let full = pczt.clone().serialize().map_err(|e| other(format!("{e:?}")))?;
+        drop(db);
+        if self.is_cupcake()? {
+            let for_cupcake = crate::cupcake::to_cupcake(&full)?;
+            let frames = crate::sealit::cupcake_frames(crate::sealit::UR_PCZT, &crate::sealit::pczt_envelope(&for_cupcake))?;
+            return Ok((full, frames));
+        }
         let redacted = Redactor::new(pczt)
             .redact_orchard_with(|mut r| {
                 r.redact_actions(|mut a| a.clear_spend_witness());
@@ -369,9 +399,16 @@ impl Wallet {
 
     /// Seal it, step 3: the phone's signatures and this PC's proofs
     /// together, ready to hand to the network (and stored in the wallet).
+    ///
+    /// From Cupcake, `proven` is the full PCZT without proofs: Cupcake's
+    /// reply carries its own proofs and signatures. It is taken back into the
+    /// standard layout (anything filled in for assets is refused) and
+    /// combined with this PC's copy, so it can only finish this payment; the
+    /// proofs and signatures are checked before anything is sent.
     pub fn seal_finish(&self, proven: &[u8], signed_message: &[u8]) -> Result<SignedPayment> {
         use pczt::roles::combiner::Combiner;
         let signed = crate::sealit::parse_pczt(signed_message)?;
+        let signed = if self.is_cupcake()? { crate::cupcake::from_cupcake(&signed)? } else { signed };
         let signed = pczt::Pczt::parse(&signed).map_err(|_| Error::Other("the phone's signed transaction is damaged".into()))?;
         let proven = pczt::Pczt::parse(proven).map_err(|e| other(format!("{e:?}")))?;
         let combined = Combiner::new(vec![proven, signed])
@@ -940,6 +977,33 @@ mod tests {
         let birthday = AccountBirthday::from_parts(zcash_client_backend::data_api::chain::ChainState::empty(BlockHeight::from_u32(SAPLING_ACTIVATION - 1), BlockHash([0; 32])), None);
         wallet.create_from_birthday(&seed, &birthday, SAPLING_ACTIVATION + 10).unwrap();
         (dir, wallet, seed)
+    }
+
+    /// A wallet paired from Cupcake's QR (no seed fingerprint) is told apart
+    /// from a Seal it one, which goes through the usual proving path.
+    #[test]
+    fn a_cupcake_wallet_is_told_apart() {
+        use zcash_client_backend::data_api::{AccountPurpose, Zip32Derivation};
+        let (_dir, wallet, _seed) = fresh();
+        assert!(!wallet.is_cupcake().unwrap(), "the main wallet is not");
+        let other_seed = [9u8; 32];
+        let ufvk = |i: u32| {
+            zcash_keys::keys::UnifiedSpendingKey::from_seed(&MainNetwork, &other_seed, zip32::AccountId::try_from(i).unwrap())
+                .unwrap()
+                .to_unified_full_viewing_key()
+        };
+        let birthday = AccountBirthday::from_parts(zcash_client_backend::data_api::chain::ChainState::empty(BlockHeight::from_u32(SAPLING_ACTIVATION - 1), BlockHash([0; 32])), None);
+        let (cupcake, sealit) = {
+            let mut db = wallet.db().unwrap();
+            let cupcake = db.import_account_ufvk("Cupcake", &ufvk(0), &birthday, AccountPurpose::Spending { derivation: None }, Some(SEALIT_SOURCE)).unwrap();
+            let derivation = Zip32Derivation::new(zip32::fingerprint::SeedFingerprint::from_bytes([3; 32]), zip32::AccountId::try_from(1).unwrap());
+            let sealit = db.import_account_ufvk("Seal it", &ufvk(1), &birthday, AccountPurpose::Spending { derivation: Some(derivation) }, Some(SEALIT_SOURCE)).unwrap();
+            (cupcake.id().expose_uuid().to_string(), sealit.id().expose_uuid().to_string())
+        };
+        assert!(wallet.for_account(Some(&cupcake)).is_cupcake().unwrap());
+        assert!(wallet.for_account(Some(&cupcake)).is_sealit().unwrap());
+        assert!(!wallet.for_account(Some(&sealit)).is_cupcake().unwrap());
+        assert!(wallet.for_account(Some(&sealit)).is_sealit().unwrap());
     }
 
     /// The Transparent tab: one fixed t1 address per wallet, which the

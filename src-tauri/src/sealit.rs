@@ -1,5 +1,6 @@
-//! Seal it on Windows: pairing a phone and sending with its signature, by
-//! QR codes both ways (the webcam reads the phone's codes).
+//! The signing phone on Windows (Cupcake or Seal it): pairing a phone and
+//! sending with its signature, by QR codes both ways (the webcam reads the
+//! phone's codes).
 
 use std::sync::Mutex;
 
@@ -20,6 +21,8 @@ pub struct SealSlot {
     scan: Mutex<Option<UrScan>>,
     /// The full PCZT and, once made, its proofs (made while the phone signs).
     proving: Mutex<Option<tauri::async_runtime::JoinHandle<CommandResult<Vec<u8>>>>>,
+    /// For Cupcake: the full PCZT without proofs (Cupcake makes them).
+    cupcake_full: Mutex<Option<Vec<u8>>>,
 }
 
 /// Starts reading the phone's codes: "accounts" (pairing) or "pczt" (the
@@ -58,7 +61,8 @@ fn scanned(seal: &SealSlot) -> CommandResult<Vec<u8>> {
 pub async fn sealit_pair(app: AppHandle, slot: State<'_, WalletSlot>, seal: State<'_, SealSlot>, made_in: Option<MadeIn>) -> CommandResult<String> {
     let message = scanned(&seal)?;
     let export = lockit_wallet::sealit::parse_accounts(&message)?;
-    let name = export.accounts[0].name.clone().unwrap_or_else(|| "Seal it".into());
+    let fallback = if export.from_cupcake() { "Cupcake" } else { "Seal it" };
+    let name = export.accounts[0].name.clone().unwrap_or_else(|| fallback.into());
     let main = w::main_wallet(&app)?;
     let server = w::chosen_server(&app);
     let id = tauri::async_runtime::spawn_blocking(move || -> CommandResult<String> {
@@ -84,6 +88,8 @@ pub async fn sealit_pair(app: AppHandle, slot: State<'_, WalletSlot>, seal: Stat
 pub struct Unsigned {
     /// One SVG per frame; more than one is an animated code.
     frames: Vec<String>,
+    /// For Cupcake (its own words on the screen).
+    cupcake: bool,
 }
 
 /// Seal it, step 1: turns the worked-out payment into codes for the phone,
@@ -97,18 +103,28 @@ pub async fn sealit_start(app: AppHandle, slot: State<'_, WalletSlot>, seal: Sta
         return Err(crate::problem(lockit_node::rules::words::WORK_OUT_AGAIN));
     }
     w::ready_to_send(&app, &slot, &wallet)?;
-    let (full, frames) = tauri::async_runtime::spawn_blocking(move || -> CommandResult<(Vec<u8>, Vec<String>)> {
+    let (full, frames, cupcake) = tauri::async_runtime::spawn_blocking(move || -> CommandResult<(Vec<u8>, Vec<String>, bool)> {
+        let cupcake = wallet.is_cupcake()?;
         let (full, parts) = wallet.seal_start(&payment)?;
         let frames = parts.iter().map(|p| lockit_wallet::qr_svg(p)).collect::<Result<Vec<_>, _>>()?;
-        Ok((full, frames))
+        Ok((full, frames, cupcake))
     })
     .await
     .map_err(|e| problem(format!("building the payment stopped unexpectedly: {e}")))??;
+    if cupcake {
+        // Cupcake signs and makes the proofs itself: nothing to prove here.
+        if let Some(old) = seal.proving.lock().map_err(|_| problem("the app is in an unknown state"))?.take() {
+            old.abort();
+        }
+        *seal.cupcake_full.lock().map_err(|_| problem("the app is in an unknown state"))? = Some(full);
+        return Ok(Unsigned { frames, cupcake: true });
+    }
+    *seal.cupcake_full.lock().map_err(|_| problem("the app is in an unknown state"))? = None;
     let proving = tauri::async_runtime::spawn_blocking(move || Ok(Wallet::seal_prove(&full)?));
     if let Some(old) = seal.proving.lock().map_err(|_| problem("the app is in an unknown state"))?.replace(proving) {
         old.abort();
     }
-    Ok(Unsigned { frames })
+    Ok(Unsigned { frames, cupcake: false })
 }
 
 /// Seal it, step 3: the scanned signature and this PC's proofs together,
@@ -116,14 +132,21 @@ pub async fn sealit_start(app: AppHandle, slot: State<'_, WalletSlot>, seal: Sta
 #[tauri::command]
 pub async fn sealit_finish(app: AppHandle, slot: State<'_, WalletSlot>, seal: State<'_, SealSlot>, over_tor: bool) -> CommandResult<Sent> {
     let message = scanned(&seal)?;
-    let proving = seal
-        .proving
-        .lock()
-        .map_err(|_| problem("the app is in an unknown state"))?
-        .take()
-        .ok_or_else(|| problem("no payment is waiting for this signature; start again"))?;
-    w::step(&app, "Finishing the proofs");
-    let proven = proving.await.map_err(|e| problem(format!("the proofs stopped unexpectedly: {e}")))??;
+    let cupcake_full = seal.cupcake_full.lock().map_err(|_| problem("the app is in an unknown state"))?.take();
+    let proven = match cupcake_full {
+        // Cupcake's reply carries its own proofs; they are checked on extract.
+        Some(full) => full,
+        None => {
+            let proving = seal
+                .proving
+                .lock()
+                .map_err(|_| problem("the app is in an unknown state"))?
+                .take()
+                .ok_or_else(|| problem("no payment is waiting for this signature; start again"))?;
+            w::step(&app, "Finishing the proofs");
+            proving.await.map_err(|e| problem(format!("the proofs stopped unexpectedly: {e}")))??
+        }
+    };
     let wallet = w::wallet(&app)?;
     let signed = tauri::async_runtime::spawn_blocking(move || wallet.seal_finish(&proven, &message))
         .await
@@ -142,5 +165,8 @@ pub fn sealit_cancel(seal: State<'_, SealSlot>) {
     }
     if let Ok(mut scan) = seal.scan.lock() {
         *scan = None;
+    }
+    if let Ok(mut full) = seal.cupcake_full.lock() {
+        *full = None;
     }
 }

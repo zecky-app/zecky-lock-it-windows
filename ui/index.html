@@ -175,7 +175,7 @@
           <svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none"/></svg>
           Receive
         </button>
-        <button type="button" class="secondary seal-send" id="home-seal-send" hidden>Send with Seal it</button>
+        <button type="button" class="secondary seal-send" id="home-seal-send" hidden>Send with your signing phone</button>
       </div>
       <div class="actions" id="actions-open" hidden>
         <button type="button" class="brass brass-big" id="home-send">
@@ -267,7 +267,7 @@
     <!-- Seal it: pairing a phone, and sending with its signature -->
     <section class="sheet" id="sheet-seal" hidden>
       <div class="sheet-head">
-        <div><p class="eyebrow">SEAL IT</p><h2 class="sheet-title" id="seal-title">Pair a phone</h2>
+        <div><p class="eyebrow">SIGNING PHONE</p><h2 class="sheet-title" id="seal-title">Pair a signing phone</h2>
         <p class="sheet-sub" id="seal-sub">The keys stay on your phone. This PC only sees the balance and builds payments.</p>
         <p class="small beta-warning">Experimental on Windows: try it with a tiny amount first.</p></div>
         <button type="button" class="done" id="seal-close">Cancel</button>
@@ -285,7 +285,7 @@
         <div class="seal-stage" data-seal="show" hidden>
           <img id="seal-qr" class="qr seal-qr" alt="The payment as a QR code for your phone">
           <p class="small quiet center" id="seal-frame"></p>
-          <p class="lead center">In Seal it on your phone, tap Scan and point it at this code. Check the amount and the address on the phone, then approve.</p>
+          <p class="lead center" id="seal-show-text">In Seal it on your phone, tap Scan and point it at this code. Check the amount and the address on the phone, then approve.</p>
           <button type="button" class="brass" id="seal-signed">The phone signed it</button>
         </div>
         <div class="seal-stage" data-seal="scan" hidden>
@@ -293,7 +293,7 @@
           <p class="center" id="seal-progress">Hold the phone's code in front of the camera.</p>
           <details class="seal-paste" id="seal-paste-box">
             <summary>No webcam? Paste the code as text</summary>
-            <textarea id="seal-paste" class="input mono" rows="3" spellcheck="false" placeholder="ur:zcash-accounts/…"></textarea>
+            <textarea id="seal-paste" class="input mono" rows="3" spellcheck="false" placeholder="ur:zcash-accounts/… or zcash-wallet:?…"></textarea>
             <button type="button" class="secondary narrow" id="seal-paste-go">Read it</button>
           </details>
         </div>

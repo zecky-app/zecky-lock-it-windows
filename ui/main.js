@@ -417,8 +417,8 @@ function renderHome() {
   padlockHost.title = lockOpen ? "" : "Open the lock";
   const sealed = sealedWallet();
   $("home-seal-send").hidden = !sealed;
-  if (sealed && b.total > 0 && days === null) $("held-line").textContent = "Keys on your phone (Seal it)";
-  padlockHost.title = sealed ? "Send with Seal it" : padlockHost.title;
+  if (sealed && b.total > 0 && days === null) $("held-line").textContent = "Keys on your signing phone";
+  padlockHost.title = sealed ? "Send with your signing phone" : padlockHost.title;
   $("actions-locked").hidden = lockOpen;
   $("actions-open").hidden = !lockOpen;
 
@@ -823,7 +823,7 @@ function renderKeyRing() {
     chip.classList.toggle("on", Boolean(current && current.id === w.id));
     chip.classList.toggle("out", hidden.includes(w.id));
     chip.disabled = lockOpen;
-    chip.title = lockOpen ? "Close the lock to switch wallets" : w.watch_only ? "Seal it: signed on your phone" : "";
+    chip.title = lockOpen ? "Close the lock to switch wallets" : w.watch_only ? "Signed on your signing phone (Cupcake, Seal it)" : "";
     chip.innerHTML = w.watch_only ? ENVELOPE_ICON : LOCK_ICON;
     const label = document.createElement("span");
     label.textContent = walletName(w);
@@ -898,7 +898,7 @@ document.addEventListener("keydown", (event) => { if (event.key === "Escape") cl
 
 function openPlusMenu(event) {
   showMenu(event, [
-    { label: "Pair Seal it (offline phone) · experimental", run: () => openSeal("pair") },
+    { label: "Pair a signing phone (Cupcake, Seal it) · experimental", run: () => openSeal("pair") },
     "-",
     { label: "New wallet on this PC", run: () => openAdd("new") },
     { label: "Restore a wallet with 24 words", run: () => openAdd("restore") },
@@ -1121,7 +1121,7 @@ $("report-copy").addEventListener("click", async () => {
     `Windows: ${navigator.userAgent}`,
     `Sync: ${s.state || "?"} via ${s.server || "?"}${s.problem ? ` (${s.problem})` : ""}`,
     `Scanned to block ${b.scanned_height || "?"} of ${b.chain_tip || "?"}`,
-    `Wallets: ${(o.wallets || []).length} (Seal it: ${(o.wallets || []).filter((w) => w.watch_only).length})`,
+    `Wallets: ${(o.wallets || []).length} (signing phone: ${(o.wallets || []).filter((w) => w.watch_only).length})`,
     `Keys: ${(o.keys || []).map((k) => k.kind).join(", ")}`,
     `Tor for sending: ${o.settings && o.settings.tor ? "on" : "off"}`,
     "Recent problems:",
@@ -1168,12 +1168,12 @@ function openSeal(mode) {
   closeSheet();
   openSheet("seal");
   if (mode === "pair") {
-    $("seal-title").textContent = "Pair a phone";
+    $("seal-title").textContent = "Pair a signing phone";
     $("seal-sub").textContent = "The keys stay on your phone. This PC only sees the balance and builds payments.";
-    startScan("accounts", "In Seal it on your phone, open the account QR code and hold it in front of the camera.");
+    startScan("accounts", "On your signing phone (Cupcake or Seal it), open the QR code for connecting a wallet and hold it in front of the camera.");
   } else {
     const w = currentWallet();
-    $("seal-title").textContent = `Send from ${w ? walletName(w) : "Seal it"}`;
+    $("seal-title").textContent = `Send from ${w ? walletName(w) : "your signing phone"}`;
     $("seal-sub").textContent = "Your phone signs it. Nothing that can spend is on this PC.";
     for (const id of ["seal-to", "seal-amount", "seal-memo"]) $(id).value = "";
     $("seal-summary").hidden = true;
@@ -1223,6 +1223,9 @@ $("seal-show").addEventListener("click", async () => {
   $("seal-show").disabled = true;
   try {
     const unsigned = await invoke("sealit_start");
+    $("seal-show-text").textContent = unsigned.cupcake
+      ? "In Cupcake, scan this code. Check the amount and the address on the phone, then sign. Cupcake makes the proofs; this can take a minute on the phone."
+      : "In Seal it on your phone, tap Scan and point it at this code. Check the amount and the address on the phone, then approve.";
     seal.frames = unsigned.frames.map((svg) => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg));
     sealStage("show");
     let index = 0;
@@ -1253,7 +1256,7 @@ async function startScan(kind, hint) {
   document.querySelector("#sheet-seal .camera").hidden = false;
   $("seal-progress").textContent = hint;
   $("seal-paste").value = "";
-  $("seal-paste").placeholder = kind === "accounts" ? "ur:zcash-accounts/…" : "ur:zcash-pczt/…";
+  $("seal-paste").placeholder = kind === "accounts" ? "ur:zcash-accounts/… or zcash-wallet:?…" : "ur:zcash-pczt/…";
   try {
     await invoke("sealit_scan_start", { kind });
   } catch (problem) {
@@ -1267,7 +1270,7 @@ async function startScan(kind, hint) {
     return noCamera(name === "NotAllowedError"
       ? "Lock it was not allowed to use the camera. Allow it in Windows Settings › Privacy › Camera, then try again."
       : name === "NotFoundError" || name === "OverconstrainedError"
-        ? "No webcam was found. Seal it reads the phone's codes with a webcam; everything else in Lock it works without one."
+        ? "No webcam was found. Pairing and signing with a phone read its codes with a webcam; everything else in Lock it works without one."
         : "The camera could not start. Close other apps that use it, then try again.");
   }
   const video = $("seal-video");
@@ -1316,7 +1319,9 @@ async function pushScanned(text) {
       return;
     }
     stopCamera();
-    if (seal.kind === "accounts") sealStage("age");
+    // Cupcake's QR needs no "when were the words made": it starts at NU7.
+    if (seal.kind === "accounts" && progress.cupcake) await pair(null);
+    else if (seal.kind === "accounts") sealStage("age");
     else await finishSeal();
   } catch (problem) {
     say($("seal-message"), describe(problem));
@@ -2694,6 +2699,7 @@ const CHAPTERS = [
     "With a time lock, opening has to be asked for 24 hours, 3 or 7 days ahead. In an emergency, Break the glass opens straight away and stays on record. The time lock is sealed inside the lock itself, so it cannot be removed by editing files. It does not stop someone who has your 24 words.",
     "The wait counts twice: by the clock and by the Zcash blocks made since you asked (one about every 25 seconds). Moving this PC's clock forward opens nothing; until Lock it knows the network's height, the lock stays closed. Shortening or switching off the time lock waits the same way.",
     "Every change is listed in Activity › The lock.",
+    "A wallet paired from a signing phone (Cupcake or Seal it) is followed here with its viewing key only: payments are signed on the phone, and nothing that can spend is on this PC. Seal it signs and this PC makes the proofs; Cupcake makes the proofs itself, and Lock it checks them and the signatures before anything is sent, and only for the payment it built.",
   ]],
   ["Private by default", "Amounts, senders and addresses stay hidden.", [
     "Receive shows a shielded address, so amounts, senders and receivers stay private on the blockchain.",

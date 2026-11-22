@@ -17,6 +17,7 @@
 mod amount;
 mod birthday;
 mod cache;
+pub mod cupcake;
 mod net;
 mod phrase;
 mod rng_compat;

@@ -9,6 +9,12 @@
 //! ```
 //!
 //! Spending keys never touch this PC. Sapling is refused (as on the Mac).
+//!
+//! The signing phone can also be Cupcake (Cake Wallet's offline signer):
+//! it pairs with a plain `zcash-wallet:?label=…&private_key=<UFVK>` QR,
+//! reads only sequenced lower-case frames, and signs PCZTs in its own
+//! shielded-assets layout (see [`crate::cupcake`]); it makes the proofs
+//! itself, so it gets the whole PCZT (Lock it Mac, 22 Nov 2026).
 
 use crate::{Error, Result};
 
@@ -203,14 +209,86 @@ pub struct SignerAccount {
 /// What the phone shows to pair: its seed's fingerprint and accounts.
 #[derive(Clone, Debug)]
 pub struct AccountsExport {
-    /// The fingerprint of the phone's seed.
-    pub seed_fingerprint: [u8; 32],
+    /// The fingerprint of the phone's seed; `None` for Cupcake, whose QR
+    /// carries only the viewing key.
+    pub seed_fingerprint: Option<[u8; 32]>,
     /// Its accounts (the first is paired).
     pub accounts: Vec<SignerAccount>,
 }
 
-/// Reads `ur:zcash-accounts` (the Keystone registry format).
+impl AccountsExport {
+    /// Paired from Cupcake's QR.
+    pub fn from_cupcake(&self) -> bool {
+        self.seed_fingerprint.is_none()
+    }
+}
+
+/// Whether a scanned text is Cupcake's account QR.
+pub fn is_cupcake_pairing(text: &str) -> bool {
+    text.trim().to_ascii_lowercase().starts_with("zcash-wallet:")
+}
+
+/// Cupcake's account QR: `zcash-wallet:?label=<name>&private_key=<UFVK>`.
+/// The "private_key" is a viewing key (it cannot spend); it must be a valid
+/// mainnet unified full viewing key. No seed fingerprint or account number:
+/// Cupcake signs with its own account.
+pub fn parse_cupcake(text: &str) -> Result<AccountsExport> {
+    let refused = || bad("it holds no valid Zcash viewing key (mainnet)");
+    let text = text.trim();
+    if !is_cupcake_pairing(text) {
+        return Err(refused());
+    }
+    let query = text.split_once('?').map(|(_, q)| q).unwrap_or("");
+    let mut label = None;
+    let mut ufvk = None;
+    for pair in query.split('&') {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let value = percent_decode(value);
+        match key {
+            "label" => label = Some(value),
+            "private_key" => ufvk = Some(value),
+            _ => {}
+        }
+    }
+    let ufvk = ufvk.ok_or_else(refused)?;
+    zcash_keys::keys::UnifiedFullViewingKey::decode(&zcash_protocol::consensus::MainNetwork, &ufvk).map_err(|_| refused())?;
+    let label = label.map(|l| l.trim().to_owned()).filter(|l| !l.is_empty()).unwrap_or_else(|| "Cupcake".into());
+    let name: String = label.chars().take(40).collect();
+    Ok(AccountsExport { seed_fingerprint: None, accounts: vec![SignerAccount { ufvk, index: 0, name: Some(name) }] })
+}
+
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(b)) => {
+                out.push(b);
+                i += 3;
+            }
+            (b'+', _) => {
+                out.push(b' ');
+                i += 1;
+            }
+            (b, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Reads `ur:zcash-accounts` (the Keystone registry format), or Cupcake's
+/// plain `zcash-wallet:` QR.
 pub fn parse_accounts(message: &[u8]) -> Result<AccountsExport> {
+    if let Ok(text) = std::str::from_utf8(message) {
+        if is_cupcake_pairing(text) {
+            return parse_cupcake(text);
+        }
+    }
     let root = cbor_decode(message)?;
     let fingerprint = root.get(1).and_then(Cbor::bytes).ok_or_else(|| bad("the seed fingerprint is missing"))?;
     let seed_fingerprint: [u8; 32] = fingerprint.try_into().map_err(|_| bad("the seed fingerprint is not 32 bytes"))?;
@@ -228,7 +306,7 @@ pub fn parse_accounts(message: &[u8]) -> Result<AccountsExport> {
     if accounts.is_empty() {
         return Err(bad("it holds no accounts"));
     }
-    Ok(AccountsExport { seed_fingerprint, accounts })
+    Ok(AccountsExport { seed_fingerprint: Some(seed_fingerprint), accounts })
 }
 
 /// Reads `ur:zcash-pczt` into the raw PCZT.
@@ -251,6 +329,16 @@ pub fn ur_frames(ur_type: &str, message: &[u8]) -> Result<Vec<String>> {
     (0..count * 2).map(|_| encoder.next_part().map(|p| p.to_uppercase()).map_err(|e| Error::Other(e.to_string()))).collect()
 }
 
+/// The frames for Cupcake: its reader only takes the sequenced form
+/// "ur:type/n-m/…" (even for one frame), compares the type in lower case,
+/// and finishes at exactly n distinct frames of n, so it never takes the
+/// mixed frames after n. Lower case, sequenced, frames 1..n only, looped.
+pub fn cupcake_frames(ur_type: &str, message: &[u8]) -> Result<Vec<String>> {
+    let mut encoder = ur::Encoder::new(message, FRAGMENT, ur_type).map_err(|e| Error::Other(e.to_string()))?;
+    let count = encoder.fragment_count();
+    (0..count).map(|_| encoder.next_part().map(|p| p.to_ascii_lowercase()).map_err(|e| Error::Other(e.to_string()))).collect()
+}
+
 /// How far a scan is.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct ScanProgress {
@@ -260,6 +348,8 @@ pub struct ScanProgress {
     pub seen: usize,
     /// Parts in the message.
     pub of: usize,
+    /// The account QR came from Cupcake (it needs no "when were the words made").
+    pub cupcake: bool,
 }
 
 /// Limits for what a scanned part may announce (Lock it Mac, audit 22 Nov
@@ -337,19 +427,32 @@ impl UrScan {
         if self.message.is_none() {
             self.take(raw)?;
         }
-        Ok(ScanProgress { done: self.message.is_some(), seen: self.seen.len().min(self.of.max(1)), of: self.of.max(1) })
+        let cupcake = self.message.as_deref().and_then(|m| std::str::from_utf8(m).ok()).is_some_and(is_cupcake_pairing);
+        Ok(ScanProgress { done: self.message.is_some(), seen: self.seen.len().min(self.of.max(1)), of: self.of.max(1), cupcake })
     }
 
     fn take(&mut self, raw: &str) -> Result<()> {
+        // Cupcake shows its account as a plain QR, not a UR.
+        let plain = raw.trim_matches(|c: char| c.is_whitespace() || c.is_control());
+        if is_cupcake_pairing(plain) {
+            if self.expected != UR_ACCOUNTS {
+                return Err(Error::Other("that is Cupcake's code for connecting a wallet, not the signed transaction".into()));
+            }
+            parse_cupcake(plain)?;
+            self.of = 1;
+            self.seen.insert(1);
+            self.message = Some(plain.as_bytes().to_vec());
+            return Ok(());
+        }
         let lowered = raw.to_ascii_lowercase();
         let Some(start) = lowered.find("ur:") else {
-            return Err(Error::Other("that QR code isn't from Seal it".into()));
+            return Err(Error::Other("that QR code isn't from Cupcake or Seal it".into()));
         };
         let text = lowered[start..].trim_matches(|c: char| c.is_whitespace() || c.is_control());
         let parts: Vec<&str> = text[3..].split('/').collect();
         if parts[0] != self.expected {
             return Err(Error::Other(if self.expected == UR_ACCOUNTS {
-                format!("that is not the account QR code (it is {}); in Seal it, show the account QR", parts[0])
+                format!("that is not the QR code for connecting a wallet (it is {}); in Cupcake or Seal it, show that QR code", parts[0])
             } else {
                 format!("that is not the signed transaction (it is {})", parts[0])
             }));
@@ -390,6 +493,79 @@ impl UrScan {
     /// The whole message, once complete.
     pub fn message(&self) -> Option<&[u8]> {
         self.message.as_deref()
+    }
+}
+
+#[cfg(test)]
+mod cupcake_tests {
+    use super::*;
+
+    fn ufvk() -> String {
+        let seed = [7u8; 32];
+        let usk = zcash_keys::keys::UnifiedSpendingKey::from_seed(&zcash_protocol::consensus::MainNetwork, &seed, zip32::AccountId::ZERO).unwrap();
+        usk.to_unified_full_viewing_key().encode(&zcash_protocol::consensus::MainNetwork).unwrap()
+    }
+
+    /// Cupcake's account QR is a plain "zcash-wallet:" URI with a viewing
+    /// key, not a UR. Read for pairing, refused anywhere else.
+    #[test]
+    fn cupcakes_pairing_qr_is_read() {
+        let key = ufvk();
+        let qr = format!("zcash-wallet:?label=My%20Cupcake&private_key={key}");
+        let mut scan = UrScan::new(UR_ACCOUNTS);
+        let progress = scan.receive(&qr).unwrap();
+        assert!(progress.done && progress.cupcake);
+        let export = parse_accounts(scan.message().unwrap()).unwrap();
+        assert!(export.from_cupcake());
+        assert_eq!(export.seed_fingerprint, None);
+        assert_eq!(export.accounts[0].ufvk, key);
+        assert_eq!(export.accounts[0].name.as_deref(), Some("My Cupcake"));
+        // Not where a signed payment is expected.
+        assert!(UrScan::new(UR_PCZT).receive(&qr).is_err());
+        // No label: named Cupcake.
+        assert_eq!(parse_cupcake(&format!("zcash-wallet:?private_key={key}")).unwrap().accounts[0].name.as_deref(), Some("Cupcake"));
+        // A broken key, no key, a testnet key, or another scheme: refused.
+        for bad in [
+            "zcash-wallet:?label=x&private_key=uview1notakey".to_string(),
+            "zcash-wallet:?label=x".to_string(),
+            "zcash-wallet:?private_key=uviewtest1qqqqqqqqqqqqqqqqqqqqqqqqqqq".to_string(),
+            format!("zcash:?private_key={key}"),
+        ] {
+            assert!(parse_cupcake(&bad).is_err(), "{bad}");
+        }
+    }
+
+    /// Cupcake's reader (Mac, 22 Nov 2026) failed with "Unable to handle ''
+    /// UR tag": it needs "ur:type/1-1/…" even for one frame, in lower case.
+    #[test]
+    fn cupcake_gets_sequenced_lower_case_frames() {
+        let small = vec![7u8; 40];
+        let usual = ur_frames(UR_PCZT, &pczt_envelope(&small)).unwrap();
+        assert!(usual[0].starts_with("UR:ZCASH-PCZT/") && usual.len() == 1, "Seal it and Keystone: as before");
+        let frames = cupcake_frames(UR_PCZT, &pczt_envelope(&small)).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert!(frames[0].starts_with("ur:zcash-pczt/1-1/"), "{}", frames[0]);
+        let mut scan = UrScan::new(UR_PCZT);
+        assert!(scan.receive(&frames[0]).unwrap().done);
+        assert_eq!(parse_pczt(scan.message().unwrap()).unwrap(), small);
+    }
+
+    /// Cupcake finishes at exactly n distinct frames of n: only frames 1..n,
+    /// and those n alone rebuild the message.
+    #[test]
+    fn cupcake_gets_only_the_plain_frames() {
+        let big: Vec<u8> = (0..3000u32).map(|i| (i % 251) as u8).collect();
+        let frames = cupcake_frames(UR_PCZT, &pczt_envelope(&big)).unwrap();
+        let n = frames.len();
+        assert!(n > 1);
+        for (i, frame) in frames.iter().enumerate() {
+            assert!(frame.starts_with(&format!("ur:zcash-pczt/{}-{n}/", i + 1)), "{frame}");
+        }
+        let mut scan = UrScan::new(UR_PCZT);
+        for frame in &frames {
+            scan.receive(frame).unwrap();
+        }
+        assert_eq!(parse_pczt(scan.message().unwrap()).unwrap(), big);
     }
 }
 
@@ -473,7 +649,7 @@ mod tests {
     #[test]
     fn accounts_are_read() {
         let export = parse_accounts(&accounts_message()).unwrap();
-        assert_eq!(export.seed_fingerprint, [7; 32]);
+        assert_eq!(export.seed_fingerprint, Some([7; 32]));
         assert_eq!(export.accounts[0].ufvk, "uview1test");
         assert_eq!(export.accounts[0].index, 0);
         assert_eq!(export.accounts[0].name.as_deref(), Some("Phone"));
