@@ -637,21 +637,7 @@ pub struct Prepared {
 
 /// "1.5", "0.001" or "1,5" in ZEC, to zatoshis. At most 8 decimals.
 fn parse_zec(text: &str) -> CommandResult<u64> {
-    let text = text.trim().replace(',', ".");
-    let (whole, fraction) = text.split_once('.').unwrap_or((&text, ""));
-    if whole.is_empty() && fraction.is_empty() || !whole.chars().chain(fraction.chars()).all(|c| c.is_ascii_digit()) {
-        return Err(problem("type the amount in ZEC, for example 0.25"));
-    }
-    if fraction.len() > 8 {
-        return Err(problem("ZEC has at most 8 decimals"));
-    }
-    let whole: u64 = if whole.is_empty() { 0 } else { whole.parse().map_err(|_| problem("that amount is too large"))? };
-    let fraction: u64 = format!("{fraction:0<8}").parse().unwrap_or(0);
-    let zats = whole.checked_mul(100_000_000).and_then(|w| w.checked_add(fraction)).ok_or_else(|| problem("that amount is too large"))?;
-    if zats == 0 {
-        return Err(problem("the amount must be more than zero"));
-    }
-    Ok(zats)
+    lockit_wallet::parse_zec(text).map_err(problem)
 }
 
 /// Nothing is priced or signed until the wallet is up to date: a good sync

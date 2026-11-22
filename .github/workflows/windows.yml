@@ -45,7 +45,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --locked -p lockit-auth -p lockit-node -p lockit-tor
+      # lockit-wallet builds the light-wallet client, which may need protoc.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: cargo test --locked -p lockit-auth -p lockit-node -p lockit-tor -p lockit-wallet
       # The screen's scripts must parse, or the app opens to a dead screen.
       - name: Screen scripts parse
         run: for f in ui/*.js; do node --check "$f"; done

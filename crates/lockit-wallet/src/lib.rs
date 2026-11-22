@@ -14,6 +14,7 @@
 
 #![warn(missing_docs)]
 
+mod amount;
 mod birthday;
 mod cache;
 mod net;
@@ -22,6 +23,7 @@ mod rng_compat;
 pub mod sealit;
 mod wallet;
 
+pub use amount::parse_zec;
 pub use net::{is_private_host, Server, PUBLIC_SERVERS};
 pub use phrase::{new_phrase, phrase_to_seed, validate_phrase, Seed};
 pub use birthday::{estimate_birthday, SAPLING_ACTIVATION};
