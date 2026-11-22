@@ -494,11 +494,11 @@ $("glass-seen").addEventListener("click", async () => { await invoke("seen_broke
 
 function hoursLabel(h) { return h === 0 ? "Off" : h === 24 ? "24 hours" : h % 24 === 0 ? `${h / 24} days` : `${h} hours`; }
 
-/// The wallet the lock opens for, as a small gold capsule on the prompts,
-/// when the lock holds more than one wallet.
-function showWalletTag(id) {
+/// A wallet as a small gold capsule. The prompts show the wallet the lock
+/// opens for when the lock holds more than one wallet; Receive and Send
+/// always name the wallet they work on, under the title (as on Lock it Mac).
+function showWalletTag(id, w = payingWallet()) {
   const tag = $(id);
-  const w = payingWallet();
   tag.hidden = !w;
   tag.textContent = "";
   if (!w) return;
@@ -1408,6 +1408,10 @@ function showReceiveTab(transparent) {
 }
 
 $("home-receive").addEventListener("click", async () => {
+  // Each wallet has its own addresses: never keep the last wallet's.
+  for (const id of ["receive-address", "receive-t-address"]) $(id).textContent = "";
+  for (const id of ["receive-qr", "receive-t-qr"]) $(id).removeAttribute("src");
+  showWalletTag("receive-wallet", currentWallet());
   openSheet("receive");
   showReceiveTab(false);
   try {
@@ -1723,6 +1727,7 @@ function openSend() {
   sendStage = overview && overview.unsent ? "unsent" : "compose";
   renderSendSaved();
   renderSendWallet();
+  showWalletTag("send-wallet", currentWallet());
   say($("send-message"), sendStage === "unsent" ? "A signed payment did not reach a server. It is the same payment each time, so nothing is paid twice." : "");
   sendLayout();
   openSheet("send");
