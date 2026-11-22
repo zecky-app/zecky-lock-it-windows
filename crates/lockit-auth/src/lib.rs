@@ -30,6 +30,7 @@ mod error;
 pub mod keyring;
 pub mod keys;
 pub mod protect;
+pub mod timelock;
 mod secret;
 mod vault;
 

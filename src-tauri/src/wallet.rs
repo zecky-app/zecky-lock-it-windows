@@ -827,11 +827,14 @@ async fn open_lock_inner(app: &AppHandle, window: &WebviewWindow, typed: Typed, 
     .await
     .map_err(|e| problem(format!("asking the keys stopped unexpectedly: {e}")))??;
     let mut changed = false;
-    if let (Some(hours), Some(from)) = (opened.policy.pending_hours, opened.policy.pending_from) {
-        if from <= now() {
+    if let Some(hours) = opened.policy.pending_hours {
+        // Takes over only once its wait has passed by the clock and the blocks.
+        if crate::rules::pending_due(app, &opened.policy) {
             opened.policy.time_lock_hours = hours;
             opened.policy.pending_hours = None;
             opened.policy.pending_from = None;
+            opened.policy.pending_asked_at = None;
+            opened.policy.pending_height = None;
             changed = true;
         }
     }

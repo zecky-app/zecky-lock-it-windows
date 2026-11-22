@@ -523,7 +523,7 @@ function showTimeLock() {
   } else {
     const ready = Date.now() / 1000 + rules.hours * 3600;
     $("tl-title").textContent = "Ask to open the lock";
-    $("tl-text").textContent = `Your time lock asks for ${hoursLabel(rules.hours)} first. Start the wait now, and the lock can be opened from ${dateTime(ready)}, for 24 hours. Nobody legitimate will ever rush you.`;
+    $("tl-text").textContent = `Your time lock asks for ${hoursLabel(rules.hours)} first. Start the wait now, and the lock can be opened from ${dateTime(ready)} (once the matching Zcash blocks are there too), for 24 hours. Nobody legitimate will ever rush you.`;
     $("tl-ask").textContent = "Start the wait";
   }
   $("timelock-prompt").hidden = false;
@@ -2283,7 +2283,7 @@ for (const chip of document.querySelectorAll("[data-hours]")) {
     const from = Date.now() / 1000 + rules.hours * 3600;
     const text = longer
       ? `From now on, opening the lock has to be asked ${hoursLabel(hours).toLowerCase()} ahead. Turning it off or shorter later also takes ${hoursLabel(hours).toLowerCase()}. In an emergency you can break the glass. The new rule is sealed into the lock, so your keys are asked.`
-      : `This takes effect on ${dateTime(from)}, after the current ${hoursLabel(rules.hours).toLowerCase()}. Until then the time lock stays as it is. Your keys are asked.`;
+      : `This takes effect on ${dateTime(from)} at the earliest, after the current ${hoursLabel(rules.hours).toLowerCase()} have passed by the clock and by the Zcash blocks. Until then the time lock stays as it is. Your keys are asked.`;
     try {
       const typed = await askKeys(title, text, { action: hours === 0 ? "Turn off" : longer ? "Set time lock" : "Shorten" });
       await invoke("time_lock_choose", { hours, typed: typedOnly(typed) });
@@ -2635,6 +2635,7 @@ const CHAPTERS = [
     "Windows Hello keeps its key in this PC's security chip (TPM) and asks for your face, fingerprint or PIN.",
     "A security key, such as a YubiKey, signs a fresh challenge each time and Lock it checks the signature itself; nothing goes over the internet. It always comes together with Windows Hello or a passphrase.",
     "With a time lock, opening has to be asked for 24 hours, 3 or 7 days ahead. In an emergency, Break the glass opens straight away and stays on record. The time lock is sealed inside the lock itself, so it cannot be removed by editing files. It does not stop someone who has your 24 words.",
+    "The wait counts twice: by the clock and by the Zcash blocks made since you asked (one about every 25 seconds). Moving this PC's clock forward opens nothing; until Lock it knows the network's height, the lock stays closed. Shortening or switching off the time lock waits the same way.",
     "Every change is listed in Activity › The lock.",
   ]],
   ["Private by default", "Amounts, senders and addresses stay hidden.", [

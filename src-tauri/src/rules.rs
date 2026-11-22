@@ -19,7 +19,9 @@ use std::fs;
 
 use lockit_auth::{
     keys::{key_check, passphrase::PassphraseKey},
-    protect, KeyDescriptor, KeyKind, KeySource, Policy,
+    protect,
+    timelock::{self, block_seconds, Phase, Request, HOUR},
+    KeyDescriptor, KeyKind, KeySource, Policy,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State, WebviewWindow};
@@ -30,9 +32,6 @@ use crate::{
     CommandResult,
 };
 
-const HOUR: i64 = 3600;
-/// How long the lock can be opened once the wait is over.
-const WINDOW: i64 = 24 * HOUR;
 /// The choices, in hours, as on the Mac.
 const CHOICES: [u32; 4] = [0, 24, 72, 168];
 /// The sentence to type before breaking the glass.
@@ -43,8 +42,15 @@ const STATE_FILE: &str = "lock-state.bin";
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
 struct LockState {
-    /// When the lock can be opened (asked for with "Start the wait").
+    /// When the lock can be opened by the clock (asked for with "Start the wait").
     ready_at: Option<i64>,
+    /// When opening was asked for, and at which block: the wait must pass
+    /// by the clock and by the blocks (Lock it Mac, 22 Nov 2026).
+    asked_at: Option<i64>,
+    asked_height: Option<u32>,
+    /// A shorter time lock chosen before heights were recorded: its
+    /// pending_from, and the first block seen after it.
+    legacy_pending: Option<(i64, u32)>,
     /// Every time the glass was broken, newest first (the last 10).
     broken: Vec<i64>,
     /// Home still has to say the glass was broken.
@@ -69,33 +75,6 @@ pub struct Removal {
 const REMOVAL_SECONDS: i64 = 48 * HOUR;
 /// A server may lag a few blocks behind another; more is suspect.
 const BEHIND_TOLERANCE: u32 = 10;
-const BLOSSOM: u32 = 653_600;
-const NU7: u32 = 3_543_405;
-
-fn spacing(height: u32) -> i64 {
-    if height < BLOSSOM { 150 } else if height < NU7 { 75 } else { 25 }
-}
-
-/// Target seconds of the blocks after `from`, up to and including `to`.
-fn block_seconds(from: u32, to: u32) -> i64 {
-    if to <= from {
-        return 0;
-    }
-    let mut total = 0;
-    let mut h = from + 1;
-    for edge in [BLOSSOM, NU7, u32::MAX] {
-        if h > to {
-            break;
-        }
-        let end = to.min(edge.saturating_sub(1));
-        if end >= h {
-            total += (end - h + 1) as i64 * spacing(h);
-            h = end + 1;
-        }
-    }
-    total
-}
-
 /// Where a removal starts counting: never below the highest height seen.
 /// `None` when the server is clearly behind.
 fn removal_start_height(synced: u32, seen: u32) -> Option<u32> {
@@ -210,44 +189,84 @@ fn label(hours: u32) -> String {
     }
 }
 
-/// The time lock in force now: a shorter one takes over once its wait passed.
-fn effective(policy: &Policy, at: i64) -> u32 {
-    match (policy.pending_hours, policy.pending_from) {
-        (Some(hours), Some(from)) if from <= at => hours,
-        _ => policy.time_lock_hours,
+/// Fills in heights for a request or change made before they were recorded:
+/// the blocks count from the first height seen after it (as the Mac).
+fn filled_state(app: &AppHandle, policy: &Policy, tip: u32) -> LockState {
+    let mut state = load_state(app);
+    let mut changed = false;
+    if tip > 0 {
+        if let Some(ready) = state.ready_at {
+            if state.asked_height.is_none() {
+                state.asked_height = Some(tip);
+                if state.asked_at.is_none() {
+                    state.asked_at = Some(ready - policy.time_lock_hours as i64 * HOUR);
+                }
+                changed = true;
+            }
+        }
+        match (policy.pending_from, policy.pending_height, state.legacy_pending) {
+            (Some(from), None, Some((seen_from, _))) if seen_from == from => {}
+            (Some(from), None, _) => {
+                state.legacy_pending = Some((from, tip));
+                changed = true;
+            }
+            (_, _, Some(_)) => {
+                state.legacy_pending = None;
+                changed = true;
+            }
+            _ => {}
+        }
+    }
+    if changed {
+        let _ = save_state(app, &state);
+    }
+    state
+}
+
+fn legacy_height(policy: &Policy, state: &LockState) -> Option<u32> {
+    match (policy.pending_from, state.legacy_pending) {
+        (Some(from), Some((seen_from, height))) if from == seen_from => Some(height),
+        _ => None,
     }
 }
 
-/// Where the time lock stands.
-#[derive(Serialize, PartialEq, Debug)]
-#[serde(tag = "phase", rename_all = "snake_case")]
-pub enum Phase {
-    /// No time lock.
-    Off,
-    /// A time lock, and opening was not asked for.
-    NotAsked,
-    /// Asked for; the lock can be opened from `until`.
-    Waiting { until: i64 },
-    /// The wait is over; the lock can be opened until `until`.
-    Ready { until: i64 },
+/// The time lock in force now: a shorter one takes over once its wait has
+/// passed by the clock and by the blocks.
+fn effective(policy: &Policy, state: &LockState, at: i64, tip: u32) -> u32 {
+    timelock::effective(policy, at, tip, legacy_height(policy, state))
 }
 
-fn phase_at(hours: u32, ready_at: Option<i64>, at: i64) -> Phase {
-    if hours == 0 {
-        return Phase::Off;
-    }
-    match ready_at {
-        None => Phase::NotAsked,
-        Some(ready) if at < ready => Phase::Waiting { until: ready },
-        Some(ready) if at <= ready + WINDOW => Phase::Ready { until: ready + WINDOW },
-        // A request that was never used lapses after its window.
-        Some(_) => Phase::NotAsked,
-    }
+/// A shorter time lock waiting in the lock has passed its wait.
+pub fn pending_due(app: &AppHandle, policy: &Policy) -> bool {
+    let tip = network_height(app);
+    let state = filled_state(app, policy, tip);
+    timelock::pending_due(policy, now(), tip, legacy_height(policy, &state))
+}
+
+fn clear_pending(policy: &mut Policy) {
+    policy.pending_hours = None;
+    policy.pending_from = None;
+    policy.pending_asked_at = None;
+    policy.pending_height = None;
+}
+
+fn clear_request(state: &mut LockState) {
+    state.ready_at = None;
+    state.asked_at = None;
+    state.asked_height = None;
+}
+
+fn request(state: &LockState) -> Option<Request> {
+    let ready_at = state.ready_at?;
+    Some(Request { asked_at: state.asked_at.unwrap_or(ready_at), asked_height: state.asked_height, ready_at })
 }
 
 fn current_phase(app: &AppHandle) -> CommandResult<Phase> {
     let policy = read_lock(app)?.map(|v| v.policy).unwrap_or_default();
-    Ok(phase_at(effective(&policy, now()), load_state(app).ready_at, now()))
+    let tip = network_height(app);
+    let state = filled_state(app, &policy, tip);
+    let at = now();
+    Ok(timelock::phase(effective(&policy, &state, at, tip), request(&state), at, tip))
 }
 
 /// Refuses to open the lock while the time lock says no.
@@ -315,15 +334,16 @@ pub fn lock_rules(app: AppHandle) -> CommandResult<RulesView> {
     let vault = read_lock(&app)?;
     let policy = vault.as_ref().map(|v| v.policy.clone()).unwrap_or_default();
     let at = now();
-    let hours = effective(&policy, at);
-    let pending = policy.pending_from.is_some_and(|from| from > at);
-    let state = load_state(&app);
+    let tip = network_height(&app);
+    let state = filled_state(&app, &policy, tip);
+    let hours = effective(&policy, &state, at, tip);
+    let pending = policy.pending_hours.is_some() && hours == policy.time_lock_hours;
     let keys: Vec<KeyKind> = vault.as_ref().map(|v| v.keys.iter().map(|k| k.kind).collect()).unwrap_or_default();
     Ok(RulesView {
         hours,
         pending_hours: if pending { policy.pending_hours } else { None },
         pending_from: if pending { policy.pending_from } else { None },
-        phase: phase_at(hours, state.ready_at, at),
+        phase: timelock::phase(hours, request(&state), at, tip),
         broken_notice: state.broken_notice,
         last_broken: state.broken.first().copied(),
         code: keys.contains(&KeyKind::Code),
@@ -367,13 +387,16 @@ pub async fn time_lock_choose(app: AppHandle, window: WebviewWindow, hours: u32,
     let current = opened.policy.time_lock_hours;
     if hours >= current {
         opened.policy.time_lock_hours = hours;
-        opened.policy.pending_hours = None;
-        opened.policy.pending_from = None;
+        clear_pending(&mut opened.policy);
         log(&app, if hours == 0 { "Time lock off".into() } else { format!("Time lock on · {}", label(hours).to_lowercase()) });
     } else {
-        let from = now() + current as i64 * HOUR;
+        let at = now();
+        let from = at + current as i64 * HOUR;
+        let tip = network_height(&app);
         opened.policy.pending_hours = Some(hours);
         opened.policy.pending_from = Some(from);
+        opened.policy.pending_asked_at = Some(at);
+        opened.policy.pending_height = (tip > 0).then_some(tip);
         log(&app, format!("{} from {}", if hours == 0 { "Time lock off".into() } else { format!("Time lock {}", label(hours).to_lowercase()) }, when(from)));
     }
     reseal(&app, &opened)
@@ -384,8 +407,7 @@ pub async fn time_lock_choose(app: AppHandle, window: WebviewWindow, hours: u32,
 #[tauri::command]
 pub async fn time_lock_keep(app: AppHandle, window: WebviewWindow, typed: Typed) -> CommandResult<()> {
     let mut opened = open_fully(&app, &window, typed).await?;
-    opened.policy.pending_hours = None;
-    opened.policy.pending_from = None;
+    clear_pending(&mut opened.policy);
     reseal(&app, &opened)?;
     log(&app, format!("Kept the {} time lock", label(opened.policy.time_lock_hours).to_lowercase()));
     Ok(())
@@ -395,12 +417,16 @@ pub async fn time_lock_keep(app: AppHandle, window: WebviewWindow, typed: Typed)
 #[tauri::command]
 pub fn time_lock_request(app: AppHandle) -> CommandResult<()> {
     let policy = read_lock(&app)?.map(|v| v.policy).unwrap_or_default();
-    let hours = effective(&policy, now());
+    let tip = network_height(&app);
+    let mut state = filled_state(&app, &policy, tip);
+    let at = now();
+    let hours = effective(&policy, &state, at, tip);
     if hours == 0 {
         return Ok(());
     }
-    let mut state = load_state(&app);
-    state.ready_at = Some(now() + hours as i64 * HOUR);
+    state.ready_at = Some(at + hours as i64 * HOUR);
+    state.asked_at = Some(at);
+    state.asked_height = (tip > 0).then_some(tip);
     save_state(&app, &state)
 }
 
@@ -408,7 +434,7 @@ pub fn time_lock_request(app: AppHandle) -> CommandResult<()> {
 #[tauri::command]
 pub fn time_lock_cancel_request(app: AppHandle) -> CommandResult<()> {
     let mut state = load_state(&app);
-    state.ready_at = None;
+    clear_request(&mut state);
     save_state(&app, &state)
 }
 
@@ -421,16 +447,17 @@ pub async fn break_glass(app: AppHandle, window: WebviewWindow, slot: State<'_, 
         return Err(problem(format!("type: {GLASS_SENTENCE}")));
     }
     let mut opened = open_fully(&app, &window, typed).await?;
-    let was = effective(&opened.policy, now());
+    let tip = network_height(&app);
+    let was = effective(&opened.policy, &filled_state(&app, &opened.policy, tip), now(), tip);
     opened.policy.time_lock_hours = 0;
-    opened.policy.pending_hours = None;
-    opened.policy.pending_from = None;
+    clear_pending(&mut opened.policy);
     reseal(&app, &opened)?;
     let mut state = load_state(&app);
     state.broken.insert(0, now());
     state.broken.truncate(10);
     state.broken_notice = true;
-    state.ready_at = None;
+    clear_request(&mut state);
+    state.legacy_pending = None;
     state.log.insert(0, LogEntry { at: now(), text: format!("Opened past a {} time lock · time lock off", label(was).to_lowercase()) });
     save_state(&app, &state)?;
     crate::wallet::set_opened(&slot, opened.phrase);
@@ -756,16 +783,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_time_lock_phases_follow_the_mac() {
-        let t = 1_800_000_000;
-        assert_eq!(phase_at(0, None, t), Phase::Off);
-        assert_eq!(phase_at(72, None, t), Phase::NotAsked);
-        assert_eq!(phase_at(72, Some(t + 10), t), Phase::Waiting { until: t + 10 });
-        assert_eq!(phase_at(72, Some(t - 10), t), Phase::Ready { until: t - 10 + WINDOW });
-        assert_eq!(phase_at(72, Some(t - WINDOW - 11), t), Phase::NotAsked, "an unused request lapses");
-    }
-
-    #[test]
     fn the_removal_counts_48_hours_of_clock_and_of_blocks() {
         // The Mac's numbers: 2,304 blocks of 75 s before NU7, 6,912 after.
         assert_eq!(block_seconds(3_400_000, 3_402_304), REMOVAL_SECONDS);
@@ -781,11 +798,7 @@ mod tests {
     }
 
     #[test]
-    fn a_shorter_time_lock_waits_for_the_current_one() {
-        let t = 1_800_000_000;
-        let policy = Policy { time_lock_hours: 168, pending_hours: Some(0), pending_from: Some(t + 100), ..Default::default() };
-        assert_eq!(effective(&policy, t), 168);
-        assert_eq!(effective(&policy, t + 100), 0);
+    fn labels() {
         assert_eq!(label(72), "3 days");
         assert_eq!(label(24), "24 hours");
         assert_eq!(when(0), "1970-01-01 00:00 UTC");

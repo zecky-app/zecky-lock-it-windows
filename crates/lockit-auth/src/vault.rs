@@ -82,6 +82,14 @@ pub struct Policy {
     /// When the shorter time lock takes over (Unix seconds).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_from: Option<i64>,
+    /// When the shorter time lock was chosen (Unix seconds), and at which
+    /// block: it takes over only when the wait has passed by the clock and
+    /// by the blocks since then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_asked_at: Option<i64>,
+    /// The block height when the shorter time lock was chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_height: Option<u32>,
     /// The address book: saved addresses the owner trusts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contacts: Vec<Contact>,
