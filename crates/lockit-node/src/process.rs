@@ -97,6 +97,18 @@ impl NodeProcess {
         args: &[&std::ffi::OsStr],
         log: &Path,
     ) -> Result<Self> {
+        Self::start_with_env(group, name, program, args, log, &[])
+    }
+
+    /// As [`NodeProcess::start`], with these environment variables set.
+    pub fn start_with_env(
+        group: &ProcessGroup,
+        name: &str,
+        program: &Path,
+        args: &[&std::ffi::OsStr],
+        log: &Path,
+        env: &[(&str, &str)],
+    ) -> Result<Self> {
         if !program.is_file() {
             return Err(Error::MissingProgram(program.display().to_string()));
         }
@@ -114,6 +126,9 @@ impl NodeProcess {
         // its own config file only.
         for key in stray_settings(std::env::vars_os().map(|(key, _)| key)) {
             command.env_remove(key);
+        }
+        for (key, value) in env {
+            command.env(key, value);
         }
         platform::prepare(&mut command);
         let child = command.spawn().map_err(|source| Error::Spawn { program: name.to_owned(), source })?;
@@ -351,7 +366,9 @@ mod platform {
 fn stray_settings(keys: impl Iterator<Item = std::ffi::OsString>) -> Vec<std::ffi::OsString> {
     keys.filter(|key| {
         let key = key.to_string_lossy().to_ascii_uppercase();
-        ["ZAKURA_", "ZEBRA_", "ZAINO_"].iter().any(|prefix| key.starts_with(prefix))
+        // RUST_LOG too: how much the node logs is Lock it's choice, never a
+        // variable left in the environment (Lock it Mac, 22 Nov 2026).
+        key == "RUST_LOG" || ["ZAKURA_", "ZEBRA_", "ZAINO_"].iter().any(|prefix| key.starts_with(prefix))
     })
     .collect()
 }
@@ -363,5 +380,42 @@ mod stray_tests {
         let keys = ["ZAKURA_REF", "zebra_network__listen_addr", "ZAINO_X", "PATH", "ZAKURAX"].map(std::ffi::OsString::from);
         let stray = super::stray_settings(keys.into_iter());
         assert_eq!(stray, ["ZAKURA_REF", "zebra_network__listen_addr", "ZAINO_X"].map(std::ffi::OsString::from));
+    }
+}
+
+/// The launch argument for detailed Go Max logs: for this launch only, never
+/// a saved setting, so the detailed logs (with addresses) cannot stay on
+/// (Lock it Mac, 22 Nov 2026). Start Lock it once with it to find a fault:
+/// `"Zecky Lock it.exe" --go-max-detailed-logs`.
+pub const DETAILED_LOGS_ARG: &str = "--go-max-detailed-logs";
+
+/// Whether this launch asked for detailed logs.
+pub fn detailed_logs(args: impl IntoIterator<Item = String>) -> bool {
+    args.into_iter().any(|a| a == DETAILED_LOGS_ARG)
+}
+
+/// Zaino's environment: warnings only, unless this launch asked for detail;
+/// no colour codes in its log file.
+pub fn zaino_env(detailed: bool) -> [(&'static str, &'static str); 2] {
+    [("RUST_LOG", if detailed { "info" } else { "warn" }), ("ZAINOLOG_COLOR", "false")]
+}
+
+#[cfg(test)]
+mod log_tests {
+    use super::*;
+
+    #[test]
+    fn detailed_logs_only_from_this_launch() {
+        assert!(!detailed_logs(["lockit.exe".to_string()]));
+        assert!(detailed_logs(["lockit.exe".to_string(), DETAILED_LOGS_ARG.to_string()]));
+        assert!(!detailed_logs(["lockit.exe".to_string(), "--go-max-detailed-logs=no".to_string()]));
+        assert_eq!(zaino_env(false)[0], ("RUST_LOG", "warn"));
+        assert_eq!(zaino_env(true)[0], ("RUST_LOG", "info"));
+    }
+
+    #[test]
+    fn rust_log_from_the_environment_never_reaches_the_node() {
+        let keys = ["PATH", "RUST_LOG", "rust_log", "ZAINO_X"].map(std::ffi::OsString::from);
+        assert_eq!(stray_settings(keys.into_iter()), ["RUST_LOG", "rust_log", "ZAINO_X"].map(std::ffi::OsString::from));
     }
 }

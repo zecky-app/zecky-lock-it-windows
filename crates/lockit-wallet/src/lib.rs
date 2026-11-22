@@ -24,7 +24,7 @@ pub mod sealit;
 mod wallet;
 
 pub use amount::parse_zec;
-pub use net::{is_private_host, Server, PUBLIC_SERVERS};
+pub use net::{is_private_host, rates_from, Server, PRICE_URL, PUBLIC_SERVERS};
 pub use phrase::{new_phrase, phrase_to_seed, validate_phrase, Seed};
 pub use birthday::{estimate_birthday, SAPLING_ACTIVATION};
 pub use wallet::{AccountInfo, Activity, Balance, PreparedPayment, SignedPayment, Wallet, KEYRING_SOURCE, SEALIT_SOURCE};

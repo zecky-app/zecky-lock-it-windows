@@ -170,12 +170,13 @@ impl GoMax {
 
         progress("Starting the wallet service");
         let zaino_config = self.layout.zaino_config();
-        let zaino = NodeProcess::start(
+        let zaino = NodeProcess::start_with_env(
             &group,
             "Zaino",
             &self.programs.zainod,
             &[OsStr::new("start"), OsStr::new("-c"), zaino_config.as_os_str()],
             &self.layout.log_file("zainod"),
+            &crate::process::zaino_env(crate::process::detailed_logs(std::env::args())),
         );
         let mut zaino = match zaino {
             Ok(zaino) => zaino,
@@ -238,12 +239,13 @@ impl GoMax {
         if self.zaino.is_none() && self.zaino_retry.next_try.is_some_and(|t| now >= t) && self.rpc().is_ready() {
             self.zaino_retry.next_try = None;
             let started = match self.group.as_ref() {
-                Some(group) => NodeProcess::start(
+                Some(group) => NodeProcess::start_with_env(
                     group,
                     "Zaino",
                     &self.programs.zainod,
                     &[OsStr::new("start"), OsStr::new("-c"), self.layout.zaino_config().as_os_str()],
                     &self.layout.log_file("zainod"),
+                    &crate::process::zaino_env(crate::process::detailed_logs(std::env::args())),
                 ),
                 None => return Ok(()),
             };

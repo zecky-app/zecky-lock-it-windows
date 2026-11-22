@@ -2650,12 +2650,14 @@ const CHAPTERS = [
     "Go Max is private. The node connects to other Zcash nodes on the internet, like every node, and passes new blocks and transactions on to them; they see this PC's internet address, never your wallet, addresses or balance. It accepts no connections from outside, so this PC is never announced as a Zcash node. To help the network more, Zecky Rock it runs a full node on an Umbrel at home, always on.",
     "It runs while Lock it is open. While it catches up, Lock it keeps the PC from sleeping (the screen may still turn off). With “Only sync while plugged in” on a laptop, catching up waits for the charger, while a node that is up to date keeps running on battery. Its files live in %LOCALAPPDATA%\\app.zecky.lockit\\go-max, or on the drive you choose in “Check this computer and drive”: Lock it recommends an SSD with room to spare.",
     "Before the first start, Lock it checks this PC's free space, memory, drive, power and whether the connection is metered. The check is read from Windows on this PC; nothing is sent.",
+    "Go Max's wallet service logs only warnings, so its log holds no addresses. To find a fault, start Lock it once with --go-max-detailed-logs: that launch logs more, the next one does not. Nothing is remembered.",
   ]],
   ["What others can see", "The server.", [
     "Lock it talks to one Zcash server (zec.rocks by default) over an encrypted connection. The server sees this PC's internet address, never your words or your balance.",
   ], [
     "Payments you send leave over Tor, each on its own connection, to a public Zcash server: it sees a payment arriving from Tor, not this PC's internet address. If Tor cannot connect, the payment waits and you are told. You can switch this off in Settings › Network.",
     "With Go Max up to date, Lock it uses no server at all for reading: it reads the chain from its own node on this PC.",
+    "The value of your balance is off unless you choose a currency. Then CoinGecko is asked for the price every 5 minutes: it never sees anything about your wallet, and while sending over Tor is on, the price is asked over Tor too, so it does not see this PC's internet address either. If Tor does not answer, the last price stays.",
     "Check for updates (Settings › About) asks GitHub for the newest version, only when you press it: GitHub sees this PC's internet address. Lock it never checks by itself and never downloads an update.",
   ]],
   ["On this PC", "Where your data lives.", [

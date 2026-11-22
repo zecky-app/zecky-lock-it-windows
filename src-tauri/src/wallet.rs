@@ -1027,20 +1027,27 @@ pub fn wallet_parse_request(text: String) -> CommandResult<lockit_wallet::Paymen
 }
 
 /// The price of 1 ZEC in USD, EUR and BTC, from CoinGecko. Only asked when
-/// the owner chose a currency (Settings › Display); CoinGecko sees this PC's
-/// internet address and a price request, never anything about the wallet.
+/// the owner chose a currency (Settings › Display); CoinGecko sees a price
+/// request, never anything about the wallet. While Tor sending is on, it is
+/// asked over Tor, never in the clear (Lock it Mac, 22 Nov 2026); if Tor
+/// does not answer, the last price stays.
 #[tauri::command]
-pub async fn price_get() -> CommandResult<std::collections::HashMap<String, f64>> {
+pub async fn price_get(app: AppHandle) -> CommandResult<std::collections::HashMap<String, f64>> {
+    if load_settings(&app).tor {
+        let wallet = wallet(&app)?;
+        return tauri::async_runtime::spawn_blocking(move || runtime().block_on(wallet.price_over_tor()).map_err(|e| problem(e.to_string())))
+            .await
+            .map_err(|e| problem(e.to_string()))?;
+    }
     tauri::async_runtime::spawn_blocking(|| {
         let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(20)).build();
         let json: serde_json::Value = agent
-            .get("https://api.coingecko.com/api/v3/simple/price?ids=zcash&vs_currencies=usd,eur,btc")
+            .get(lockit_wallet::PRICE_URL)
             .call()
             .map_err(|e| problem(format!("the price could not be fetched: {e}")))?
             .into_json()
             .map_err(|e| problem(format!("the price could not be read: {e}")))?;
-        let zcash = json.get("zcash").and_then(|z| z.as_object()).ok_or_else(|| problem("the price could not be read"))?;
-        Ok(zcash.iter().filter_map(|(k, v)| v.as_f64().map(|f| (k.clone(), f))).collect())
+        lockit_wallet::rates_from(&json).map_err(|e| problem(e.to_string()))
     })
     .await
     .map_err(|e| problem(e.to_string()))?

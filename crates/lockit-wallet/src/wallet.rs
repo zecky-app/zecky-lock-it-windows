@@ -707,6 +707,11 @@ impl Wallet {
         Ok(accepted_by)
     }
 
+    /// The price of 1 ZEC, over Tor (see `net::price_over_tor`).
+    pub async fn price_over_tor(&self) -> Result<std::collections::HashMap<String, f64>> {
+        net::price_over_tor(&self.tor_dir()).await
+    }
+
     /// The newest payments in and out, newest first.
     pub fn activity(&self, limit: u32) -> Result<Vec<Activity>> {
         let account = {

@@ -223,10 +223,48 @@ pub(crate) async fn submit(raw: &[u8], reading_from: &Server, over_tor: bool, to
     Ok(accepted)
 }
 
+/// The price of 1 ZEC (USD, EUR, BTC) from CoinGecko, over Tor: used while
+/// Tor sending is on, so the price service does not see this PC's internet
+/// address either (Lock it Mac, 22 Nov 2026). Never falls back to a direct
+/// connection: if Tor does not answer, there is no price for now.
+pub(crate) async fn price_over_tor(tor_dir: &Path) -> Result<std::collections::HashMap<String, f64>> {
+    std::fs::create_dir_all(tor_dir).map_err(|e| Error::Tor(e.to_string()))?;
+    let tor = tokio::time::timeout(TOR_PATIENCE, tor::Client::create(tor_dir, |_| {}))
+        .await
+        .map_err(|_| Error::Tor("Tor did not connect within 3 minutes".into()))?
+        .map_err(|e| Error::Tor(e.to_string()))?;
+    let uri: Uri = PRICE_URL.parse().map_err(|e| Error::Tor(format!("{e}")))?;
+    let response = tokio::time::timeout(
+        Duration::from_secs(60),
+        tor.isolated_client().http_get_json::<serde_json::Value>(uri, |b| b, 1, |_| None),
+    )
+    .await
+    .map_err(|_| Error::Tor("the price did not come within a minute".into()))?
+    .map_err(|e| Error::Tor(e.to_string()))?;
+    rates_from(response.body())
+}
+
+/// Where the price comes from, the same request as Lock it Mac.
+pub const PRICE_URL: &str = "https://api.coingecko.com/api/v3/simple/price?ids=zcash&vs_currencies=usd,eur,btc";
+
+/// The rates from CoinGecko's answer.
+pub fn rates_from(json: &serde_json::Value) -> Result<std::collections::HashMap<String, f64>> {
+    let zcash = json.get("zcash").and_then(|z| z.as_object()).ok_or_else(|| Error::Tor("the price could not be read".into()))?;
+    Ok(zcash.iter().filter_map(|(k, v)| v.as_f64().map(|f| (k.clone(), f))).collect())
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_price_answer_is_read() {
+        let json: serde_json::Value = serde_json::from_str(r#"{"zcash":{"usd":45.12,"eur":41.3,"btc":0.00051234}}"#).unwrap();
+        let rates = rates_from(&json).unwrap();
+        assert_eq!(rates["usd"], 45.12);
+        assert_eq!(rates["btc"], 0.00051234);
+        assert!(rates_from(&serde_json::json!({"bitcoin": {}})).is_err());
+    }
 
     #[test]
     fn home_and_tailscale_addresses_skip_tls_and_public_ones_use_it() {
