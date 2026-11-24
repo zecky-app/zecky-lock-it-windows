@@ -315,6 +315,23 @@ pub fn parse_pczt(message: &[u8]) -> Result<Vec<u8>> {
     root.get(1).and_then(Cbor::bytes).map(<[u8]>::to_vec).ok_or_else(|| bad("the signed transaction is missing"))
 }
 
+/// The name of a newly paired wallet says where it signs: "Keystone ·
+/// Account 0", "Cupcake · My wallet" (as Lock it Mac). A pairing with a
+/// seed fingerprint comes from Keystone (Seal it uses the same QR but is not
+/// live). At most 40 characters.
+pub fn wallet_name(given: Option<&str>, cupcake: bool) -> String {
+    let device = if cupcake { "Cupcake" } else { "Keystone" };
+    let name = given.unwrap_or("").trim();
+    let full = if name.is_empty() || name.eq_ignore_ascii_case(device) {
+        device.to_owned()
+    } else if name.to_lowercase().starts_with(&device.to_lowercase()) {
+        name.to_owned()
+    } else {
+        format!("{device} · {name}")
+    };
+    full.chars().take(40).collect()
+}
+
 // ---------- UR (Uniform Resources) framing ----------
 
 /// The frames of a (possibly animated) QR code, upper-case so the QR uses
@@ -446,13 +463,13 @@ impl UrScan {
         }
         let lowered = raw.to_ascii_lowercase();
         let Some(start) = lowered.find("ur:") else {
-            return Err(Error::Other("that QR code isn't from Cupcake or Seal it".into()));
+            return Err(Error::Other("that QR code isn't from Cupcake or Keystone".into()));
         };
         let text = lowered[start..].trim_matches(|c: char| c.is_whitespace() || c.is_control());
         let parts: Vec<&str> = text[3..].split('/').collect();
         if parts[0] != self.expected {
             return Err(Error::Other(if self.expected == UR_ACCOUNTS {
-                format!("that is not the QR code for connecting a wallet (it is {}); in Cupcake or Seal it, show that QR code", parts[0])
+                format!("that is not the QR code for connecting a wallet (it is {}); on Cupcake or Keystone, show that QR code", parts[0])
             } else {
                 format!("that is not the signed transaction (it is {})", parts[0])
             }));
@@ -744,5 +761,22 @@ mod keystone_scan_tests {
     fn a_pairing_scan_refuses_a_payment_code() {
         let mut scan = UrScan::new(UR_ACCOUNTS);
         assert!(scan.receive(MIXED_PARTS[0]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod wallet_name_tests {
+    use super::wallet_name;
+
+    /// The same cases as Lock it Mac (testASignerWalletIsNamedAfterItsDevice).
+    #[test]
+    fn a_signer_wallet_is_named_after_its_device() {
+        assert_eq!(wallet_name(Some("Account 0"), false), "Keystone · Account 0");
+        assert_eq!(wallet_name(None, false), "Keystone");
+        assert_eq!(wallet_name(Some("Keystone Main"), false), "Keystone Main");
+        assert_eq!(wallet_name(Some("Cupcake"), true), "Cupcake");
+        assert_eq!(wallet_name(Some("My wallet"), true), "Cupcake · My wallet");
+        assert_eq!(wallet_name(Some(" "), true), "Cupcake");
+        assert!(wallet_name(Some(&"x".repeat(80)), false).chars().count() <= 40);
     }
 }

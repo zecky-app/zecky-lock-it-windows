@@ -1,6 +1,6 @@
-//! The signing phone on Windows (Cupcake or Seal it): pairing a phone and
+//! The signing device on Windows (Cupcake or Keystone): pairing it and
 //! sending with its signature, by QR codes both ways (the webcam reads the
-//! phone's codes).
+//! device's codes).
 
 use std::sync::Mutex;
 
@@ -61,8 +61,7 @@ fn scanned(seal: &SealSlot) -> CommandResult<Vec<u8>> {
 pub async fn sealit_pair(app: AppHandle, slot: State<'_, WalletSlot>, seal: State<'_, SealSlot>, made_in: Option<MadeIn>) -> CommandResult<String> {
     let message = scanned(&seal)?;
     let export = lockit_wallet::sealit::parse_accounts(&message)?;
-    let fallback = if export.from_cupcake() { "Cupcake" } else { "Seal it" };
-    let name = export.accounts[0].name.clone().unwrap_or_else(|| fallback.into());
+    let name = lockit_wallet::sealit::wallet_name(export.accounts[0].name.as_deref(), export.from_cupcake());
     let main = w::main_wallet(&app)?;
     let server = w::chosen_server(&app);
     let id = tauri::async_runtime::spawn_blocking(move || -> CommandResult<String> {

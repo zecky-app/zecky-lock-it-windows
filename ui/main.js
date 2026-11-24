@@ -417,8 +417,8 @@ function renderHome() {
   padlockHost.title = lockOpen ? "" : "Open the lock";
   const sealed = sealedWallet();
   $("home-seal-send").hidden = !sealed;
-  if (sealed && b.total > 0 && days === null) $("held-line").textContent = "Keys on your signing phone";
-  padlockHost.title = sealed ? "Send with your signing phone" : padlockHost.title;
+  if (sealed && b.total > 0 && days === null) $("held-line").textContent = "Keys on your signing device";
+  padlockHost.title = sealed ? "Send with your signing device" : padlockHost.title;
   $("actions-locked").hidden = lockOpen;
   $("actions-open").hidden = !lockOpen;
 
@@ -823,7 +823,7 @@ function renderKeyRing() {
     chip.classList.toggle("on", Boolean(current && current.id === w.id));
     chip.classList.toggle("out", hidden.includes(w.id));
     chip.disabled = lockOpen;
-    chip.title = lockOpen ? "Close the lock to switch wallets" : w.watch_only ? "Signed on your signing phone (Cupcake, Seal it)" : "";
+    chip.title = lockOpen ? "Close the lock to switch wallets" : w.watch_only ? "Signed on your signing device (Cupcake or Keystone)" : "";
     chip.innerHTML = w.watch_only ? ENVELOPE_ICON : LOCK_ICON;
     const label = document.createElement("span");
     label.textContent = walletName(w);
@@ -898,7 +898,7 @@ document.addEventListener("keydown", (event) => { if (event.key === "Escape") cl
 
 function openPlusMenu(event) {
   showMenu(event, [
-    { label: "Pair a signing phone (Cupcake, Seal it) · experimental", run: () => openSeal("pair") },
+    { label: "Pair a signing device (Cupcake or Keystone) · experimental", run: () => openSeal("pair") },
     "-",
     { label: "New wallet on this PC", run: () => openAdd("new") },
     { label: "Restore a wallet with 24 words", run: () => openAdd("restore") },
@@ -1041,7 +1041,7 @@ async function showItsWords(w) {
 async function removeWallet(w) {
   try {
     if (w.watch_only) {
-      const ok = await askKeys(`Remove ${walletName(w)} from Lock it?`, "Its keys stay on your phone: you can pair it again at any time.", { danger: true, action: "Remove", keys: false });
+      const ok = await askKeys(`Remove ${walletName(w)} from Lock it?`, "Its keys and Zcash stay on your signing device: you can pair it again at any time.", { danger: true, action: "Remove", keys: false });
       await invoke("keyring_remove", { id: w.id, typed: typedOnly(ok) });
     } else {
       const typed = await askKeys(`Erase ${walletName(w)}?`, "Its words leave this PC. Make sure you have them on paper: without them, its Zcash cannot be taken out anywhere.", { danger: true, action: "Erase" });
@@ -1121,7 +1121,7 @@ $("report-copy").addEventListener("click", async () => {
     `Windows: ${navigator.userAgent}`,
     `Sync: ${s.state || "?"} via ${s.server || "?"}${s.problem ? ` (${s.problem})` : ""}`,
     `Scanned to block ${b.scanned_height || "?"} of ${b.chain_tip || "?"}`,
-    `Wallets: ${(o.wallets || []).length} (signing phone: ${(o.wallets || []).filter((w) => w.watch_only).length})`,
+    `Wallets: ${(o.wallets || []).length} (signing device: ${(o.wallets || []).filter((w) => w.watch_only).length})`,
     `Keys: ${(o.keys || []).map((k) => k.kind).join(", ")}`,
     `Tor for sending: ${o.settings && o.settings.tor ? "on" : "off"}`,
     "Recent problems:",
@@ -1168,13 +1168,13 @@ function openSeal(mode) {
   closeSheet();
   openSheet("seal");
   if (mode === "pair") {
-    $("seal-title").textContent = "Pair a signing phone";
-    $("seal-sub").textContent = "The keys stay on your phone. This PC only sees the balance and builds payments.";
-    startScan("accounts", "On your signing phone (Cupcake or Seal it), open the QR code for connecting a wallet and hold it in front of the camera.");
+    $("seal-title").textContent = "Pair a signing device";
+    $("seal-sub").textContent = "The keys stay on your Cupcake or Keystone. This PC only sees the balance and builds payments.";
+    startScan("accounts", "Show the QR code for connecting a wallet and hold it up to the camera. On a Keystone: Connect Software Wallet › Zodl.");
   } else {
     const w = currentWallet();
-    $("seal-title").textContent = `Send from ${w ? walletName(w) : "your signing phone"}`;
-    $("seal-sub").textContent = "Your phone signs it. Nothing that can spend is on this PC.";
+    $("seal-title").textContent = `Send from ${w ? walletName(w) : "your signing device"}`;
+    $("seal-sub").textContent = "Your signing device signs it. Nothing that can spend is on this PC.";
     for (const id of ["seal-to", "seal-amount", "seal-memo"]) $(id).value = "";
     $("seal-summary").hidden = true;
     $("seal-show").hidden = true;
@@ -1225,13 +1225,13 @@ $("seal-show").addEventListener("click", async () => {
     const unsigned = await invoke("sealit_start");
     $("seal-show-text").textContent = unsigned.cupcake
       ? "In Cupcake, scan this code. Check the amount and the address on the phone, then sign. Cupcake makes the proofs; this can take a minute on the phone."
-      : "In Seal it on your phone, tap Scan and point it at this code. Check the amount and the address on the phone, then approve.";
+      : "On your Keystone, scan this code. Check the amount and the address on the Keystone, then sign. This PC makes the proofs meanwhile.";
     seal.frames = unsigned.frames.map((svg) => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg));
     sealStage("show");
     let index = 0;
     const show = () => {
       $("seal-qr").src = seal.frames[index % seal.frames.length];
-      $("seal-frame").textContent = seal.frames.length > 1 ? "A moving code: keep the phone on it until it is read." : "";
+      $("seal-frame").textContent = seal.frames.length > 1 ? "A moving code: keep the device on it until it is read." : "";
       index += 1;
     };
     show();
@@ -1248,7 +1248,7 @@ function stopFrames() {
   seal.frameTimer = null;
 }
 
-$("seal-signed").addEventListener("click", () => startScan("pczt", "Now hold the phone's signed code in front of the camera."));
+$("seal-signed").addEventListener("click", () => startScan("pczt", "Now hold the signed code up to the camera."));
 
 async function startScan(kind, hint) {
   seal.kind = kind;
@@ -1270,7 +1270,7 @@ async function startScan(kind, hint) {
     return noCamera(name === "NotAllowedError"
       ? "Lock it was not allowed to use the camera. Allow it in Windows Settings › Privacy › Camera, then try again."
       : name === "NotFoundError" || name === "OverconstrainedError"
-        ? "No webcam was found. Pairing and signing with a phone read its codes with a webcam; everything else in Lock it works without one."
+        ? "No webcam was found. Pairing and signing with a signing device read its codes with a webcam; everything else in Lock it works without one."
         : "The camera could not start. Close other apps that use it, then try again.");
   }
   const video = $("seal-video");
@@ -1382,7 +1382,7 @@ async function pair(madeIn) {
     activity = [];
     await refreshHome();
     sealStage("done");
-    $("seal-done-text").textContent = "Paired. Lock it now follows this phone wallet's balance; payments from it are signed on the phone.";
+    $("seal-done-text").textContent = "Paired. Lock it now follows this wallet's balance; payments from it are signed on your signing device.";
   } catch (problem) {
     say($("seal-message"), describe(problem));
   }

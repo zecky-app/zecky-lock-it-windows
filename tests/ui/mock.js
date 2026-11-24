@@ -29,6 +29,7 @@ window.__calls = [];
       case "sealit_scan_start": m.scanned = []; return null;
       case "sealit_scan_push": (m.scanned = m.scanned || []).push([performance.now(), args.text]); return { done: false, seen: 0, of: 1, cupcake: false };
       case "wallet_receive_transparent": return { address: (m.tAddresses && m.tAddresses[m.current || "main"]) || "t1TransparentExampleAddress0000000", qr: "<svg xmlns='http://www.w3.org/2000/svg'/>" };
+      case "sealit_start": return { frames: ["<svg xmlns='http://www.w3.org/2000/svg'/>"], cupcake: Boolean(m.cupcakeSigner) };
       case "go_max_view": return m.goMax;
       case "settings_get": return { settings: { tor: true, wait: 0 }, reading_from: "zec.rocks", version: "0.1.5" };
       case "wallet_prepare": return { to: args.to, amount: 1000000, fee: 15000, total: 1015000 };

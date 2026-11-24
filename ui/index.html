@@ -175,7 +175,7 @@
           <svg class="b-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none"/></svg>
           Receive
         </button>
-        <button type="button" class="secondary seal-send" id="home-seal-send" hidden>Send with your signing phone</button>
+        <button type="button" class="secondary seal-send" id="home-seal-send" hidden>Send with your signing device</button>
       </div>
       <div class="actions" id="actions-open" hidden>
         <button type="button" class="brass brass-big" id="home-send">
@@ -264,11 +264,11 @@
       </div>
     </section>
 
-    <!-- Seal it: pairing a phone, and sending with its signature -->
+    <!-- Signing device (Cupcake or Keystone): pairing, and sending with its signature -->
     <section class="sheet" id="sheet-seal" hidden>
       <div class="sheet-head">
-        <div><p class="eyebrow">SIGNING PHONE</p><h2 class="sheet-title" id="seal-title">Pair a signing phone</h2>
-        <p class="sheet-sub" id="seal-sub">The keys stay on your phone. This PC only sees the balance and builds payments.</p>
+        <div><p class="eyebrow">SIGNING DEVICE</p><h2 class="sheet-title" id="seal-title">Pair a signing device</h2>
+        <p class="sheet-sub" id="seal-sub">The keys stay on your Cupcake or Keystone. This PC only sees the balance and builds payments.</p>
         <p class="small beta-warning">Experimental on Windows: try it with a tiny amount first.</p></div>
         <button type="button" class="done" id="seal-close">Cancel</button>
       </div>
@@ -280,17 +280,17 @@
           <div class="card pad seal-summary" id="seal-summary" hidden></div>
           <p class="small beta-warning" id="seal-small-note">This is a beta. Please keep amounts small while testing (under 0.1 ZEC).</p>
           <button type="button" class="brass" id="seal-work">Work it out</button>
-          <button type="button" class="brass" id="seal-show" hidden>Show it to my phone</button>
+          <button type="button" class="brass" id="seal-show" hidden>Show it to my signing device</button>
         </div>
         <div class="seal-stage" data-seal="show" hidden>
-          <img id="seal-qr" class="qr seal-qr" alt="The payment as a QR code for your phone">
+          <img id="seal-qr" class="qr seal-qr" alt="The payment as a QR code for your signing device">
           <p class="small quiet center" id="seal-frame"></p>
-          <p class="lead center" id="seal-show-text">In Seal it on your phone, tap Scan and point it at this code. Check the amount and the address on the phone, then approve.</p>
-          <button type="button" class="brass" id="seal-signed">The phone signed it</button>
+          <p class="lead center" id="seal-show-text">Scan this code with your Cupcake or Keystone. Check the amount and the address there, then sign.</p>
+          <button type="button" class="brass" id="seal-signed">It is signed</button>
         </div>
         <div class="seal-stage" data-seal="scan" hidden>
           <div class="camera"><video id="seal-video" playsinline muted></video><div class="camera-frame"></div></div>
-          <p class="center" id="seal-progress">Hold the phone's code in front of the camera.</p>
+          <p class="center" id="seal-progress">Hold the code up to the camera.</p>
           <details class="seal-paste" id="seal-paste-box">
             <summary>No webcam? Paste the code as text</summary>
             <textarea id="seal-paste" class="input mono" rows="3" spellcheck="false" placeholder="ur:zcash-accounts/… or zcash-wallet:?…"></textarea>
@@ -298,8 +298,8 @@
           </details>
         </div>
         <div class="seal-stage" data-seal="age" hidden>
-          <p class="lead">When were your phone's words made? With a new wallet, Lock it starts at today's block and is ready in a minute.</p>
-          <button type="button" class="brass" id="seal-new">It is a new phone wallet</button>
+          <p class="lead">When was this wallet first used? With a new wallet, Lock it starts at today's block and is ready in a minute.</p>
+          <button type="button" class="brass" id="seal-new">It is a new wallet</button>
           <p class="lead">Older? A rough guess is fine: earlier is safer.</p>
           <div class="seal-dates">
             <select id="seal-month" class="input" aria-label="Month"></select>

@@ -171,7 +171,7 @@ fn phrase_of(app: &AppHandle, main_phrase: &Zeroizing<String>, id: Option<String
     let Some(current) = id else { return Ok(main_phrase.clone()) };
     let entry = load_keyring(app).into_iter().find(|entry| entry.id == current);
     let Some(entry) = entry else {
-        return Err(problem("this wallet is watch-only here: it is signed on your phone with Seal it"));
+        return Err(problem("this wallet is watch-only here: it is signed on your signing device"));
     };
     let seed = lockit_wallet::phrase_to_seed(main_phrase)?;
     Ok(lockit_auth::keyring::open_words(seed.expose_secret(), &entry.sealed)?)

@@ -249,7 +249,7 @@ impl Wallet {
         use zcash_client_backend::data_api::{AccountPurpose, Zip32Derivation};
         let account = &export.accounts[0];
         let ufvk = zcash_keys::keys::UnifiedFullViewingKey::decode(&MainNetwork, account.ufvk.trim())
-            .map_err(|_| Error::Address("the phone sent an unusable viewing key".into()))?;
+            .map_err(|_| Error::Address("the signing device sent an unusable viewing key".into()))?;
         {
             let db = self.db()?;
             for id in db.get_account_ids().map_err(db_err)? {
@@ -260,7 +260,7 @@ impl Wallet {
                 }
             }
         }
-        let index = zip32::AccountId::try_from(account.index).map_err(|_| Error::Other("the phone sent an unusable account number".into()))?;
+        let index = zip32::AccountId::try_from(account.index).map_err(|_| Error::Other("the signing device sent an unusable account number".into()))?;
         // Cupcake's QR has no seed fingerprint: no derivation is recorded,
         // which is also how a Cupcake wallet is told apart later. Its QR has
         // no birthday and its wallet may hold Zcash already: look from NU7 on
@@ -338,7 +338,7 @@ impl Wallet {
     pub fn seal_start(&self, payment: &PreparedPayment) -> Result<(Vec<u8>, Vec<String>)> {
         use pczt::roles::redactor::Redactor;
         let Planned::Notes(proposal) = &payment.proposal else {
-            return Err(Error::Other("Seal it signs payments only".into()));
+            return Err(Error::Other("a signing device signs payments only".into()));
         };
         let mut db = self.db()?;
         let pczt = zcash_client_backend::data_api::wallet::create_pczt_from_proposal::<_, _, Infallible, _, Infallible, _>(
@@ -354,7 +354,7 @@ impl Wallet {
         )
         .map_err(other)?;
         if pczt.has_data_in_pool(zcash_protocol::PoolType::SAPLING) {
-            return Err(Error::Address("A signing phone can't sign to or from an old Sapling address. Use a u1… or t1… address.".into()));
+            return Err(Error::Address("A signing device can't sign to or from an old Sapling address. Use a u1… or t1… address.".into()));
         }
         let full = pczt.clone().serialize().map_err(|e| other(format!("{e:?}")))?;
         drop(db);
@@ -386,7 +386,7 @@ impl Wallet {
         let pk = zcash_primitives::transaction::builder::cached_orchard_proving_key(circuit_version(&pczt)?);
         let mut prover = Prover::new(pczt);
         if prover.requires_sapling_proofs() {
-            return Err(Error::Other("Seal it can't sign Sapling".into()));
+            return Err(Error::Other("a signing device can't sign Sapling".into()));
         }
         if prover.requires_orchard_proof() {
             prover = prover.create_orchard_proof(OsRng, pk).map_err(|e| other(format!("the proof failed: {e:?}")))?;
@@ -409,7 +409,7 @@ impl Wallet {
         use pczt::roles::combiner::Combiner;
         let signed = crate::sealit::parse_pczt(signed_message)?;
         let signed = if self.is_cupcake()? { crate::cupcake::from_cupcake(&signed)? } else { signed };
-        let signed = pczt::Pczt::parse(&signed).map_err(|_| Error::Other("the phone's signed transaction is damaged".into()))?;
+        let signed = pczt::Pczt::parse(&signed).map_err(|_| Error::Other("the signed transaction from the signing device is damaged".into()))?;
         let proven = pczt::Pczt::parse(proven).map_err(|e| other(format!("{e:?}")))?;
         let combined = Combiner::new(vec![proven, signed])
             .combine()
