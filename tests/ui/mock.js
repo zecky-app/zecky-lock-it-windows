@@ -12,7 +12,7 @@ window.__calls = [];
   window.__m = m;
   const overview = () => ({
     exists: true, keys: [{ kind: "device_hello", label: "This PC" }],
-    balance: { spendable: 2240000, pending: 0, total: 2240000, scanned_height: 3600000, chain_tip: 3600000, progress: 1, birthday: 3100000, to_scan: [], orchard: 0, ironwood: 0, sapling: 0, transparent: m.transparent || 0 },
+    balance: { spendable: 2240000, pending: 0, total: 2240000, scanned_height: 3600000, chain_tip: 3600000, progress: 1, birthday: 3100000, scan_from: m.scanFrom || 3100000, to_scan: [], orchard: 0, ironwood: 0, sapling: 0, transparent: m.transparent || 0 },
     sync: { state: m.syncing ? "syncing" : "up_to_date", server: "zec.rocks", problem: null }, unsent: false, lock_open: m.lockOpen, problems: [],
     settings: { server: null, tor: true, wait: 0, ask_on_start: false, current: m.current, names: {}, order: [], hidden: m.hidden },
     wallets: m.wallets,

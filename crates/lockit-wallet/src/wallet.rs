@@ -54,6 +54,9 @@ pub struct Balance {
     pub progress: f64,
     /// The block the wallet starts from.
     pub birthday: u32,
+    /// The block the shared scan starts from: the earliest start of all
+    /// wallets on this PC (they are all checked in one scan).
+    pub scan_from: u32,
     /// Block ranges still to check, `[start, end)`, as the Mac's sync ring
     /// counts them.
     pub to_scan: Vec<(u32, u32)>,
@@ -504,6 +507,7 @@ impl Wallet {
             ..Default::default()
         };
         balance.birthday = db.get_account_birthday(account).map(u32::from).unwrap_or(0);
+        balance.scan_from = Self::scan_start(&db);
         balance.to_scan = db
             .suggest_scan_ranges()
             .map_err(db_err)?
@@ -816,6 +820,16 @@ impl Wallet {
         account.ufvk().ok_or_else(|| other("this wallet has no viewing key"))?.encode(&MainNetwork).map_err(other)
     }
 
+    /// The block the shared scan starts from: the earliest start of all
+    /// wallets here (0 when there is none).
+    pub fn scan_from(&self) -> Result<u32> {
+        Ok(Self::scan_start(&self.db()?))
+    }
+
+    fn scan_start<D: WalletRead>(db: &D) -> u32 {
+        db.get_wallet_birthday().ok().flatten().map(u32::from).unwrap_or(0)
+    }
+
     /// The newest block height the server knows.
     pub async fn chain_tip(server: &Server) -> Result<u32> {
         let mut client = server.connect().await?;
@@ -1004,6 +1018,26 @@ mod tests {
         assert!(wallet.for_account(Some(&cupcake)).is_sealit().unwrap());
         assert!(!wallet.for_account(Some(&sealit)).is_cupcake().unwrap());
         assert!(wallet.for_account(Some(&sealit)).is_sealit().unwrap());
+    }
+
+    /// The Sync screen's "Checked from": one scan for every wallet here,
+    /// so it starts at the earliest wallet's start, whichever is selected.
+    #[test]
+    fn the_scan_starts_at_the_earliest_wallet() {
+        use zcash_client_backend::data_api::{AccountPurpose, Zip32Derivation};
+        let (_dir, wallet, _seed) = fresh();
+        let main_start = wallet.scan_from().unwrap();
+        let ufvk = zcash_keys::keys::UnifiedSpendingKey::from_seed(&MainNetwork, &[5u8; 32], zip32::AccountId::ZERO).unwrap().to_unified_full_viewing_key();
+        let later = AccountBirthday::from_parts(zcash_client_backend::data_api::chain::ChainState::empty(BlockHeight::from_u32(3_600_000), BlockHash([0; 32])), None);
+        let id = {
+            let mut db = wallet.db().unwrap();
+            let derivation = Zip32Derivation::new(zip32::fingerprint::SeedFingerprint::from_bytes([4; 32]), zip32::AccountId::ZERO);
+            let ks = db.import_account_ufvk("Keystone", &ufvk, &later, AccountPurpose::Spending { derivation: Some(derivation) }, Some(SEALIT_SOURCE)).unwrap();
+            ks.id().expose_uuid().to_string()
+        };
+        let keystone = wallet.for_account(Some(&id));
+        assert_eq!(keystone.scan_from().unwrap(), main_start, "the selected Keystone wallet still shows the shared start");
+        assert!(main_start < 3_600_000 && main_start > 0, "{main_start}");
     }
 
     /// The Transparent tab: one fixed t1 address per wallet, which the

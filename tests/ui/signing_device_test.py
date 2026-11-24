@@ -86,6 +86,17 @@ async def main():
             check("no page errors (Keystone send)", not pg.errors, pg.errors)
             await pg.close()
 
+            # Sync screen: one scan for all wallets, so "Checked from" the
+            # earliest start, also with the later Keystone wallet selected.
+            pg = await page_with(b, base, {"wallets": KEYSTONE, "current": "ks-1", "scanFrom": 3100000})
+            await pg.click("#status-text"); await pg.wait_for_timeout(300)
+            sync = await pg.inner_text("#sheet-sync")
+            check("sync: Checked from, not Wallet birthday", "Checked from" in sync and "Wallet birthday" not in sync)
+            check("sync: the shared start block", "Block 3,100,000" in sync, sync[:300])
+            check("sync: up to date for all wallets", (await pg.text_content("#sync-ring-note")) == "Every block since block 3,100,000, for all wallets on this PC")
+            check("no page errors (sync)", not pg.errors, pg.errors)
+            await pg.close()
+
             # Cupcake keeps its own words (Cupcake is a phone app).
             pg = await page_with(b, base, {"wallets": KEYSTONE, "current": "ks-1", "cupcakeSigner": True})
             await pg.click("#home-seal-send"); await pg.wait_for_timeout(300)

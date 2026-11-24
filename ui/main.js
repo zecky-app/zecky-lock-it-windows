@@ -618,18 +618,26 @@ setInterval(() => {
   if (slept || now - lastActive > AWAY) showAppLocked();
 }, 15000);
 
-/// How much of [birthday, tip) is checked, as the Mac's sync ring.
+/// Where the shared scan starts: the earliest start of all wallets here
+/// (one scan checks them all). The selected wallet's own birthday if the
+/// app is older than this field.
+function scanFrom(b) {
+  return (b && (b.scan_from || b.birthday)) || 0;
+}
+
+/// How much of [scan start, tip) is checked, as the Mac's sync ring.
 function checkedShare() {
   const b = overview && overview.balance;
-  if (!b || !b.chain_tip || !b.birthday) return null;
-  const span = b.chain_tip - b.birthday;
+  const from = scanFrom(b);
+  if (!b || !b.chain_tip || !from) return null;
+  const span = b.chain_tip - from;
   if (span <= 0) return 1;
-  const parts = b.to_scan.map(([a, e]) => [Math.max(a, b.birthday), Math.min(e, b.chain_tip)]).filter(([a, e]) => e > a).sort((x, y) => x[0] - y[0]);
+  const parts = b.to_scan.map(([a, e]) => [Math.max(a, from), Math.min(e, b.chain_tip)]).filter(([a, e]) => e > a).sort((x, y) => x[0] - y[0]);
   let open = 0;
-  let reach = b.birthday;
+  let reach = from;
   for (const [a, e] of parts) {
-    const from = Math.max(a, reach);
-    if (e > from) open += e - from;
+    const start = Math.max(a, reach);
+    if (e > start) open += e - start;
     reach = Math.max(reach, e);
   }
   return Math.max(0, Math.min(1, (span - open) / span));
@@ -1570,11 +1578,13 @@ function renderSync() {
   $("sync-percent").textContent = percent === null ? "…" : `${percent === 100 ? "100" : percent.toFixed(1)}%`;
   $("sync-ring-word").textContent = upToDate ? "up to date" : "checked";
   $("sync-ring-fill").setAttribute("stroke-dasharray", `${percent ?? 0} 100`);
-  const open = share === null ? null : Math.round((1 - share) * (network - b.birthday));
+  const from = scanFrom(b);
+  const open = share === null ? null : Math.round((1 - share) * (network - from));
+  const since = `since block ${numbers.format(from)}`;
   $("sync-ring-note").textContent = percent === null ? "Waiting for the network block"
-    : upToDate ? "Every block since the wallet birthday"
-    : open > 0 ? `Of all blocks since the wallet birthday. Catching up ${numbers.format(open)} new ${open === 1 ? "block" : "blocks"}.`
-    : "Of all blocks since the wallet birthday";
+    : upToDate ? `Every block ${since}, for all wallets on this PC`
+    : open > 0 ? `Of all blocks ${since}. Catching up ${numbers.format(open)} new ${open === 1 ? "block" : "blocks"}.`
+    : `Of all blocks ${since}`;
   $("sync-network").textContent = network ? numbers.format(network) : "…";
   $("sync-wallet").textContent = b.scanned_height ? numbers.format(b.scanned_height) : "…";
   let behindText = "…";
@@ -1591,9 +1601,9 @@ function renderSync() {
   }
   $("sync-behind").textContent = behindText;
   $("sync-blocktime").textContent = network === 0 ? "…" : network >= NU7_HEIGHT ? "25 seconds (since NU7)" : "75 seconds";
-  $("sync-birthday").textContent = b.birthday ? `Block ${numbers.format(b.birthday)}` : "…";
+  $("sync-birthday").textContent = from ? `Block ${numbers.format(from)}` : "…";
   $("sync-bar").style.width = `${Math.max(share > 0 ? 1.5 : 0, (share ?? 0) * 100)}%`;
-  $("sync-bar-from").textContent = b.birthday ? numbers.format(b.birthday) : "…";
+  $("sync-bar-from").textContent = from ? numbers.format(from) : "…";
   $("sync-bar-to").textContent = network ? numbers.format(network) : "…";
   const own = (sync.server || "").startsWith("your own node");
   $("sync-server").textContent = sync.server || "…";
