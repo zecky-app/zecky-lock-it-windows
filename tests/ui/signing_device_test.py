@@ -114,6 +114,22 @@ async def main():
                 check(f"no page errors ({name})", not pg.errors, pg.errors)
                 await pg.close()
 
+            # Keystone and a large payment: a warning, the code is still shown.
+            for kb in (None, 19):
+                pg = await page_with(b, base, {"wallets": KEYSTONE, "current": "ks-1", "largeKb": kb})
+                await pg.click("#home-seal-send"); await pg.wait_for_timeout(300)
+                await pg.fill("#seal-to", "u1example"); await pg.fill("#seal-amount", "0.01")
+                await pg.click("#seal-work"); await pg.wait_for_timeout(300)
+                await pg.click("#seal-show"); await pg.wait_for_timeout(400)
+                shown = await pg.is_visible("#seal-large")
+                if kb:
+                    text = await pg.text_content("#seal-large")
+                    check("large payment: warning with its size", shown and "19 KB" in text and "14 KB" in text, text)
+                    check("large payment: the code is still shown", await pg.is_visible("#seal-qr"))
+                else:
+                    check("usual payment: no warning", not shown)
+                await pg.close()
+
             # Cupcake keeps its own words (Cupcake is a phone app).
             pg = await page_with(b, base, {"wallets": KEYSTONE, "current": "ks-1", "cupcakeSigner": True})
             await pg.click("#home-seal-send"); await pg.wait_for_timeout(300)

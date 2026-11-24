@@ -315,6 +315,16 @@ pub fn parse_pczt(message: &[u8]) -> Result<Vec<u8>> {
     root.get(1).and_then(Cbor::bytes).map(<[u8]>::to_vec).ok_or_else(|| bad("the signed transaction is missing"))
 }
 
+/// Keystone can fail to read a payment larger than this (Keystone issue
+/// #2294: PCZTs over 14 KiB). Lock it still shows such a payment, with a
+/// warning: the size depends on how many notes it spends.
+pub const KEYSTONE_SAFE_PCZT: usize = 14 * 1024;
+
+/// Whether a payment of `pczt_len` bytes for Keystone needs the warning.
+pub fn keystone_may_not_read(pczt_len: usize) -> bool {
+    pczt_len > KEYSTONE_SAFE_PCZT
+}
+
 /// The name of a newly paired wallet says where it signs: "Keystone ·
 /// Account 0", "Cupcake · My wallet" (as Lock it Mac). A pairing with a
 /// seed fingerprint comes from Keystone (Seal it uses the same QR but is not
@@ -766,7 +776,14 @@ mod keystone_scan_tests {
 
 #[cfg(test)]
 mod wallet_name_tests {
-    use super::wallet_name;
+    use super::{keystone_may_not_read, wallet_name};
+
+    #[test]
+    fn keystone_gets_a_warning_over_14_kib_only() {
+        assert!(!keystone_may_not_read(6_000));
+        assert!(!keystone_may_not_read(14 * 1024));
+        assert!(keystone_may_not_read(14 * 1024 + 1));
+    }
 
     /// The same cases as Lock it Mac (testASignerWalletIsNamedAfterItsDevice).
     #[test]

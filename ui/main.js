@@ -1236,6 +1236,11 @@ $("seal-show").addEventListener("click", async () => {
     $("seal-show-text").textContent = unsigned.cupcake
       ? "In Cupcake, scan this code. Check the amount and the address on the phone, then sign. Cupcake makes the proofs; this can take a minute on the phone."
       : "On your Keystone, scan this code. Check the amount and the address on the Keystone, then sign. This PC makes the proofs meanwhile.";
+    // Keystone issue #2294: payments over 14 KB may not be read.
+    $("seal-large").hidden = !unsigned.large_kb;
+    $("seal-large").textContent = unsigned.large_kb
+      ? `This payment is large (${unsigned.large_kb} KB). Keystone may not read codes over 14 KB. If it can't, cancel and send a smaller amount: it uses fewer of the small payments this wallet holds.`
+      : "";
     seal.frames = unsigned.frames.map((svg) => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg));
     sealStage("show");
     let index = 0;

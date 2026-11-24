@@ -89,6 +89,8 @@ pub struct Unsigned {
     frames: Vec<String>,
     /// For Cupcake (its own words on the screen).
     cupcake: bool,
+    /// For Keystone: larger than it may read (Keystone issue #2294), in KB.
+    large_kb: Option<usize>,
 }
 
 /// Seal it, step 1: turns the worked-out payment into codes for the phone,
@@ -102,11 +104,11 @@ pub async fn sealit_start(app: AppHandle, slot: State<'_, WalletSlot>, seal: Sta
         return Err(crate::problem(lockit_node::rules::words::WORK_OUT_AGAIN));
     }
     w::ready_to_send(&app, &slot, &wallet)?;
-    let (full, frames, cupcake) = tauri::async_runtime::spawn_blocking(move || -> CommandResult<(Vec<u8>, Vec<String>, bool)> {
+    let (full, frames, cupcake, size) = tauri::async_runtime::spawn_blocking(move || -> CommandResult<(Vec<u8>, Vec<String>, bool, usize)> {
         let cupcake = wallet.is_cupcake()?;
-        let (full, parts) = wallet.seal_start(&payment)?;
+        let (full, parts, size) = wallet.seal_start(&payment)?;
         let frames = parts.iter().map(|p| lockit_wallet::qr_svg(p)).collect::<Result<Vec<_>, _>>()?;
-        Ok((full, frames, cupcake))
+        Ok((full, frames, cupcake, size))
     })
     .await
     .map_err(|e| problem(format!("building the payment stopped unexpectedly: {e}")))??;
@@ -116,14 +118,15 @@ pub async fn sealit_start(app: AppHandle, slot: State<'_, WalletSlot>, seal: Sta
             old.abort();
         }
         *seal.cupcake_full.lock().map_err(|_| problem("the app is in an unknown state"))? = Some(full);
-        return Ok(Unsigned { frames, cupcake: true });
+        return Ok(Unsigned { frames, cupcake: true, large_kb: None });
     }
     *seal.cupcake_full.lock().map_err(|_| problem("the app is in an unknown state"))? = None;
     let proving = tauri::async_runtime::spawn_blocking(move || Ok(Wallet::seal_prove(&full)?));
     if let Some(old) = seal.proving.lock().map_err(|_| problem("the app is in an unknown state"))?.replace(proving) {
         old.abort();
     }
-    Ok(Unsigned { frames, cupcake: false })
+    let large_kb = lockit_wallet::sealit::keystone_may_not_read(size).then(|| size.div_ceil(1024));
+    Ok(Unsigned { frames, cupcake: false, large_kb })
 }
 
 /// Seal it, step 3: the scanned signature and this PC's proofs together,

@@ -338,7 +338,9 @@ impl Wallet {
     ///
     /// For Cupcake the frames carry the whole PCZT, in its layout: it signs
     /// and then makes the proofs itself (as Zkool does).
-    pub fn seal_start(&self, payment: &PreparedPayment) -> Result<(Vec<u8>, Vec<String>)> {
+    /// Returns the full PCZT (kept here), the QR frames, and the size of the
+    /// PCZT the device gets.
+    pub fn seal_start(&self, payment: &PreparedPayment) -> Result<(Vec<u8>, Vec<String>, usize)> {
         use pczt::roles::redactor::Redactor;
         let Planned::Notes(proposal) = &payment.proposal else {
             return Err(Error::Other("a signing device signs payments only".into()));
@@ -364,7 +366,8 @@ impl Wallet {
         if self.is_cupcake()? {
             let for_cupcake = crate::cupcake::to_cupcake(&full)?;
             let frames = crate::sealit::cupcake_frames(crate::sealit::UR_PCZT, &crate::sealit::pczt_envelope(&for_cupcake))?;
-            return Ok((full, frames));
+            let size = for_cupcake.len();
+            return Ok((full, frames, size));
         }
         let redacted = Redactor::new(pczt)
             .redact_orchard_with(|mut r| {
@@ -378,7 +381,7 @@ impl Wallet {
             .finish();
         let bytes = redacted.serialize().map_err(|e| other(format!("{e:?}")))?;
         let frames = crate::sealit::ur_frames(crate::sealit::UR_PCZT, &crate::sealit::pczt_envelope(&bytes))?;
-        Ok((full, frames))
+        Ok((full, frames, bytes.len()))
     }
 
     /// Seal it, step 2 (while the phone signs): the Orchard and Ironwood
