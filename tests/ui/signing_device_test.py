@@ -97,6 +97,23 @@ async def main():
             check("no page errors (sync)", not pg.errors, pg.errors)
             await pg.close()
 
+            # A signing device's wallet: shielded only, no moves signed with
+            # this PC's keys; an ordinary wallet with the same funds keeps them.
+            for current, sealed in (("ks-1", True), ("main", False)):
+                name = "Keystone" if sealed else "PC wallet"
+                pg = await page_with(b, base, {"wallets": KEYSTONE, "current": current, "transparent": 50000, "orchard": 70000})
+                await pg.wait_for_timeout(300)
+                check(f"{name}: Lock it in line {'hidden' if sealed else 'shown'}", (not await pg.is_visible("#move-lockin")) == sealed)
+                check(f"{name}: Move to Ironwood line {'hidden' if sealed else 'shown'}", (not await pg.is_visible("#move-ironwood")) == sealed)
+                check(f"{name}: arrival question {'not asked' if sealed else 'asked'}", (not await pg.is_visible("#outside-prompt")) == sealed)
+                if not sealed:
+                    await pg.evaluate("document.getElementById('outside-prompt').hidden = true")
+                await pg.click("#home-receive"); await pg.wait_for_timeout(300)
+                check(f"{name}: Transparent tab {'hidden' if sealed else 'shown'}", (not await pg.is_visible("#receive-tab-transparent")) == sealed)
+                check(f"{name}: shielded address shown", await pg.is_visible("#receive-address"))
+                check(f"no page errors ({name})", not pg.errors, pg.errors)
+                await pg.close()
+
             # Cupcake keeps its own words (Cupcake is a phone app).
             pg = await page_with(b, base, {"wallets": KEYSTONE, "current": "ks-1", "cupcakeSigner": True})
             await pg.click("#home-seal-send"); await pg.wait_for_timeout(300)

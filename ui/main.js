@@ -397,8 +397,11 @@ function renderHome() {
   const upToDate = overview.sync.state === "up_to_date";
   const ironwood = $("move-ironwood");
   const lockin = $("move-lockin");
-  ironwood.hidden = !(upToDate && b.orchard > 0);
-  lockin.hidden = !(upToDate && b.transparent > 0);
+  // Both moves are signed with this PC's keys: not for a signing device's
+  // wallet (they would ask for the keys, then fail).
+  const sealed = sealedWallet();
+  ironwood.hidden = sealed || !(upToDate && b.orchard > 0);
+  lockin.hidden = sealed || !(upToDate && b.transparent > 0);
   if (!ironwood.hidden) ironwood.innerHTML = `${hidden ? "Part of your Zcash is in the old Orchard pool" : `${amountText(b.orchard)} in the old Orchard pool`} · <strong>Move it to Ironwood ›</strong>`;
   if (!lockin.hidden) lockin.innerHTML = `${hidden ? "Zcash waiting outside the lock" : `+${amountText(b.transparent)} waiting outside the lock`} · <strong>Lock it in ›</strong>`;
   checkOutside();
@@ -415,7 +418,6 @@ function renderHome() {
   Lockart.setOpen(padlockHost, lockOpen);
   Lockart.setPlate(padlockHost, lockOpen ? "OPEN" : "LOCKED");
   padlockHost.title = lockOpen ? "" : "Open the lock";
-  const sealed = sealedWallet();
   $("home-seal-send").hidden = !sealed;
   if (sealed && b.total > 0 && days === null) $("held-line").textContent = "Keys on your signing device";
   padlockHost.title = sealed ? "Send with your signing device" : padlockHost.title;
@@ -1460,6 +1462,9 @@ $("home-receive").addEventListener("click", async () => {
   for (const id of ["receive-address", "receive-t-address"]) $(id).textContent = "";
   for (const id of ["receive-qr", "receive-t-qr"]) $(id).removeAttribute("src");
   showWalletTag("receive-wallet", currentWallet());
+  // A signing device's wallet: shielded only. Locking in what arrives on
+  // a transparent address is signed with this PC's keys (as Lock it Mac).
+  document.querySelector(".receive-tabs").hidden = sealedWallet();
   openSheet("receive");
   showReceiveTab(false);
   try {
@@ -1508,7 +1513,7 @@ const OutsideNotice = {
 };
 
 function checkOutside() {
-  if (!overview || !overview.balance) return;
+  if (!overview || !overview.balance || sealedWallet()) return;
   const amount = overview.balance.transparent || 0;
   const upToDate = overview.sync.state === "up_to_date";
   const busy = !layer.hidden || [...document.querySelectorAll(".scrim")].some((s) => !s.hidden);
