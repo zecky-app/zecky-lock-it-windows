@@ -25,6 +25,9 @@ window.__calls = [];
       case "lock_rules": return { phase: { phase: "none" }, ask_on_start: false, contacts: [], only_saved: false, security_keys: [], log: [], time_lock_hours: 0 };
       case "wallet_activity": return [];
       case "wallet_receive": return { address: "u1shieldedexample", qr: "<svg xmlns='http://www.w3.org/2000/svg'/>" };
+      // Scans: every read is kept with its time, for the camera tests.
+      case "sealit_scan_start": m.scanned = []; return null;
+      case "sealit_scan_push": (m.scanned = m.scanned || []).push([performance.now(), args.text]); return { done: false, seen: 0, of: 1, cupcake: false };
       case "wallet_receive_transparent": return { address: (m.tAddresses && m.tAddresses[m.current || "main"]) || "t1TransparentExampleAddress0000000", qr: "<svg xmlns='http://www.w3.org/2000/svg'/>" };
       case "go_max_view": return m.goMax;
       case "settings_get": return { settings: { tor: true, wait: 0 }, reading_from: "zec.rocks", version: "0.1.5" };

@@ -1279,18 +1279,58 @@ async function startScan(kind, hint) {
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d", { willReadFrequently: true });
   let last = "";
+  let busy = false;
+  // The whole camera picture, not a smaller copy: a code held at arm's
+  // length is only a few hundred pixels wide.
   seal.scanTimer = setInterval(async () => {
-    if (!video.videoWidth) return;
-    const width = 640;
-    const height = Math.round((video.videoHeight / video.videoWidth) * width);
-    canvas.width = width;
-    canvas.height = height;
-    context.drawImage(video, 0, 0, width, height);
-    const found = jsQR(context.getImageData(0, 0, width, height).data, width, height, { inversionAttempts: "attemptBoth" });
-    if (!found || !found.data || found.data === last) return;
-    last = found.data;
-    await pushScanned(found.data);
-  }, 120);
+    if (busy || !video.videoWidth) return;
+    busy = true;
+    try {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const text = await readQR(context.getImageData(0, 0, canvas.width, canvas.height));
+      if (!text || text === last || !seal.scanTimer) return;
+      last = text;
+      await pushScanned(text);
+    } finally {
+      busy = false;
+    }
+  }, 80);
+}
+
+/// The QR reader: ZXing (WebAssembly, shipped with Lock it; it never loads
+/// anything from the internet). jsQR only if ZXing cannot start. Measured
+/// on filmed moving codes (24 Nov): ZXing read every frame of Keystone's
+/// codes, jsQR none.
+let zxingStart = null;
+function zxingReady() {
+  if (!zxingStart) {
+    zxingStart = (async () => {
+      if (!window.ZXingWASM) return false;
+      await window.ZXingWASM.prepareZXingModule({
+        overrides: { locateFile: (path, prefix) => (path.endsWith(".wasm") ? "vendor/zxing_reader.wasm" : prefix + path) },
+        fireImmediately: true,
+      });
+      return true;
+    })().catch(() => false);
+  }
+  return zxingStart;
+}
+
+const ZXING_OPTIONS = { formats: ["QRCode"], tryHarder: true, maxNumberOfSymbols: 1 };
+
+async function readQR(image) {
+  if (await zxingReady()) {
+    try {
+      const found = await window.ZXingWASM.readBarcodes(image, ZXING_OPTIONS);
+      return found.length && found[0].isValid ? found[0].text : null;
+    } catch {
+      return null;
+    }
+  }
+  const found = jsQR(image.data, image.width, image.height, { inversionAttempts: "attemptBoth" });
+  return found && found.data ? found.data : null;
 }
 
 function noCamera(text) {

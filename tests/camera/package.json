@@ -1,0 +1,9 @@
+{
+  "name": "lockit-camera-test",
+  "private": true,
+  "description": "Makes filmed moving QR codes for tests/camera/camera_test.py",
+  "dependencies": {
+    "@ngraveio/bc-ur": "1.1.13",
+    "qrcode": "1.5.4"
+  }
+}
