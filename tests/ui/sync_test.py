@@ -70,6 +70,26 @@ async def main():
             check("no page errors (older)", not pg.errors, pg.errors)
             await pg.close()
 
+            # The wallet whose older blocks are open: its balance may grow.
+            WALLETS = [{"id": "main", "name": "Lock it", "birthday": 3100000, "watch_only": False, "main": True},
+                       {"id": "w-1", "name": "Shop", "birthday": 1687104, "watch_only": True, "main": False}]
+            hint = "Lock it checks the newest blocks first. Payments from older blocks are still being added to this wallet."
+            pg = await page_with(b, base, dict(older, wallets=WALLETS, current="w-1",
+                                               pace={"open": 1262896, "minutes": 70, "newest_checked": True, "own_checked": False}))
+            check("may grow: shown for the wallet with older blocks open", await pg.is_visible("#older-line"))
+            check("may grow: text", (await pg.text_content("#older-line")) == "Still checking older blocks · may grow")
+            check("may grow: hint", (await pg.get_attribute("#older-line", "title")) == hint)
+            await pg.close()
+            # The main wallet meanwhile: its own blocks are checked, no line.
+            pg = await page_with(b, base, dict(older, wallets=WALLETS, current=None,
+                                               pace={"open": 1262896, "minutes": 70, "newest_checked": True, "own_checked": True}))
+            check("may grow: hidden for a wallet whose own blocks are checked", not await pg.is_visible("#older-line"))
+            await pg.close()
+            # Not at the newest blocks yet: the usual catching up, no line.
+            pg = await page_with(b, base, {"syncing": True, "pace": {"open": 1000, "minutes": None, "newest_checked": False, "own_checked": False}})
+            check("may grow: hidden while catching up", not await pg.is_visible("#older-line"))
+            await pg.close()
+
             # Not yet at the newest blocks: no time until the pace is known.
             pg = await page_with(b, base, {"syncing": True, "scanned": 3599000, "toScan": [[3599000, 3600001]],
                                            "pace": {"open": 1000, "minutes": None, "newest_checked": False}})
@@ -88,6 +108,7 @@ async def main():
             check("done: Behind = Nothing", (await pg.text_content("#sync-behind")) == "Nothing")
             check("done: ring 100%", (await pg.text_content("#sync-percent")) == "100%")
             check("done: no Older blocks row", not await pg.is_visible("#sync-older-line"))
+            check("done: no may-grow line", not await pg.is_visible("#older-line"))
             check("no page errors (done)", not pg.errors, pg.errors)
             await pg.close()
     finally:

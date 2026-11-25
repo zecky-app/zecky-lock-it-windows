@@ -271,10 +271,46 @@ pub fn newest_checked(to_scan: &[(u32, u32)], network: u32, window: u32) -> bool
 /// The window for `newest_checked`: about 40 minutes of blocks.
 pub const NEWEST_WINDOW: u32 = 100;
 
-/// Up to date for sending: everything checked to within 3 blocks of the
-/// network, or the newest blocks checked (older ones still open).
-pub fn ready_for_send(network: u32, wallet: u32, to_scan: &[(u32, u32)]) -> bool {
-    nearly_current(network, wallet) || newest_checked(to_scan, network, NEWEST_WINDOW)
+/// A wallet's own blocks, from its start to the newest, are all checked:
+/// no open range between them (the last 3 blocks may be new). As Lock it
+/// Mac's SyncMath.ownChecked.
+pub fn own_checked(to_scan: &[(u32, u32)], start: u32, network: u32) -> bool {
+    if network == 0 {
+        return false;
+    }
+    let high = network.saturating_sub(3);
+    !to_scan.iter().any(|&(first, end)| end > start && first < high)
+}
+
+/// Why a wallet can't send yet.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SendWait {
+    /// The newest blocks are not checked yet.
+    CatchingUp,
+    /// The newest are, but this wallet's own older blocks (from `since`)
+    /// are still open: its balance may not be complete.
+    OlderBlocks {
+        /// The wallet's start.
+        since: u32,
+    },
+}
+
+/// Whether the paying wallet may send: everything checked to within 3
+/// blocks of the network; or the newest blocks checked and this wallet's
+/// own blocks from its start `own_start` too. A wallet just added with an
+/// older start waits while the others send (as Lock it Mac).
+pub fn send_check(network: u32, wallet: u32, to_scan: &[(u32, u32)], own_start: u32) -> Result<(), SendWait> {
+    if nearly_current(network, wallet) {
+        return Ok(());
+    }
+    if !newest_checked(to_scan, network, NEWEST_WINDOW) {
+        return Err(SendWait::CatchingUp);
+    }
+    if own_checked(to_scan, own_start, network) {
+        Ok(())
+    } else {
+        Err(SendWait::OlderBlocks { since: own_start })
+    }
 }
 
 /// Blocks below the tip still to check, in all ranges, overlaps once.
@@ -323,14 +359,31 @@ mod newest_blocks_tests {
         let tip = 3_609_479;
         let history = [(1_687_104, 3_550_000)];
         assert!(newest_checked(&history, tip, NEWEST_WINDOW));
-        assert!(ready_for_send(tip, 1_687_104, &history), "older blocks open, the newest checked");
+        assert_eq!(send_check(tip, 1_687_104, &history, 3_550_000), Ok(()), "older blocks open, the newest checked");
         assert!(!newest_checked(&[(tip - 1_000, tip + 1)], tip, NEWEST_WINDOW));
-        assert!(!ready_for_send(tip, tip - 1_000, &[(tip - 1_000, tip + 1)]));
+        assert_eq!(send_check(tip, tip - 1_000, &[(tip - 1_000, tip + 1)], 3_550_000), Err(SendWait::CatchingUp));
         assert!(!newest_checked(&[(tip - 50, tip - 40)], tip, NEWEST_WINDOW), "a gap in the newest 100");
         assert!(newest_checked(&[(tip - 2, tip + 1)], tip, NEWEST_WINDOW), "the last 2 blocks may still be open");
         assert!(newest_checked(&[], tip, NEWEST_WINDOW));
         assert!(!newest_checked(&[], 0, NEWEST_WINDOW), "network block unknown");
-        assert!(ready_for_send(tip, tip - 2, &[(tip - 2, tip + 1)]));
+        assert_eq!(send_check(tip, tip - 2, &[(tip - 2, tip + 1)], 3_550_000), Ok(()));
+    }
+
+    /// Lock it Mac's testAuditBeforeSaturday (1): newest checked, older
+    /// blocks open below 3,524,536 for another wallet.
+    #[test]
+    fn each_wallet_sends_once_its_own_blocks_are_checked() {
+        let open = [(2_306_540, 3_200_000)];
+        assert!(own_checked(&open, 3_524_536, 3_609_479));
+        assert!(!own_checked(&open, 2_306_540, 3_609_479));
+        assert!(own_checked(&[(3_609_478, 3_609_480)], 3_524_536, 3_609_479), "the newest 3 may be new");
+        assert_eq!(send_check(3_609_479, 2_306_540, &open, 3_524_536), Ok(()), "the main wallet sends");
+        assert_eq!(send_check(3_609_479, 2_306_540, &open, 2_306_540), Err(SendWait::OlderBlocks { since: 2_306_540 }), "a wallet with an older start waits");
+        assert_eq!(send_check(3_609_479, 3_608_000, &[(3_608_000, 3_609_480)], 3_524_536), Err(SendWait::CatchingUp));
+        assert_eq!(send_check(3_609_479, 3_609_477, &[], 2_306_540), Ok(()), "everything checked");
+        assert!(!own_checked(&[], 1, 0), "network block unknown");
+        let said = words::older_blocks_before_send(2_306_540);
+        assert!(said.contains("since block 2,306,540") && said.contains("your other wallets can send now") && said.ends_with("Nothing was sent."), "{said}");
     }
 
     #[test]
@@ -392,6 +445,15 @@ pub mod words {
             out.push(c);
         }
         out
+    }
+
+    /// Sending from a wallet whose own older blocks are still checked
+    /// (Lock it Mac's olderBlocks).
+    pub fn older_blocks_before_send(since: u32) -> String {
+        format!(
+            "Lock it is still checking this wallet's older blocks (since block {}), so its balance may not be complete yet. You can send from it once that is done; your other wallets can send now. Nothing was sent.",
+            grouped(since)
+        )
     }
 
     /// Send is asked while the wallet is still catching up (as Lock it Mac).

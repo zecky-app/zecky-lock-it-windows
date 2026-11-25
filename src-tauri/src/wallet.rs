@@ -707,16 +707,22 @@ pub(crate) fn ready_to_send(app: &AppHandle, slot: &WalletSlot, wallet: &Wallet)
     let network = balance.as_ref().map(|b| b.chain_tip).unwrap_or(0).max(network_heard(app));
     let scanned = balance.as_ref().map(|b| b.scanned_height).unwrap_or(0);
     let to_scan = balance.as_ref().map(|b| b.to_scan.clone()).unwrap_or_default();
-    // The newest blocks are what a payment is built on: older blocks for a
-    // wallet just added do not hold up sending (as Lock it Mac).
-    if fresh && ready_for_send(network, scanned, &to_scan) {
+    // The newest blocks are what a payment is built on, and the paying
+    // wallet's own blocks from its start must be checked too: a wallet just
+    // added with an older start waits, the others send (as Lock it Mac).
+    let own_start = balance.as_ref().map(|b| b.birthday).unwrap_or(0);
+    let check = send_check(network, scanned, &to_scan, own_start);
+    if fresh && check.is_ok() {
         return Ok(());
+    }
+    if let (true, Err(SendWait::OlderBlocks { since })) = (fresh, &check) {
+        return Err(problem(lockit_node::rules::words::older_blocks_before_send(*since)));
     }
     nudge(slot);
     Err(problem(lockit_node::rules::words::catching_up_before_send(if fresh { scanned } else { 0 }, network)))
 }
 
-use lockit_node::rules::{minutes_left, newest_checked, open_count, ready_for_send, NEWEST_WINDOW};
+use lockit_node::rules::{minutes_left, newest_checked, open_count, own_checked, send_check, SendWait, NEWEST_WINDOW};
 
 /// The newest blocks are checked now, against the newest network block heard.
 fn newest_checked_now(app: &AppHandle, wallet: &Wallet) -> bool {
@@ -734,6 +740,8 @@ pub struct Pace {
     minutes: Option<u64>,
     /// The newest blocks are checked (older ones may still be open).
     newest_checked: bool,
+    /// The selected wallet's own blocks, from its start, are all checked.
+    own_checked: bool,
 }
 
 /// Notes how many blocks are open now and works out the pace.
@@ -759,7 +767,12 @@ fn pace(app: &AppHandle, slot: &WalletSlot, balance: &Balance) -> Pace {
             list.iter().map(|&(at, n)| (at.duration_since(start).as_secs_f64(), n)).collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    Pace { open, minutes: minutes_left(open, &samples), newest_checked: newest_checked(&balance.to_scan, network, NEWEST_WINDOW) }
+    Pace {
+        open,
+        minutes: minutes_left(open, &samples),
+        newest_checked: newest_checked(&balance.to_scan, network, NEWEST_WINDOW),
+        own_checked: own_checked(&balance.to_scan, balance.birthday, network),
+    }
 }
 
 /// A signed payment that never got through and has since expired is

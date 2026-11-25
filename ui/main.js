@@ -439,6 +439,10 @@ function renderHome() {
 
   // The chain's heartbeat.
   heartbeat(b.chain_tip, overview.sync.state === "up_to_date");
+  // The newest blocks are checked, this wallet's own older ones not yet:
+  // its balance is not final (as Lock it Mac).
+  const pace = overview.pace || {};
+  $("older-line").hidden = !(pace.newest_checked && pace.own_checked === false);
 
   // The status line.
   const sync = overview.sync;
@@ -2761,7 +2765,7 @@ const CHAPTERS = [
     "Nothing leaves without a receipt first: who receives what, the network fee and what leaves the lock. A payment cannot be reversed once sent.",
   ], [
     "Zcash you receive can be used after 10 confirmations, your own change after 3. A block comes about every 25 seconds since the NU7 upgrade.",
-    "Nothing is priced or signed until the newest blocks are checked, to within 3 blocks of the network. A payment built on an old view of the chain would expire before it arrives, so right after starting Lock it says it is still catching up. Older blocks, for a wallet just added, are checked in the background and do not hold up sending; the Sync screen shows how many are left.",
+    "Nothing is priced or signed until the newest blocks are checked, to within 3 blocks of the network. A payment built on an old view of the chain would expire before it arrives, so right after starting Lock it says it is still catching up. Older blocks, for a wallet just added, are checked in the background and do not hold up your other wallets; the wallet just added sends once its own blocks are checked, and until then its balance says it may grow. The Sync screen shows how many blocks are left.",
     "A payment that could not be delivered is kept, and Try again sends that same payment. Do not pay again meanwhile. If it is never delivered, it expires after about 40 blocks and nothing leaves the lock; Lock it then says so and lets it go.",
     "Paying a TEX address (tex1…) takes two steps, as the address asks: the Zcash goes to a temporary transparent address of this wallet, then on to the receiver. Activity shows them as “TEX payment” and “TEX payment · forwarding fee”. If only the first step went through, Lock it says so: the Zcash is on that temporary address, not lost.",
     "Sending to a transparent address is public: its amount and destination. A private note only goes to a shielded address.",
