@@ -379,6 +379,8 @@ function arrivalWallet(arrival) {
 function arrivalTitle(arrival) {
   const w = arrivalWallet(arrival);
   const name = w ? walletName(w) : "your wallet";
+  // A watch-only wallet only sees the payment: nothing was locked in here.
+  if (w && w.view_only) return "Received · " + name;
   return (arrival.kind === "shielded" ? "Locked in ✓ · " : "Locked in · ") + name;
 }
 
@@ -466,11 +468,12 @@ function renderHome() {
   const upToDate = overview.sync.state === "up_to_date";
   const ironwood = $("move-ironwood");
   const lockin = $("move-lockin");
-  // Both moves are signed with this PC's keys: not for a signing device's
-  // wallet (they would ask for the keys, then fail).
+  // Both moves are signed with this PC's keys: not for a wallet without
+  // keys here (they would ask for the keys, then fail).
   const sealed = sealedWallet();
-  ironwood.hidden = sealed || !(upToDate && b.orchard > 0);
-  lockin.hidden = sealed || !(upToDate && b.transparent > 0);
+  const keyless = keylessWallet();
+  ironwood.hidden = keyless || !(upToDate && b.orchard > 0);
+  lockin.hidden = keyless || !(upToDate && b.transparent > 0);
   if (!ironwood.hidden) ironwood.innerHTML = `${hidden ? "Part of your Zcash is in the old Orchard pool" : `${amountText(b.orchard)} in the old Orchard pool`} · <strong>Move it to Ironwood ›</strong>`;
   if (!lockin.hidden) lockin.innerHTML = `${hidden ? "Zcash waiting outside the lock" : `+${amountText(b.transparent)} waiting outside the lock`} · <strong>Lock it in ›</strong>`;
   checkOutside();
@@ -490,6 +493,11 @@ function renderHome() {
   $("home-seal-send").hidden = !sealed;
   if (sealed && b.total > 0 && days === null) $("held-line").textContent = "Keys on your signing device";
   padlockHost.title = sealed ? "Send with your signing device" : padlockHost.title;
+  // Watch only: nothing on this PC can spend from it.
+  if (viewOnlyWallet()) {
+    $("held-line").textContent = "Watch only · Lock it can never spend from it";
+    padlockHost.title = "Watch only: Lock it can never spend from it";
+  }
   $("actions-locked").hidden = lockOpen;
   $("actions-open").hidden = !lockOpen;
 
@@ -574,7 +582,7 @@ function showWalletTag(id, w = payingWallet()) {
   tag.hidden = !w;
   tag.textContent = "";
   if (!w) return;
-  tag.innerHTML = w.watch_only ? ENVELOPE_ICON : LOCK_ICON;
+  tag.innerHTML = walletIcon(w);
   const name = document.createElement("span");
   name.textContent = walletName(w);
   tag.append(name);
@@ -788,6 +796,7 @@ async function openWithoutPause() {
 
 function askToOpen() {
   if (lockOpen || !overview) return;
+  if (viewOnlyWallet()) return;
   if (sealedWallet()) return openSeal("send");
   if (rules && (rules.phase.phase === "not_asked" || rules.phase.phase === "waiting")) return showTimeLock();
   OPEN_WAIT = overview.settings ? overview.settings.wait : 10;
@@ -909,6 +918,14 @@ function shownWallets() {
 }
 
 const LOCK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm2 0h6V8a3 3 0 0 0-6 0z"/></svg>';
+const EYE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5c5 0 9 4.5 10 7-1 2.5-5 7-10 7S3 14.5 2 12c1-2.5 5-7 10-7zm0 3.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6zm0 2a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6z"/></svg>';
+
+/// A wallet's icon: an eye for watch only, an envelope for a signing
+/// device's, a lock for one with its words here (as Lock it Mac).
+function walletIcon(w) {
+  return w.view_only ? EYE_ICON : w.watch_only ? ENVELOPE_ICON : LOCK_ICON;
+}
+
 const ENVELOPE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm9 7.2L4.5 7v.2l7.5 5.2 7.5-5.2V7z"/></svg>';
 
 function renderKeyRing() {
@@ -923,8 +940,10 @@ function renderKeyRing() {
     chip.classList.toggle("on", Boolean(current && current.id === w.id));
     chip.classList.toggle("out", hidden.includes(w.id));
     chip.disabled = lockOpen;
-    chip.title = lockOpen ? "Close the lock to switch wallets" : w.watch_only ? "Signed on your signing device (Cupcake or Keystone)" : "";
-    chip.innerHTML = w.watch_only ? ENVELOPE_ICON : LOCK_ICON;
+    chip.title = lockOpen ? "Close the lock to switch wallets"
+      : w.view_only ? "Watch only: Lock it can never spend from it"
+      : w.watch_only ? "Signed on your signing device (Cupcake or Keystone)" : "";
+    chip.innerHTML = walletIcon(w);
     const label = document.createElement("span");
     label.textContent = walletName(w);
     chip.append(label);
@@ -999,6 +1018,7 @@ document.addEventListener("keydown", (event) => { if (event.key === "Escape") cl
 function openPlusMenu(event) {
   showMenu(event, [
     { label: "Pair a signing device (Cupcake or Keystone) · experimental", run: () => openSeal("pair") },
+    { label: "Watch a wallet", run: () => openWatch() },
     "-",
     { label: "New wallet on this PC", run: () => openAdd("new") },
     { label: "Restore a wallet with 24 words", run: () => openAdd("restore") },
@@ -1009,7 +1029,7 @@ function openRingMenu(event, w) {
   const shown = shownWallets();
   const index = shown.indexOf(w);
   const items = [{ label: "Rename…", run: () => openRename(w) }];
-  if (!w.main && !w.watch_only) items.push({ label: "Show its words…", run: () => showItsWords(w) });
+  if (!w.main && !w.watch_only && !w.view_only) items.push({ label: "Show its words…", run: () => showItsWords(w) });
   items.push("-",
     { label: "Move left", disabled: index <= 0, run: () => moveWallet(w, -1) },
     { label: "Move right", disabled: index >= shown.length - 1, run: () => moveWallet(w, 1) });
@@ -1140,8 +1160,11 @@ async function showItsWords(w) {
 
 async function removeWallet(w) {
   try {
-    if (w.watch_only) {
-      const ok = await askKeys(`Remove ${walletName(w)} from Lock it?`, "Its keys and Zcash stay on your signing device: you can pair it again at any time.", { danger: true, action: "Remove", keys: false });
+    if (w.watch_only || w.view_only) {
+      const why = w.view_only
+        ? "Only its viewing key is removed from this PC. Nothing is spent or moved; you can add it again at any time."
+        : "Its keys and Zcash stay on your signing device: you can pair it again at any time.";
+      const ok = await askKeys(`Remove ${walletName(w)} from Lock it?`, why, { danger: true, action: "Remove", keys: false });
       await invoke("keyring_remove", { id: w.id, typed: typedOnly(ok) });
     } else {
       const typed = await askKeys(`Erase ${walletName(w)}?`, "Its words leave this PC. Make sure you have them on paper: without them, its Zcash cannot be taken out anywhere.", { danger: true, action: "Erase" });
@@ -1245,6 +1268,17 @@ function sealedWallet() {
   return Boolean(w && w.watch_only);
 }
 
+/// Watch only, from a viewing key: Lock it can never spend from it.
+function viewOnlyWallet() {
+  const w = currentWallet();
+  return Boolean(w && w.view_only);
+}
+
+/// No keys on this PC: a signing device's wallet or a watch wallet.
+function keylessWallet() {
+  return sealedWallet() || viewOnlyWallet();
+}
+
 const seal = { mode: null, frames: [], frameTimer: null, stream: null, scanTimer: null, kind: null };
 
 (function fillSealDates() {
@@ -1267,7 +1301,11 @@ function openSeal(mode) {
   seal.mode = mode;
   closeSheet();
   openSheet("seal");
-  if (mode === "pair") {
+  if (mode === "watchscan") {
+    $("seal-title").textContent = "Watch a wallet";
+    $("seal-sub").textContent = "Show the viewing key's QR code to the camera. In Lock it: Settings › Viewing key.";
+    startScan("viewing_key", "Hold the viewing key's QR code up to the camera.");
+  } else if (mode === "pair") {
     $("seal-title").textContent = "Pair a signing device";
     $("seal-sub").textContent = "The keys stay on your Cupcake or Keystone. This PC only sees the balance and builds payments.";
     startScan("accounts", "Show the QR code for connecting a wallet and hold it up to the camera. On a Keystone: Connect Software Wallet › Zodl.");
@@ -1361,7 +1399,7 @@ async function startScan(kind, hint) {
   document.querySelector("#sheet-seal .camera").hidden = false;
   $("seal-progress").textContent = hint;
   $("seal-paste").value = "";
-  $("seal-paste").placeholder = kind === "accounts" ? "ur:zcash-accounts/… or zcash-wallet:?…" : "ur:zcash-pczt/…";
+  $("seal-paste").placeholder = kind === "accounts" ? "ur:zcash-accounts/… or zcash-wallet:?…" : kind === "viewing_key" ? "uview1…" : "ur:zcash-pczt/…";
   try {
     await invoke("sealit_scan_start", { kind });
   } catch (problem) {
@@ -1464,6 +1502,8 @@ async function pushScanned(text) {
       return;
     }
     stopCamera();
+    // Watch a wallet: back to its form, with the key read.
+    if (seal.kind === "viewing_key") return openWatch(await invoke("watch_scanned_key"), true);
     // Cupcake's QR needs no "when were the words made": it starts at NU7.
     if (seal.kind === "accounts" && progress.cupcake) await pair(null);
     else if (seal.kind === "accounts") sealStage("age");
@@ -1493,6 +1533,67 @@ async function pair(madeIn) {
   }
 }
 $("seal-new").addEventListener("click", () => pair(null));
+
+// ---------- Watch a wallet: from its viewing key, view only (as Lock it Mac) ----------
+
+(function fillWatchDates() {
+  const month = $("watch-month");
+  MONTHS.forEach((name, index) => month.append(new Option(name, index + 1)));
+  const year = $("watch-year");
+  const now = new Date();
+  for (let y = now.getFullYear(); y >= 2022; y -= 1) year.append(new Option(String(y), y));
+  month.value = String(now.getMonth() + 1);
+})();
+
+function watchSinceNote() {
+  const unknown = $("watch-unknown").checked;
+  document.querySelector("#sheet-watch .seal-dates").setAttribute("aria-disabled", String(unknown));
+  $("watch-since-note").textContent = unknown
+    ? "Lock it checks from Orchard's start (2022). The newest payments show first; older ones fill in, which can take hours the first time."
+    : "Lock it checks from a little before then. The newest payments show first; older ones fill in.";
+}
+
+/// `keepForm`: back from scanning, the name and the date stay.
+function openWatch(key = "", keepForm = false) {
+  if (!keepForm) {
+    $("watch-name").value = "";
+    $("watch-unknown").checked = false;
+  }
+  $("watch-key").value = key;
+  say($("watch-message"), "");
+  watchSinceNote();
+  closeSheet();
+  openSheet("watch");
+  (key ? $("watch-name") : $("watch-key")).focus();
+}
+
+$("watch-unknown").addEventListener("change", watchSinceNote);
+$("watch-scan").addEventListener("click", () => openSeal("watchscan"));
+$("watch-paste").addEventListener("click", async () => {
+  try {
+    $("watch-key").value = (await navigator.clipboard.readText()).trim();
+  } catch {
+    say($("watch-message"), "Lock it could not read the clipboard. Click in the box and press Ctrl+V.");
+  }
+});
+$("watch-go").addEventListener("click", async () => {
+  const button = $("watch-go");
+  button.disabled = true;
+  button.textContent = "Adding…";
+  say($("watch-message"), "");
+  const madeIn = $("watch-unknown").checked ? null : { year: Number($("watch-year").value), month: Number($("watch-month").value) };
+  try {
+    await invoke("watch_add", { name: $("watch-name").value, key: $("watch-key").value, madeIn });
+    activity = [];
+    closeSheet();
+    await refreshHome();
+  } catch (problem) {
+    say($("watch-message"), describe(problem));
+  } finally {
+    button.disabled = false;
+    button.textContent = "Watch this wallet";
+  }
+});
 $("seal-old").addEventListener("click", () => pair({ year: Number($("seal-year").value), month: Number($("seal-month").value) }));
 
 async function finishSeal() {
@@ -1548,7 +1649,9 @@ function showReceiveTab(transparent) {
   head.querySelector(".sheet-title").textContent = transparent ? "Transparent address" : "Receive";
   head.querySelector(".sheet-sub").textContent = transparent
     ? "Visible to everyone, like Bitcoin. Only for senders that cannot pay a shielded address."
-    : "Your shielded address. Payments to it stay private.";
+    : viewOnlyWallet()
+      ? "Payments to this shielded address show in this watch-only wallet. Lock it cannot spend them."
+      : "Your shielded address. Payments to it stay private.";
   say($("receive-message"), "", true);
 }
 
@@ -1559,7 +1662,7 @@ $("home-receive").addEventListener("click", async () => {
   showWalletTag("receive-wallet", currentWallet());
   // A signing device's wallet: shielded only. Locking in what arrives on
   // a transparent address is signed with this PC's keys (as Lock it Mac).
-  document.querySelector(".receive-tabs").hidden = sealedWallet();
+  document.querySelector(".receive-tabs").hidden = keylessWallet();
   openSheet("receive");
   showReceiveTab(false);
   try {
@@ -1608,7 +1711,7 @@ const OutsideNotice = {
 };
 
 function checkOutside() {
-  if (!overview || !overview.balance || sealedWallet()) return;
+  if (!overview || !overview.balance || keylessWallet()) return;
   const amount = overview.balance.transparent || 0;
   const upToDate = overview.sync.state === "up_to_date";
   const busy = !layer.hidden || [...document.querySelectorAll(".scrim")].some((s) => !s.hidden);
@@ -2401,6 +2504,10 @@ function hidePhrase() {
 $("phrase-toggle").addEventListener("click", async () => {
   if (!$("phrase-shown").hidden) return hidePhrase();
   say($("phrase-note"), "");
+  // No words on this PC: say so before asking for any keys (as Lock it Mac).
+  const w = currentWallet();
+  if (w && w.view_only) return say($("phrase-note"), `${walletName(w)} is watch only: Lock it has only its viewing key, no words, so there is nothing to show here.`);
+  if (w && w.watch_only) return say($("phrase-note"), `${walletName(w)} is paired with a signing device. Its 24 words are on that device, never on this PC, so there is nothing to show here.`);
   try {
     const typed = await askKeys("Confirm it's you", "Your 24 words are the wallet. Make sure nobody can see your screen.", { action: "Show the words" });
     const words = await invoke("wallet_show_words", { typed: typedOnly(typed) });

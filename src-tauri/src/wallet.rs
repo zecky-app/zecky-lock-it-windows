@@ -703,6 +703,12 @@ fn parse_zec(text: &str) -> CommandResult<u64> {
 /// and the network refuses it as expired (Mac, 21 Nov 2026: about 1,000
 /// blocks behind right after starting).
 pub(crate) fn ready_to_send(app: &AppHandle, slot: &WalletSlot, wallet: &Wallet) -> CommandResult<()> {
+    // Every way out passes here: a watch wallet never pays (the engine
+    // refuses too: it was imported view-only).
+    let current = load_settings(app).current;
+    if current.is_some() && wallet.accounts().unwrap_or_default().iter().any(|a| Some(&a.id) == current.as_ref() && a.view_only) {
+        return Err(problem("This is a watch-only wallet: Lock it can never spend from it. Nothing was sent."));
+    }
     let fresh = slot
         .last_synced
         .lock()
@@ -1540,7 +1546,8 @@ pub async fn keyring_erase_main(app: AppHandle, window: WebviewWindow, slot: Sta
 pub async fn keyring_remove(app: AppHandle, window: WebviewWindow, slot: State<'_, WalletSlot>, id: String, typed: Typed) -> CommandResult<()> {
     // A Seal it wallet's keys are on the phone: removing it takes nothing
     // that can spend off this PC, so the keys are not asked (as on the Mac).
-    let watch_only = main_wallet(&app)?.accounts()?.iter().any(|a| a.id == id && a.watch_only);
+    // A watch wallet holds only a viewing key: nothing that can spend either.
+    let watch_only = main_wallet(&app)?.accounts()?.iter().any(|a| a.id == id && (a.watch_only || a.view_only));
     if !watch_only {
         drop(ask_the_keys(&app, &window, typed).await?);
     }

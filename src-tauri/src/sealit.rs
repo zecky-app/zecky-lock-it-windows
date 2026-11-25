@@ -32,10 +32,44 @@ pub fn sealit_scan_start(seal: State<'_, SealSlot>, kind: String) -> CommandResu
     let expected = match kind.as_str() {
         "accounts" => UR_ACCOUNTS,
         "pczt" => UR_PCZT,
+        "viewing_key" => lockit_wallet::sealit::VIEWING_KEY,
         _ => return Err(problem("unknown code")),
     };
     *seal.scan.lock().map_err(|_| problem("the app is in an unknown state"))? = Some(UrScan::new(expected));
     Ok(())
+}
+
+/// The viewing key read by the webcam, for Watch a wallet.
+#[tauri::command]
+pub fn watch_scanned_key(seal: State<'_, SealSlot>) -> CommandResult<String> {
+    let message = scanned(&seal)?;
+    String::from_utf8(message).map_err(|_| problem("That is not a Zcash viewing key."))
+}
+
+/// Watch a wallet (as Lock it Mac): a wallet from its viewing key, view
+/// only. `made_in`: since when it is used; None for "I don't know"
+/// (Orchard's start). Selects it and returns its id.
+#[tauri::command]
+pub async fn watch_add(app: AppHandle, slot: State<'_, WalletSlot>, name: String, key: String, made_in: Option<MadeIn>) -> CommandResult<String> {
+    // The Mac's words for a bad key or name, before the network is asked.
+    lockit_wallet::watch_name(&name)?;
+    lockit_wallet::clean_viewing_key(&key)?;
+    let main = w::main_wallet(&app)?;
+    let server = w::chosen_server(&app);
+    let id = tauri::async_runtime::spawn_blocking(move || -> CommandResult<String> {
+        let since = match made_in {
+            Some(made) => Some(made.birthday(w::runtime().block_on(Wallet::chain_tip(&server))?)),
+            None => None,
+        };
+        Ok(w::runtime().block_on(main.add_watch(&name, &key, since, &server))?)
+    })
+    .await
+    .map_err(|e| problem(format!("adding stopped unexpectedly: {e}")))
+    .and_then(|r| r);
+    w::nudge_slot(&slot);
+    let id = id.map_err(w::adding_problem)?;
+    w::select(&app, Some(id.clone()))?;
+    Ok(id)
 }
 
 /// One code read by the webcam (or pasted).

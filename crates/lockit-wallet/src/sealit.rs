@@ -22,6 +22,9 @@ use crate::{Error, Result};
 pub const UR_ACCOUNTS: &str = "zcash-accounts";
 /// The PCZT, both ways.
 pub const UR_PCZT: &str = "zcash-pczt";
+/// Not a UR: a plain QR holding a viewing key (uview1…), for watch-only
+/// (Lock it Mac's SealItURType.viewingKey).
+pub const VIEWING_KEY: &str = "uview";
 /// Keystone, Zashi and Seal it all use 200.
 const FRAGMENT: usize = 200;
 
@@ -461,6 +464,15 @@ impl UrScan {
     fn take(&mut self, raw: &str) -> Result<()> {
         // Cupcake shows its account as a plain QR, not a UR.
         let plain = raw.trim_matches(|c: char| c.is_whitespace() || c.is_control());
+        if self.expected == VIEWING_KEY {
+            if !plain.to_lowercase().starts_with("uview") {
+                return Err(Error::Other("That is not a Zcash viewing key. It starts with uview1…; in Lock it: Settings › Viewing key.".into()));
+            }
+            self.of = 1;
+            self.seen.insert(1);
+            self.message = Some(plain.as_bytes().to_vec());
+            return Ok(());
+        }
         if is_cupcake_pairing(plain) {
             if self.expected != UR_ACCOUNTS {
                 return Err(Error::Other("that is Cupcake's code for connecting a wallet, not the signed transaction".into()));
@@ -795,5 +807,21 @@ mod wallet_name_tests {
         assert_eq!(wallet_name(Some("My wallet"), true), "Cupcake · My wallet");
         assert_eq!(wallet_name(Some(" "), true), "Cupcake");
         assert!(wallet_name(Some(&"x".repeat(80)), false).chars().count() <= 40);
+    }
+}
+
+#[cfg(test)]
+mod viewing_key_scan_tests {
+    use super::*;
+
+    /// Watch a wallet: a viewing key's QR is plain text, read at once.
+    #[test]
+    fn a_viewing_key_qr_is_read_at_once() {
+        let mut scan = UrScan::new(VIEWING_KEY);
+        let done = scan.receive("  uview1qqqqexample\n").unwrap();
+        assert!(done.done && done.of == 1);
+        assert_eq!(scan.message().unwrap(), b"uview1qqqqexample");
+        let mut other = UrScan::new(VIEWING_KEY);
+        assert!(other.receive("ur:zcash-accounts/abc").unwrap_err().to_string().contains("not a Zcash viewing key"));
     }
 }

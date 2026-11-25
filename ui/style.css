@@ -976,3 +976,8 @@ select.input { appearance: auto; }
 .arrival-words strong { font: 600 14px var(--sans); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .arrival-words small { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .arrival { transition: none; } }
+
+/* Watch a wallet */
+.watch-buttons { display: flex; gap: 8px; margin: -4px 0 14px; }
+#sheet-watch .check { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--text); }
+#sheet-watch .seal-dates[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }

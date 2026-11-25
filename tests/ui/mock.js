@@ -28,8 +28,21 @@ window.__calls = [];
       case "wallet_receive": return { address: "u1shieldedexample", qr: "<svg xmlns='http://www.w3.org/2000/svg'/>" };
       // Scans: every read is kept with its time, for the camera tests.
       case "sealit_scan_start": m.scanned = []; return null;
-      case "sealit_scan_push": (m.scanned = m.scanned || []).push([performance.now(), args.text]); return { done: false, seen: 0, of: 1, cupcake: false };
+      case "sealit_scan_push": (m.scanned = m.scanned || []).push([performance.now(), args.text]); return { done: args.text.startsWith("uview"), seen: 0, of: 1, cupcake: false };
       case "wallet_receive_transparent": return { address: (m.tAddresses && m.tAddresses[m.current || "main"]) || "t1TransparentExampleAddress0000000", qr: "<svg xmlns='http://www.w3.org/2000/svg'/>" };
+      // Watch a wallet: the Rust side's checks and words.
+      case "watch_scanned_key": return m.scannedKey || "uview1scanned";
+      case "watch_add": {
+        const key = (args.key || "").trim();
+        if (key.toLowerCase().startsWith("uviewtest")) throw { message: "That is a testnet viewing key. Lock it works on mainnet (uview1…)." };
+        if (!(args.name || "").trim()) throw { message: "Give the wallet a name, for example Shop." };
+        if (!key.startsWith("uview1")) throw { message: "That is not a Zcash viewing key. It starts with uview1…; in Lock it: Settings › Viewing key." };
+        if (key === m.knownKey) throw { message: "That wallet is already in Lock it." };
+        m.lastWatch = args;
+        m.wallets = (m.wallets || []).concat([{ id: "watch-1", name: args.name.trim(), birthday: 1687104, watch_only: false, view_only: true, main: false }]);
+        m.current = "watch-1";
+        return "watch-1";
+      }
       case "wallet_take_arrival": return (m.arrivals || []).shift() || null;
       case "sealit_start": return { frames: ["<svg xmlns='http://www.w3.org/2000/svg'/>"], cupcake: Boolean(m.cupcakeSigner), large_kb: m.largeKb || null };
       case "go_max_view": return m.goMax;

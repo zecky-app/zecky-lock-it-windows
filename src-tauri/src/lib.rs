@@ -332,6 +332,8 @@ pub fn run() {
             wallet::wallet_receive_transparent,
             wallet::wallet_activity,
             wallet::wallet_take_arrival,
+            sealit::watch_add,
+            sealit::watch_scanned_key,
             wallet::wallet_prepare,
             wallet::wallet_open_lock,
             wallet::wallet_close_lock,

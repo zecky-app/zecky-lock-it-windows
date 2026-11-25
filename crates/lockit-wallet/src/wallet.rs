@@ -141,12 +141,54 @@ pub struct AccountInfo {
     pub watch_only: bool,
     /// The main wallet, the one whose words are sealed in the lock.
     pub main: bool,
+    /// Watch only, from a viewing key: Lock it can never spend from it.
+    pub view_only: bool,
 }
 
 /// Key source marking extra wallets with their own words on this PC.
 pub const KEYRING_SOURCE: &str = "lockit-keyring";
 /// Key source marking Seal it wallets (watch-only on this PC).
 pub const SEALIT_SOURCE: &str = "sealit";
+/// Key source marking watch-only wallets added from a viewing key: imported
+/// as view-only, so the engine itself refuses to spend from them.
+pub const WATCH_SOURCE: &str = "watch";
+/// Orchard's start (NU5): the earliest a unified viewing key can have
+/// shielded funds, for "I don't know since when" (as Lock it Mac).
+pub const ORCHARD_START: u32 = 1_687_104;
+
+/// A pasted or scanned viewing key, checked: a mainnet unified full viewing
+/// key (uview1…), with the Mac's words when it is not.
+pub fn clean_viewing_key(raw: &str) -> Result<zcash_keys::keys::UnifiedFullViewingKey> {
+    let key = raw.trim_matches(|c: char| c.is_whitespace() || c.is_control());
+    if key.to_lowercase().starts_with("uviewtest") {
+        return Err(Error::Other("That is a testnet viewing key. Lock it works on mainnet (uview1…).".into()));
+    }
+    let not_a_key = || Error::Other("That is not a Zcash viewing key. It starts with uview1…; in Lock it: Settings › Viewing key.".into());
+    if !key.starts_with("uview1") {
+        return Err(not_a_key());
+    }
+    zcash_keys::keys::UnifiedFullViewingKey::decode(&MainNetwork, key).map_err(|_| not_a_key())
+}
+
+/// The name on the key ring: trimmed, at most 40 characters, not empty.
+pub fn watch_name(raw: &str) -> Result<String> {
+    let name = raw.trim();
+    if name.is_empty() {
+        return Err(Error::Other("Give the wallet a name, for example Shop.".into()));
+    }
+    Ok(name.chars().take(40).collect())
+}
+
+/// The same wallet already here, in this or another form of its key: any
+/// viewing key part (Orchard, Sapling, transparent) in common.
+fn same_wallet(a: &zcash_keys::keys::UnifiedFullViewingKey, b: &zcash_keys::keys::UnifiedFullViewingKey) -> bool {
+    let orchard = matches!((a.orchard(), b.orchard()), (Some(x), Some(y)) if x.to_bytes() == y.to_bytes());
+    let sapling = matches!((a.sapling(), b.sapling()), (Some(x), Some(y)) if x.to_bytes() == y.to_bytes());
+    let transparent = matches!((a.p2pkh(), b.p2pkh()), (Some(x), Some(y)) if x.serialize() == y.serialize());
+    orchard || sapling || transparent
+}
+
+const ALREADY_HERE: &str = "That wallet is already in Lock it.";
 /// Where a Cupcake wallet starts looking: NU7 (Cupcake added Zcash after it).
 const CUPCAKE_BIRTHDAY: u32 = 3_543_405;
 
@@ -216,6 +258,7 @@ impl Wallet {
                 name: account.name().unwrap_or("Wallet").to_owned(),
                 birthday: db.get_account_birthday(id).map(u32::from).unwrap_or(0),
                 watch_only: source.as_deref() == Some(SEALIT_SOURCE),
+                view_only: source.as_deref() == Some(WATCH_SOURCE),
                 main: id == main,
             });
         }
@@ -284,6 +327,45 @@ impl Wallet {
         let imported = db
             .import_account_ufvk(name, &ufvk, &birthday, AccountPurpose::Spending { derivation }, Some(SEALIT_SOURCE))
             .map_err(db_err)?;
+        db.update_chain_tip(BlockHeight::from_u32(tip)).map_err(db_err)?;
+        Ok(imported.id().expose_uuid().to_string())
+    }
+
+    /// Adds a watch-only wallet from a viewing key (as Lock it Mac's Watch a
+    /// wallet): imported view-only, so the engine refuses to spend from it.
+    /// `since`: the block to check from (a month's estimate), or None for
+    /// "I don't know" (Orchard's start). Returns its id.
+    pub async fn add_watch(&self, name: &str, key: &str, since: Option<u32>, server: &Server) -> Result<String> {
+        let name = watch_name(name)?;
+        let ufvk = clean_viewing_key(key)?;
+        self.check_not_here(&ufvk)?;
+        let (birthday, tip) = Self::birthday_from(server, Some(since.unwrap_or(ORCHARD_START))).await?;
+        self.import_watch(&name, &ufvk, &birthday, tip)
+    }
+
+    fn check_not_here(&self, ufvk: &zcash_keys::keys::UnifiedFullViewingKey) -> Result<()> {
+        let db = self.db()?;
+        for id in db.get_account_ids().map_err(db_err)? {
+            if let Some(existing) = db.get_account(id).map_err(db_err)? {
+                if existing.ufvk().is_some_and(|k| same_wallet(k, ufvk)) {
+                    return Err(Error::Other(ALREADY_HERE.into()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn import_watch(&self, name: &str, ufvk: &zcash_keys::keys::UnifiedFullViewingKey, birthday: &AccountBirthday, tip: u32) -> Result<String> {
+        use zcash_client_backend::data_api::AccountPurpose;
+        let mut db = self.db()?;
+        let imported = db.import_account_ufvk(name, ufvk, birthday, AccountPurpose::ViewOnly, Some(WATCH_SOURCE)).map_err(|e| {
+            // The engine's own refusal of a key it already holds.
+            if matches!(e, zcash_client_sqlite::error::SqliteClientError::AccountCollision(_)) {
+                Error::Other(ALREADY_HERE.into())
+            } else {
+                db_err(e)
+            }
+        })?;
         db.update_chain_tip(BlockHeight::from_u32(tip)).map_err(db_err)?;
         Ok(imported.id().expose_uuid().to_string())
     }
@@ -555,11 +637,27 @@ impl Wallet {
     pub fn receive_address(&self) -> Result<String> {
         let mut db = self.db()?;
         let account = self.account(&db)?;
-        let request = UnifiedAddressRequest::unsafe_custom(
-            ReceiverRequirement::Require,
-            ReceiverRequirement::Require,
-            ReceiverRequirement::Omit,
-        );
+        // A wallet without keys on this PC (a signing device's, a watch
+        // wallet): shielded only, Orchard only, as Lock it Mac. Its viewing
+        // key may have no Sapling part (an address needing one would fail).
+        let keyless = db.get_account(account).map_err(db_err)?.is_some_and(|a| {
+            matches!(a.source().key_source(), Some(SEALIT_SOURCE) | Some(WATCH_SOURCE))
+        });
+        if keyless {
+            let has_orchard = db.get_account(account).map_err(db_err)?.and_then(|a| a.ufvk().map(|k| k.orchard().is_some())).unwrap_or(false);
+            if !has_orchard {
+                return Err(Error::Other("This viewing key has no Orchard part, so Lock it cannot show a shielded address for it. Payments to the wallet's own addresses still show here.".into()));
+            }
+        }
+        let request = if keyless {
+            UnifiedAddressRequest::unsafe_custom(ReceiverRequirement::Require, ReceiverRequirement::Omit, ReceiverRequirement::Omit)
+        } else {
+            UnifiedAddressRequest::unsafe_custom(
+                ReceiverRequirement::Require,
+                ReceiverRequirement::Require,
+                ReceiverRequirement::Omit,
+            )
+        };
         if let Some(address) = db.get_last_generated_address_matching(account, request).map_err(db_err)? {
             return Ok(address.encode(&MainNetwork));
         }
@@ -1204,6 +1302,82 @@ mod tests {
         assert!(wallet.for_account(Some(&cupcake)).is_sealit().unwrap());
         assert!(!wallet.for_account(Some(&sealit)).is_cupcake().unwrap());
         assert!(wallet.for_account(Some(&sealit)).is_sealit().unwrap());
+    }
+
+    fn key_of(seed: u8) -> zcash_keys::keys::UnifiedFullViewingKey {
+        zcash_keys::keys::UnifiedSpendingKey::from_seed(&MainNetwork, &[seed; 32], zip32::AccountId::ZERO).unwrap().to_unified_full_viewing_key()
+    }
+
+    /// The same key in another form: its Orchard part only, as a wallet
+    /// without Sapling or transparent would export it.
+    fn orchard_only(ufvk: &zcash_keys::keys::UnifiedFullViewingKey) -> String {
+        use zcash_address::unified::{Encoding, Fvk, Revision, Ufvk, Uitem};
+        Ufvk::try_from_items(Revision::R0, vec![Uitem::Data(Fvk::Orchard(ufvk.orchard().unwrap().to_bytes()))])
+            .unwrap()
+            .encode(&zcash_protocol::consensus::NetworkType::Main)
+    }
+
+    fn at(height: u32) -> AccountBirthday {
+        AccountBirthday::from_parts(zcash_client_backend::data_api::chain::ChainState::empty(BlockHeight::from_u32(height), BlockHash([0; 32])), None)
+    }
+
+    /// The Mac's checks of a pasted key and name.
+    #[test]
+    fn a_viewing_key_is_checked_as_on_the_mac() {
+        let key = key_of(3).encode(&MainNetwork).unwrap();
+        assert!(clean_viewing_key(&format!("  {key}\n")).is_ok(), "spaces and a line break around it");
+        let testnet = zcash_keys::keys::UnifiedSpendingKey::from_seed(&zcash_protocol::consensus::TestNetwork, &[3; 32], zip32::AccountId::ZERO)
+            .unwrap().to_unified_full_viewing_key().encode(&zcash_protocol::consensus::TestNetwork).unwrap();
+        assert_eq!(clean_viewing_key(&testnet).unwrap_err().to_string(), "That is a testnet viewing key. Lock it works on mainnet (uview1…).");
+        let junk = "That is not a Zcash viewing key. It starts with uview1…; in Lock it: Settings › Viewing key.";
+        assert_eq!(clean_viewing_key("u1somethingelse").unwrap_err().to_string(), junk);
+        assert_eq!(clean_viewing_key(&key[..key.len() - 3]).unwrap_err().to_string(), junk, "damaged");
+        assert_eq!(watch_name("  Shop  ").unwrap(), "Shop");
+        assert_eq!(watch_name(" ").unwrap_err().to_string(), "Give the wallet a name, for example Shop.");
+        assert_eq!(watch_name(&"x".repeat(60)).unwrap().chars().count(), 40);
+        assert_eq!(ORCHARD_START, 1_687_104);
+    }
+
+    /// Watch only: imported view-only (the engine can't spend from it),
+    /// listed as such, never as a signing device; the same wallet twice,
+    /// also in another form of its key, is refused plainly.
+    #[test]
+    fn a_watch_wallet_is_view_only_and_added_once() {
+        use zcash_client_backend::data_api::{Account as _, AccountPurpose, AccountSource};
+        let (_dir, wallet, _seed) = fresh();
+        let shop = key_of(4);
+        let id = wallet.import_watch("Shop", &shop, &at(3_600_000), 3_600_100).unwrap();
+        let info = wallet.accounts().unwrap().into_iter().find(|a| a.id == id).unwrap();
+        assert!(info.view_only && !info.watch_only && !info.main);
+        let db = wallet.db().unwrap();
+        let account = db.get_account(AccountUuid::from_uuid(uuid::Uuid::parse_str(&id).unwrap())).unwrap().unwrap();
+        assert!(matches!(account.source(), AccountSource::Imported { purpose: AccountPurpose::ViewOnly, key_source } if key_source.as_deref() == Some(WATCH_SOURCE)));
+        drop(db);
+        assert_eq!(wallet.check_not_here(&shop).unwrap_err().to_string(), ALREADY_HERE, "the same key");
+        let other_form = clean_viewing_key(&orchard_only(&shop)).unwrap();
+        assert_eq!(wallet.check_not_here(&other_form).unwrap_err().to_string(), ALREADY_HERE, "its Orchard part alone");
+        assert!(wallet.check_not_here(&key_of(5)).is_ok(), "another wallet");
+        // The engine refuses it too, if it ever got that far.
+        let again = wallet.import_watch("Shop again", &shop, &at(3_600_000), 3_600_100);
+        assert_eq!(again.unwrap_err().to_string(), ALREADY_HERE);
+    }
+
+    /// A wallet without keys here gets an Orchard-only address: its viewing
+    /// key may have no Sapling part (Lock it Mac's shieldedOnlyAddress).
+    #[test]
+    fn a_keyless_wallet_receives_on_an_orchard_only_address() {
+        let (_dir, wallet, _seed) = fresh();
+        let lean = clean_viewing_key(&orchard_only(&key_of(6))).unwrap();
+        assert!(lean.sapling().is_none());
+        let id = wallet.import_watch("Lean", &lean, &at(3_600_000), 3_600_100).unwrap();
+        let address = wallet.for_account(Some(&id)).receive_address().unwrap();
+        let decoded = zcash_keys::address::Address::decode(&MainNetwork, &address).unwrap();
+        let zcash_keys::address::Address::Unified(ua) = decoded else { panic!("not a unified address") };
+        assert!(ua.orchard().is_some() && ua.sapling().is_none() && ua.transparent().is_none());
+        // The main wallet keeps its usual address with a Sapling part.
+        let main = wallet.receive_address().unwrap();
+        let zcash_keys::address::Address::Unified(ua) = zcash_keys::address::Address::decode(&MainNetwork, &main).unwrap() else { panic!() };
+        assert!(ua.sapling().is_some());
     }
 
     /// The arrival message's filter: only money from elsewhere.

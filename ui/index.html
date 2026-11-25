@@ -257,6 +257,35 @@
       </div>
     </section>
 
+    <!-- Watch a wallet: from its viewing key, view only (as Lock it Mac) -->
+    <section class="sheet" id="sheet-watch" hidden>
+      <div class="sheet-head">
+        <div><p class="eyebrow">WATCH ONLY</p><h2 class="sheet-title">Watch a wallet</h2>
+        <p class="sheet-sub">Add a wallet from its viewing key: you see its balance, payments and memos. Lock it can never spend from it.</p></div>
+        <button type="button" class="done" data-close>Cancel</button>
+      </div>
+      <div class="sheet-scroll">
+        <div class="card pad">
+          <label class="field"><span>Viewing key</span><textarea class="input mono" id="watch-key" rows="3" spellcheck="false" autocomplete="off" placeholder="uview1…"></textarea></label>
+          <div class="watch-buttons">
+            <button type="button" class="secondary narrow" id="watch-paste">Paste</button>
+            <button type="button" class="secondary narrow" id="watch-scan">Scan a QR code</button>
+          </div>
+          <label class="field"><span>Name on the key ring</span><input class="input" id="watch-name" maxlength="40" placeholder="Shop" spellcheck="false" autocomplete="off"></label>
+          <div class="field"><span>Since when has this wallet been used?</span>
+            <div class="seal-dates">
+              <select id="watch-month" class="input" aria-label="Month"></select>
+              <select id="watch-year" class="input" aria-label="Year"></select>
+            </div>
+            <label class="check"><input type="checkbox" id="watch-unknown"> I don't know</label>
+            <p class="small quiet" id="watch-since-note"></p>
+          </div>
+          <button type="button" class="brass" id="watch-go">Watch this wallet</button>
+          <p id="watch-message" class="message" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+    </section>
+
     <!-- A wallet's words (Show its words…) -->
     <section class="sheet" id="sheet-words" hidden>
       <div class="sheet-head">
@@ -327,7 +356,7 @@
       <div class="sheet-head">
         <div><p class="eyebrow">ZECKY</p><h2 class="sheet-title">Receive</h2>
         <div class="wallet-tag sheet-wallet" id="receive-wallet" hidden></div>
-        <p class="sheet-sub">Your shielded address. Payments to it stay private.</p></div>
+        <p class="sheet-sub" id="receive-sub">Your shielded address. Payments to it stay private.</p></div>
         <button type="button" class="done" data-close>Done</button>
       </div>
       <div class="receive-body">
