@@ -99,6 +99,23 @@ async def main():
             check("catching up: no Older blocks row", not await pg.is_visible("#sync-older-line"))
             await pg.close()
 
+            # The Go Max button follows the switch (Lock it Mac 601a6c8):
+            # the coin left while off, right while on or starting; a click
+            # only opens the page.
+            pg = await page_with(b, base, {})
+            await pg.wait_for_timeout(500)
+            check("coin: left while Go Max is off", not await pg.evaluate("document.getElementById('go-max-coin').classList.contains('on-right')"))
+            await pg.evaluate("window.__m.goMax = Object.assign({}, window.__m.goMax, {state: 'starting'})")
+            await pg.wait_for_timeout(4500)
+            check("coin: right once switched on", await pg.evaluate("document.getElementById('go-max-coin').classList.contains('on-right')"))
+            title_right = await pg.evaluate("getComputedStyle(document.querySelector('#go-max-coin .coin-text')).alignItems")
+            check("coin: the words beside it on the left", title_right == "flex-end", title_right)
+            await pg.click("#go-max-coin"); await pg.wait_for_timeout(300)
+            check("coin: a click opens Go Max", await pg.is_visible("#sheet-gomax"))
+            check("coin: a click switches nothing", (await pg.evaluate("window.__m.goMax.state")) == "starting")
+            check("no page errors (coin)", not pg.errors, pg.errors)
+            await pg.close()
+
             # Everything checked.
             pg = await page_with(b, base, {})
             status = await pg.text_content("#status-text")

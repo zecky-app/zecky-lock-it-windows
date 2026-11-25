@@ -3453,9 +3453,24 @@ function nodeProgress(status) {
   return { network, fraction: Math.min(1, status.height / network), caughtUp };
 }
 
+/// Where the coin sits on the home screen's Go Max button: as the switch
+/// in Settings › Go Max, right while Go Max is on (or starting), left while
+/// it is off (Lock it Mac's coinOnRight). A click only opens the page.
+function coinOnRight(view) {
+  return Boolean(view) && (view.state === "on" || view.state === "starting");
+}
+
 async function refreshCoin() {
   let view;
   try { view = await invoke("go_max_view"); } catch { return; }
+  const right = coinOnRight(view);
+  const coinButton = $("go-max-coin");
+  if (coinButton.classList.contains("on-right") !== right) {
+    coinButton.classList.toggle("on-right", right);
+    coinButton.classList.remove("slid");
+    void coinButton.offsetWidth;
+    coinButton.classList.add("slid");
+  }
   goMaxReady = view.state === "on" && !!view.wallet_ready && !!view.status && nodeProgress(view.status).caughtUp;
   const button = $("go-max-coin");
   const coin = $("coin");

@@ -998,3 +998,12 @@ select.input { appearance: auto; }
 #seal-age-ask, #seal-age-since { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
 #sheet-seal .check { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--text); }
 #seal-age-since .seal-dates[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }
+
+/* Go Max button: the coin sits right while Go Max is on, as the switch (Lock it Mac 601a6c8). */
+.go-max-button.on-right { flex-direction: row-reverse; padding: 0 8px 0 22px; }
+.go-max-button.on-right .coin-text { align-items: flex-end; text-align: right; }
+.go-max-button.slid .coin { animation: coin-slide 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.1); }
+.go-max-button.on-right.slid .coin { animation-name: coin-slide-right; }
+@keyframes coin-slide { from { transform: translateX(40px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+@keyframes coin-slide-right { from { transform: translateX(-40px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .go-max-button.slid .coin { animation: none; } }
