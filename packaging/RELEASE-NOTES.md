@@ -40,6 +40,9 @@ The same as Lock it for Mac:
 - **Settings › Security › Camera:** whether Windows allows the camera, with a
   button to Windows' camera settings.
 - **The Go Max button** shows the switch: the coin sits right while Go Max is on.
+- Fix: a wallet with older blocks to check no longer gets stuck on Go Max ("put_blocks
+  requires that the provided block range be sequential"). Go Max keeps only recent
+  blocks, so Lock it reads the older ones from the public server and says so.
 
 Same node as beta 6: Zakura 1.8.9 and the NU7 build of Zaino.
 
