@@ -255,6 +255,104 @@ pub fn nearly_current(network: u32, wallet: u32) -> bool {
     network > 0 && wallet > 0 && network.saturating_sub(wallet) <= 3
 }
 
+/// The newest blocks are checked without a gap: nothing is left to check
+/// from `window` blocks below the network block up to 3 below it (Lock it
+/// Mac's SyncMath.newestChecked). Older blocks may still be open, for a
+/// wallet just added; they do not change what the chain looks like now, so
+/// they do not hold up sending. `to_scan` holds [start, end) ranges.
+pub fn newest_checked(to_scan: &[(u32, u32)], network: u32, window: u32) -> bool {
+    if network <= window {
+        return false;
+    }
+    let (low, high) = (network - window, network - 3);
+    !to_scan.iter().any(|&(first, end)| first <= high && end > low)
+}
+
+/// The window for `newest_checked`: about 40 minutes of blocks.
+pub const NEWEST_WINDOW: u32 = 100;
+
+/// Up to date for sending: everything checked to within 3 blocks of the
+/// network, or the newest blocks checked (older ones still open).
+pub fn ready_for_send(network: u32, wallet: u32, to_scan: &[(u32, u32)]) -> bool {
+    nearly_current(network, wallet) || newest_checked(to_scan, network, NEWEST_WINDOW)
+}
+
+/// Blocks below the tip still to check, in all ranges, overlaps once.
+pub fn open_count(to_scan: &[(u32, u32)], tip: u32) -> u64 {
+    let mut parts: Vec<(u32, u32)> = to_scan.iter().map(|&(a, e)| (a, e.min(tip))).filter(|&(a, e)| e > a).collect();
+    parts.sort_unstable();
+    let (mut open, mut reach) = (0u64, 0u32);
+    for (a, e) in parts {
+        let from = a.max(reach);
+        if e > from {
+            open += u64::from(e - from);
+        }
+        reach = reach.max(e);
+    }
+    open
+}
+
+/// Minutes to go from how fast blocks get checked: each sample is (seconds,
+/// blocks still open in all ranges), so the pace holds while older blocks
+/// are checked for a new wallet, when the gap-free height hardly moves.
+/// None until there are 3 samples over at least 20 seconds and the open
+/// count is falling (Lock it Mac's SyncMath.minutesLeft).
+pub fn minutes_left(open: u64, samples: &[(f64, u64)]) -> Option<u64> {
+    if open == 0 || samples.len() < 3 {
+        return None;
+    }
+    let (first, last) = (samples[0], samples[samples.len() - 1]);
+    let seconds = last.0 - first.0;
+    if seconds < 20.0 {
+        return None;
+    }
+    let rate = (first.1 as f64 - last.1 as f64) / seconds;
+    if rate <= 0.0 {
+        return None;
+    }
+    Some(((open as f64 / rate / 60.0).round() as u64).max(1))
+}
+
+#[cfg(test)]
+mod newest_blocks_tests {
+    use super::*;
+
+    /// Lock it Mac's testOlderBlocksForANewWalletDoNotHoldUpSending.
+    #[test]
+    fn older_blocks_for_a_new_wallet_do_not_hold_up_sending() {
+        let tip = 3_609_479;
+        let history = [(1_687_104, 3_550_000)];
+        assert!(newest_checked(&history, tip, NEWEST_WINDOW));
+        assert!(ready_for_send(tip, 1_687_104, &history), "older blocks open, the newest checked");
+        assert!(!newest_checked(&[(tip - 1_000, tip + 1)], tip, NEWEST_WINDOW));
+        assert!(!ready_for_send(tip, tip - 1_000, &[(tip - 1_000, tip + 1)]));
+        assert!(!newest_checked(&[(tip - 50, tip - 40)], tip, NEWEST_WINDOW), "a gap in the newest 100");
+        assert!(newest_checked(&[(tip - 2, tip + 1)], tip, NEWEST_WINDOW), "the last 2 blocks may still be open");
+        assert!(newest_checked(&[], tip, NEWEST_WINDOW));
+        assert!(!newest_checked(&[], 0, NEWEST_WINDOW), "network block unknown");
+        assert!(ready_for_send(tip, tip - 2, &[(tip - 2, tip + 1)]));
+    }
+
+    #[test]
+    fn open_blocks_count_overlaps_once_and_stop_at_the_tip() {
+        assert_eq!(open_count(&[(100, 200), (150, 250), (900, 1_200)], 1_000), 250);
+        assert_eq!(open_count(&[], 1_000), 0);
+    }
+
+    #[test]
+    fn time_left_follows_blocks_checked() {
+        // 300 blocks a second: 1,200,000 open is about 67 minutes.
+        let samples: Vec<(f64, u64)> = (0..4).map(|i| (f64::from(i) * 10.0, 1_209_000 - u64::from(i as u32) * 3_000)).collect();
+        assert_eq!(minutes_left(1_200_000, &samples), Some(67));
+        assert_eq!(minutes_left(1_200_000, &samples[..2]), None, "too few samples");
+        let quick: Vec<(f64, u64)> = samples[..3].iter().map(|&(_, open)| (0.0, open)).collect();
+        assert_eq!(minutes_left(1_200_000, &quick), None, "under 20 seconds");
+        let rising: Vec<(f64, u64)> = samples.iter().rev().enumerate().map(|(i, &(_, open))| (i as f64 * 10.0, open)).collect();
+        assert_eq!(minutes_left(1_200_000, &rising), None, "not falling");
+        assert_eq!(minutes_left(0, &samples), None);
+    }
+}
+
 #[cfg(test)]
 mod send_rule_tests {
     use super::{nearly_current, words};

@@ -30,6 +30,11 @@ use crate::{go_max::GoMaxSlot, problem, source_for, ChosenKey, CommandResult, Ke
 const LOCK_FILE: &str = "wallet-lock.json";
 /// How often the wallet looks for new blocks by itself.
 const SYNC_EVERY: Duration = Duration::from_secs(25);
+/// One sync pass at most this long; then a new pass asks for the network
+/// block again and checks the newest blocks first (older ones continue).
+const PASS: Duration = Duration::from_secs(60);
+/// After a pass that stopped with blocks left: the next one this soon.
+const NEXT_PASS: Duration = Duration::from_millis(500);
 /// After a failed round: try again this soon, for about a minute.
 const RETRY_EVERY: Duration = Duration::from_secs(15);
 const QUICK_RETRIES: u32 = 4;
@@ -43,6 +48,9 @@ pub struct SyncView {
     server: String,
     /// The last problem, in words.
     problem: Option<String>,
+    /// Up to date with the newest blocks while older blocks (for a wallet
+    /// just added) are still being checked.
+    older: bool,
 }
 
 /// The wallet's place in the app.
@@ -56,6 +64,8 @@ pub struct WalletSlot {
     unsent: Mutex<Option<SignedPayment>>,
     /// When a sync round last finished well, in this session.
     last_synced: Mutex<Option<std::time::Instant>>,
+    /// Blocks still open (all ranges) over the last minutes, for the pace.
+    open_samples: Mutex<Vec<(std::time::Instant, u64)>>,
     sync: Mutex<SyncView>,
     nudge: Mutex<Option<mpsc::Sender<()>>>,
     /// The words while the lock is open (after "Really open the lock?" and
@@ -299,6 +309,14 @@ fn choose_server(app: &AppHandle, wallet: &Wallet) -> (Server, Option<String>) {
     }
 }
 
+/// Up to date with the newest blocks, and whether older ones are still open.
+fn set_up_to_date(app: &AppHandle, server: &Server, older: bool) {
+    if let Ok(mut sync) = app.state::<WalletSlot>().sync.lock() {
+        sync.older = older;
+    }
+    set_sync(app, "up_to_date", server, None);
+}
+
 fn set_sync(app: &AppHandle, state: &str, server: &Server, problem: Option<String>) {
     let slot = app.state::<WalletSlot>();
     if let (Some(message), Ok(mut list)) = (problem.as_ref(), slot.problems.lock()) {
@@ -310,7 +328,8 @@ fn set_sync(app: &AppHandle, state: &str, server: &Server, problem: Option<Strin
             list.truncate(5);
         }
     }
-    let view = SyncView { state: state.into(), server: server.label(), problem };
+    let older = state == "up_to_date" && slot.sync.lock().map(|s| s.older).unwrap_or(false);
+    let view = SyncView { state: state.into(), server: server.label(), problem, older };
     if let Ok(mut sync) = slot.sync.lock() {
         *sync = view;
     };
@@ -330,6 +349,7 @@ pub fn start_syncing(app: AppHandle) {
             let mut failures = 0u32;
             loop {
                 let mut again_soon = false;
+                let mut next_pass = false;
                 if let Ok(wallet) = wallet(&app) {
                     if wallet.exists() {
                         let slot = app.state::<WalletSlot>();
@@ -350,14 +370,26 @@ pub fn start_syncing(app: AppHandle) {
                             if let Ok(mut notes) = slot.notes.lock() {
                                 notes.older = older;
                             }
-                            set_sync(&app, "syncing", &server, None);
-                            match runtime().block_on(wallet.sync(&server)) {
-                                Ok(()) => {
+                            // While older blocks are checked, each new pass stays
+                            // "up to date" (the newest blocks were checked a minute ago).
+                            let checking_older = slot.sync.lock().map(|s| s.state == "up_to_date" && s.older).unwrap_or(false);
+                            if !checking_older {
+                                set_sync(&app, "syncing", &server, None);
+                            }
+                            match runtime().block_on(wallet.sync_for(&server, PASS)) {
+                                Ok(finished) if !finished && !newest_checked_now(&app, &wallet) => {
+                                    // Still behind on the newest blocks: carry on at once.
                                     failures = 0;
+                                    next_pass = true;
+                                    set_sync(&app, "syncing", &server, None);
+                                }
+                                Ok(finished) => {
+                                    failures = 0;
+                                    next_pass = !finished;
                                     if let Ok(mut at) = slot.last_synced.lock() {
                                         *at = Some(std::time::Instant::now());
                                     }
-                                    set_sync(&app, "up_to_date", &server, None);
+                                    set_up_to_date(&app, &server, !finished);
                                     if let Ok(mut reading_now) = slot.reading.lock() {
                                         *reading_now = Some(server.clone());
                                     }
@@ -406,7 +438,7 @@ pub fn start_syncing(app: AppHandle) {
                         }
                     }
                 }
-                let wait = if again_soon { RETRY_EVERY } else { SYNC_EVERY };
+                let wait = if next_pass { NEXT_PASS } else if again_soon { RETRY_EVERY } else { SYNC_EVERY };
                 match receiver.recv_timeout(wait) {
                     Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) => {}
                     Err(mpsc::RecvTimeoutError::Disconnected) => return,
@@ -443,6 +475,8 @@ pub struct Overview {
     settings: Settings,
     /// Every wallet on the key ring, the main one first.
     wallets: Vec<lockit_wallet::AccountInfo>,
+    /// Blocks still to check and the time left.
+    pace: Pace,
 }
 
 /// The wallet at a glance.
@@ -473,7 +507,8 @@ pub async fn wallet_overview(app: AppHandle, slot: State<'_, WalletSlot>) -> Com
             wallet.name = name.clone();
         }
     }
-    Ok(Overview { exists, keys, balance, sync, unsent, lock_open, problems, settings, wallets })
+    let pace = balance.as_ref().map(|b| pace(&app, &slot, b)).unwrap_or_default();
+    Ok(Overview { exists, keys, balance, sync, unsent, lock_open, problems, settings, wallets, pace })
 }
 
 /// 24 new words, to be written down. Kept until sealed or forgotten.
@@ -671,14 +706,61 @@ pub(crate) fn ready_to_send(app: &AppHandle, slot: &WalletSlot, wallet: &Wallet)
     let balance = wallet.balance().ok();
     let network = balance.as_ref().map(|b| b.chain_tip).unwrap_or(0).max(network_heard(app));
     let scanned = balance.as_ref().map(|b| b.scanned_height).unwrap_or(0);
-    if fresh && nearly_current(network, scanned) {
+    let to_scan = balance.as_ref().map(|b| b.to_scan.clone()).unwrap_or_default();
+    // The newest blocks are what a payment is built on: older blocks for a
+    // wallet just added do not hold up sending (as Lock it Mac).
+    if fresh && ready_for_send(network, scanned, &to_scan) {
         return Ok(());
     }
     nudge(slot);
     Err(problem(lockit_node::rules::words::catching_up_before_send(if fresh { scanned } else { 0 }, network)))
 }
 
-use lockit_node::rules::nearly_current;
+use lockit_node::rules::{minutes_left, newest_checked, open_count, ready_for_send, NEWEST_WINDOW};
+
+/// The newest blocks are checked now, against the newest network block heard.
+fn newest_checked_now(app: &AppHandle, wallet: &Wallet) -> bool {
+    let Ok(balance) = wallet.balance() else { return false };
+    let network = balance.chain_tip.max(network_heard(app));
+    newest_checked(&balance.to_scan, network, NEWEST_WINDOW)
+}
+
+/// Blocks still to check and the time left, from blocks checked per minute.
+#[derive(Clone, Default, Serialize)]
+pub struct Pace {
+    /// Blocks below the network block still to check, all wallets.
+    open: u64,
+    /// About this many minutes to go; None until the pace is known.
+    minutes: Option<u64>,
+    /// The newest blocks are checked (older ones may still be open).
+    newest_checked: bool,
+}
+
+/// Notes how many blocks are open now and works out the pace.
+fn pace(app: &AppHandle, slot: &WalletSlot, balance: &Balance) -> Pace {
+    let network = balance.chain_tip.max(network_heard(app));
+    let open = open_count(&balance.to_scan, network);
+    let now = std::time::Instant::now();
+    let samples = slot
+        .open_samples
+        .lock()
+        .map(|mut list| {
+            if list.last().map_or(true, |&(at, _)| now.duration_since(at) >= Duration::from_secs(2)) {
+                list.push((now, open));
+            }
+            // A drop to zero or a new wallet starts a new count.
+            if list.len() >= 2 && list[list.len() - 1].1 > list[list.len() - 2].1 {
+                let last = list[list.len() - 1];
+                list.clear();
+                list.push(last);
+            }
+            list.retain(|&(at, _)| now.duration_since(at) <= Duration::from_secs(180));
+            let start = list.first().map(|&(at, _)| at).unwrap_or(now);
+            list.iter().map(|&(at, n)| (at.duration_since(start).as_secs_f64(), n)).collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Pace { open, minutes: minutes_left(open, &samples), newest_checked: newest_checked(&balance.to_scan, network, NEWEST_WINDOW) }
+}
 
 /// A signed payment that never got through and has since expired is
 /// dropped: it was never paid. Says so once; a payment that is still valid

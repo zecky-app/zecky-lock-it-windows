@@ -110,6 +110,15 @@ fn circuit_version(pczt: &pczt::Pczt) -> Result<orchard::circuit::OrchardCircuit
         .ok_or_else(|| other("this network upgrade has no Orchard"))
 }
 
+/// Runs `work` for at most `budget`: Ok(true) when it finished, Ok(false)
+/// when time ran out first.
+pub async fn within<F: std::future::Future<Output = Result<()>>>(work: F, budget: std::time::Duration) -> Result<bool> {
+    match tokio::time::timeout(budget, work).await {
+        Ok(done) => done.map(|()| true),
+        Err(_) => Ok(false),
+    }
+}
+
 /// The wallet in one folder: `wallet.db` and, for sending over Tor, `tor\`.
 #[derive(Clone)]
 pub struct Wallet {
@@ -491,6 +500,16 @@ impl Wallet {
         zcash_client_backend::sync::run(&mut client, &MainNetwork, &cache, &mut db, 1_000)
             .await
             .map_err(|e| Error::Server(e.to_string()))
+    }
+
+    /// One sync pass of at most `budget`: true when everything is checked,
+    /// false when time ran out with blocks left. The scan library asks for
+    /// the network block only at the start of a pass, and checks the newest
+    /// blocks first; so short passes keep the newest blocks checked while a
+    /// new wallet's older blocks take hours (25 Nov 2026, as Lock it Mac).
+    /// Stopping between two batches is safe: each batch is written at once.
+    pub async fn sync_for(&self, server: &Server, budget: std::time::Duration) -> Result<bool> {
+        within(self.sync(server), budget).await
     }
 
     /// The balance and how far the scan is.
@@ -1021,6 +1040,24 @@ mod tests {
         assert!(wallet.for_account(Some(&cupcake)).is_sealit().unwrap());
         assert!(!wallet.for_account(Some(&sealit)).is_cupcake().unwrap());
         assert!(wallet.for_account(Some(&sealit)).is_sealit().unwrap());
+    }
+
+    /// A sync pass stops when its time is up and says more is left; a
+    /// quick one says it finished; an error stays an error.
+    #[test]
+    fn a_sync_pass_stops_on_time() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+        rt.block_on(async {
+            let slow = async {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                Ok(())
+            };
+            let started = std::time::Instant::now();
+            assert!(!within(slow, std::time::Duration::from_millis(50)).await.unwrap());
+            assert!(started.elapsed() < std::time::Duration::from_secs(1));
+            assert!(within(async { Ok(()) }, std::time::Duration::from_secs(1)).await.unwrap());
+            assert!(within(async { Err(Error::Other("no".into())) }, std::time::Duration::from_secs(1)).await.is_err());
+        });
     }
 
     /// The Sync screen's "Checked from": one scan for every wallet here,

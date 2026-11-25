@@ -330,7 +330,6 @@ let lockOpen = false;
 let shownHeight = 0;
 let beats = 0;
 let beatToken = 0;
-const heightSamples = [];
 
 function startHome() {
   if (homeTimer) return;
@@ -440,10 +439,6 @@ function renderHome() {
 
   // The chain's heartbeat.
   heartbeat(b.chain_tip, overview.sync.state === "up_to_date");
-  if (b.chain_tip > 0) {
-    heightSamples.push({ at: Date.now(), height: b.scanned_height });
-    while (heightSamples.length > 12) heightSamples.shift();
-  }
 
   // The status line.
   const sync = overview.sync;
@@ -464,7 +459,8 @@ function renderHome() {
     status.title = sync.problem || "";
   } else if (sync.state === "up_to_date" || nearly) {
     dot.classList.add("green");
-    status.textContent = `Up to date${sync.server ? " · " + sync.server : ""}`;
+    const older = sync.state === "up_to_date" && sync.older ? " · checking older blocks" : "";
+    status.textContent = `Up to date${older}${sync.server ? " · " + sync.server : ""}`;
     status.title = "Sync details";
   } else {
     const percent = syncPercent();
@@ -620,6 +616,26 @@ setInterval(() => {
   if (slept || now - lastActive > AWAY) showAppLocked();
 }, 15000);
 
+function blocksStillToCheck(n) {
+  return `${numbers.format(n)} ${n === 1 ? "block" : "blocks"} still to check`;
+}
+
+/// Older blocks still to check below this wallet's start (for another
+/// wallet, just added): where they start and the share done, as Lock it
+/// Mac's SyncMath.older. The start is the lowest seen, so the share grows
+/// as they are checked. null when there are none.
+const olderLowest = new Map();
+function olderBlocks(toScan, birthday) {
+  const below = toScan.map(([a, e]) => [a, Math.min(e, birthday)]).filter(([a, e]) => a < e);
+  if (!below.length || !birthday) return null;
+  const lowest = Math.min(...below.map(([a]) => a));
+  olderLowest.set(birthday, Math.min(olderLowest.get(birthday) ?? lowest, lowest));
+  const start = olderLowest.get(birthday);
+  if (birthday <= start) return null;
+  const open = below.reduce((sum, [a, e]) => sum + (e - a), 0);
+  return { start, share: Math.max(0, Math.min(1, 1 - open / (birthday - start))) };
+}
+
 /// Where the shared scan starts: the earliest start of all wallets here
 /// (one scan checks them all). The selected wallet's own birthday if the
 /// app is older than this field.
@@ -648,7 +664,7 @@ function checkedShare() {
 function syncPercent() {
   const share = checkedShare();
   if (share === null) return null;
-  if (overview.sync.state === "up_to_date") return 100;
+  if (overview.sync.state === "up_to_date" && !overview.sync.older) return 100;
   return Math.min(99.9, Math.floor(share * 1000) / 10);
 }
 
@@ -1582,34 +1598,38 @@ function renderSync() {
   const sync = overview.sync;
   const network = b.chain_tip || 0;
   const upToDate = sync.state === "up_to_date";
+  const older = upToDate && sync.older;
+  const pace = overview.pace || {};
   const share = checkedShare();
   const percent = syncPercent();
-  $("sync-sub").textContent = upToDate ? "Up to date" : sync.state === "problem" ? "Having trouble, see below" : network ? "Checking blocks" : "Connecting…";
+  $("sync-sub").textContent = upToDate ? (older ? "Up to date · checking older blocks" : "Up to date") : sync.state === "problem" ? "Having trouble, see below" : network ? "Checking blocks" : "Connecting…";
   $("sync-percent").textContent = percent === null ? "…" : `${percent === 100 ? "100" : percent.toFixed(1)}%`;
-  $("sync-ring-word").textContent = upToDate ? "up to date" : "checked";
+  $("sync-ring-word").textContent = upToDate && !older ? "up to date" : "checked";
   $("sync-ring-fill").setAttribute("stroke-dasharray", `${percent ?? 0} 100`);
   const from = scanFrom(b);
-  const open = share === null ? null : Math.round((1 - share) * (network - from));
+  // Blocks still to check, in all ranges (any wallet), from the app.
+  const open = pace.open || 0;
   const since = `since block ${numbers.format(from)}`;
   $("sync-ring-note").textContent = percent === null ? "Waiting for the network block"
-    : upToDate ? `Every block ${since}, for all wallets on this PC`
-    : open > 0 ? `Of all blocks ${since}. Catching up ${numbers.format(open)} new ${open === 1 ? "block" : "blocks"}.`
+    : upToDate && !older ? `Every block ${since}, for all wallets on this PC`
+    : open > 0 ? `Of all blocks ${since}. ${blocksStillToCheck(open)}.`
     : `Of all blocks ${since}`;
   $("sync-network").textContent = network ? numbers.format(network) : "…";
   $("sync-wallet").textContent = b.scanned_height ? numbers.format(b.scanned_height) : "…";
+  // Time left from blocks checked per minute (all ranges), so it holds
+  // while older blocks are checked and the gap-free height hardly moves.
   let behindText = "…";
   if (network && b.scanned_height) {
-    const behind = upToDate ? 0 : Math.max(0, network - b.scanned_height);
-    if (behind === 0) behindText = "Nothing";
-    else {
-      const first = heightSamples[0];
-      const last = heightSamples[heightSamples.length - 1];
-      const rate = heightSamples.length >= 3 && last.at > first.at ? (last.height - first.height) / ((last.at - first.at) / 1000) : 0;
-      const minutes = rate > 0 ? Math.max(1, Math.round(behind / rate / 60)) : null;
-      behindText = `${numbers.format(behind)} blocks${minutes ? `, about ${minutes} min` : ""}`;
-    }
+    behindText = open === 0 || (upToDate && !older) ? "Nothing"
+      : `${blocksStillToCheck(open)}${pace.minutes ? `, about ${pace.minutes} min` : ""}`;
   }
   $("sync-behind").textContent = behindText;
+  const below = olderBlocks(b.to_scan || [], b.birthday || 0);
+  $("sync-older-line").hidden = !below;
+  if (below) {
+    $("sync-older").textContent = `${Math.floor(below.share * 100)}% checked · from ${numbers.format(below.start)}`
+      + (pace.newest_checked && pace.minutes ? ` · about ${pace.minutes} min` : "");
+  }
   $("sync-blocktime").textContent = network === 0 ? "…" : network >= NU7_HEIGHT ? "25 seconds (since NU7)" : "75 seconds";
   $("sync-birthday").textContent = from ? `Block ${numbers.format(from)}` : "…";
   $("sync-bar").style.width = `${Math.max(share > 0 ? 1.5 : 0, (share ?? 0) * 100)}%`;
@@ -2741,7 +2761,7 @@ const CHAPTERS = [
     "Nothing leaves without a receipt first: who receives what, the network fee and what leaves the lock. A payment cannot be reversed once sent.",
   ], [
     "Zcash you receive can be used after 10 confirmations, your own change after 3. A block comes about every 25 seconds since the NU7 upgrade.",
-    "Nothing is priced or signed until Lock it is up to date, at most 3 blocks behind the network. A payment built on an old view of the chain would expire before it arrives, so right after starting Lock it says it is still catching up.",
+    "Nothing is priced or signed until the newest blocks are checked, to within 3 blocks of the network. A payment built on an old view of the chain would expire before it arrives, so right after starting Lock it says it is still catching up. Older blocks, for a wallet just added, are checked in the background and do not hold up sending; the Sync screen shows how many are left.",
     "A payment that could not be delivered is kept, and Try again sends that same payment. Do not pay again meanwhile. If it is never delivered, it expires after about 40 blocks and nothing leaves the lock; Lock it then says so and lets it go.",
     "Paying a TEX address (tex1…) takes two steps, as the address asks: the Zcash goes to a temporary transparent address of this wallet, then on to the receiver. Activity shows them as “TEX payment” and “TEX payment · forwarding fee”. If only the first step went through, Lock it says so: the Zcash is on that temporary address, not lost.",
     "Sending to a transparent address is public: its amount and destination. A private note only goes to a shielded address.",
