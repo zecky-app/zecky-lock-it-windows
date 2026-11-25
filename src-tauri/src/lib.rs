@@ -337,6 +337,8 @@ pub fn run() {
             wallet::wallet_take_arrival,
             wallet::wallet_export_csv,
             wallet::window_hide_from_capture,
+            firstrun::camera_state,
+            firstrun::open_camera_settings,
             sealit::watch_add,
             sealit::watch_scanned_key,
             wallet::wallet_prepare,

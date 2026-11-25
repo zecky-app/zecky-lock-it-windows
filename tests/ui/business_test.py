@@ -86,12 +86,27 @@ async def main():
             check("no page errors (business)", not pg.errors, pg.errors)
             await pg.close()
 
+            # Settings › Security › Camera (Lock it Mac 54e0101).
+            pg = await page_with(b, base, {"wallets": MAIN, "current": None, "cameraText": "Allowed · only while scanning"})
+            await pg.click("#open-settings"); await pg.wait_for_timeout(300)
+            await pg.click("[data-go=security]"); await pg.wait_for_timeout(300)
+            check("camera: the state", (await pg.text_content("#camera-state")) == "Allowed · only while scanning")
+            check("camera: the window's own permission is asked", (await pg.evaluate("window.__m.cameraAsked")) in ("prompt", "granted", "denied"))
+            sec = await pg.inner_text("[data-page=security]")
+            check("camera: the Mac's sentence, for Windows", "Lock it uses the camera only while you scan a code" in sec and "Windows Settings › Privacy & security › Camera" in sec)
+            await pg.click("#camera-settings"); await pg.wait_for_timeout(200)
+            check("camera: opens Windows Settings", await pg.evaluate("window.__m.cameraOpened === true"))
+            check("no page errors (camera)", not pg.errors, pg.errors)
+            await pg.close()
+
             # How Zecky works: For business.
             pg = await page_with(b, base, {"wallets": MAIN, "current": None})
             await pg.click("#open-settings"); await pg.wait_for_timeout(300)
             await pg.click("[data-go=how]"); await pg.wait_for_timeout(300)
             how = await pg.inner_text("[data-page=how]")
             check("How Zecky works: For business", "For business" in how and "Watch a shop wallet, share a viewing key, export." in how, how[:200])
+            await pg.evaluate("[...document.querySelectorAll('[data-page=how] details, [data-page=how] button')].forEach(e => { if (e.tagName === 'DETAILS') e.open = true; })")
+            check("How Zecky works: the camera sentence", "camera's light shows it" in await pg.evaluate("document.querySelector('[data-page=how]').textContent"))
             await pg.close()
     finally:
         server.terminate()

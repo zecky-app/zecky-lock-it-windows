@@ -2388,8 +2388,19 @@ function renderBusiness() {
   $("biz-csv").disabled = activity.length === 0;
 }
 
+/// Settings › Security › Camera: Windows' switch and this window's own
+/// permission, in the Mac's words.
+async function renderCamera() {
+  let window = "prompt";
+  try {
+    window = (await navigator.permissions.query({ name: "camera" })).state;
+  } catch {}
+  $("camera-state").textContent = await invoke("camera_state", { window }).catch(() => "…");
+}
+
 function renderSettings() {
   renderBusiness();
+  renderCamera();
   const s = currentSettings();
   const b = (overview && overview.balance) || {};
   // Overview
@@ -2651,6 +2662,8 @@ async function showViewKey(where) {
 $("viewkey-toggle").addEventListener("click", () => showViewKey("settings"));
 $("biz-viewkey-toggle").addEventListener("click", () => showViewKey("business"));
 $("biz-watch").addEventListener("click", () => openWatch());
+$("camera-settings").addEventListener("click", () => invoke("open_camera_settings").catch(() => {}));
+window.addEventListener("focus", () => { if (!$("sheet-settings").hidden) renderCamera(); });
 $("biz-csv").addEventListener("click", () => exportCsv("biz-csv", "biz-csv-note"));
 
 window.addEventListener("blur", () => { hidePhrase(); hideViewKey(); });
@@ -3108,6 +3121,7 @@ const CHAPTERS = [
   ]],
   ["On this PC", "Where your data lives.", [
     "Your history (amounts and dates, never the words) is kept in %LOCALAPPDATA%\\app.zecky.lockit. Keep BitLocker or device encryption on so the whole disk is encrypted as well.",
+    "Lock it uses the camera only while you scan a code; the camera's light shows it, and you can take camera access away in Windows Settings › Privacy & security › Camera.",
   ], [
     "Keys, proofs, signatures and payments are made by librustzcash, the Zcash developers' own core (NU7 releases), in the same versions as the Zecky engine.",
     "The Sapling parameter files (about 50 MB) come with the app, checked against the Zcash developers' published fingerprints. Lock it never downloads them.",

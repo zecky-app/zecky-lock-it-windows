@@ -85,3 +85,48 @@ pub fn open_page(page: String) -> CommandResult<()> {
     let _ = url;
     Ok(())
 }
+
+/// Windows' own camera switches: Privacy & security › Camera, for the
+/// whole PC and for desktop apps. Some(false) when either is off.
+#[cfg(windows)]
+fn windows_camera() -> Option<bool> {
+    use std::os::windows::process::CommandExt;
+    const NO_WINDOW: u32 = 0x0800_0000;
+    let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam";
+    let read = |path: String| {
+        std::process::Command::new("reg")
+            .args(["query", &path, "/v", "Value"])
+            .creation_flags(NO_WINDOW)
+            .output()
+            .ok()
+            .and_then(|out| lockit_node::rules::camera_consent(&String::from_utf8_lossy(&out.stdout)))
+    };
+    match (read(key.to_owned()), read(format!(r"{key}\NonPackaged"))) {
+        (Some(false), _) | (_, Some(false)) => Some(false),
+        (Some(true), _) | (_, Some(true)) => Some(true),
+        _ => None,
+    }
+}
+
+#[cfg(not(windows))]
+fn windows_camera() -> Option<bool> {
+    None
+}
+
+/// Settings › Security › Camera: "Allowed · only while scanning", "Not
+/// asked yet" or "Off" (as Lock it Mac). `window`: the window's own camera
+/// permission ("granted", "prompt", "denied").
+#[tauri::command]
+pub fn camera_state(window: String) -> String {
+    lockit_node::rules::camera_text(windows_camera(), &window).to_owned()
+}
+
+/// Windows Settings › Privacy & security › Camera.
+#[tauri::command]
+pub fn open_camera_settings() -> CommandResult<()> {
+    std::process::Command::new("explorer")
+        .arg("ms-settings:privacy-webcam")
+        .spawn()
+        .map_err(|e| problem(format!("Windows Settings could not be opened: {e}")))?;
+    Ok(())
+}

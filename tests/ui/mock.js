@@ -48,6 +48,8 @@ window.__calls = [];
       case "wallet_viewing_key": return ["uview1shopkeyfortheTest", "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'/>"];
       case "window_hide_from_capture": (m.capture = m.capture || []).push(args.hidden); return null;
       case "sealit_pair": m.lastPair = args.start; return "ks-1";
+      case "camera_state": m.cameraAsked = args.window; return m.cameraText || "Not asked yet";
+      case "open_camera_settings": m.cameraOpened = true; return null;
       case "wallet_take_arrival": return (m.arrivals || []).shift() || null;
       case "sealit_start": return { frames: ["<svg xmlns='http://www.w3.org/2000/svg'/>"], cupcake: Boolean(m.cupcakeSigner), large_kb: m.largeKb || null };
       case "go_max_view": return m.goMax;

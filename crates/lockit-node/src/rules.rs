@@ -365,6 +365,48 @@ pub fn is_news(block: Option<u32>, block_time: Option<i64>, network: u32, since:
     block_time.unwrap_or(0) >= from
 }
 
+/// The camera's state for Settings › Security (as Lock it Mac's
+/// CameraAccess): Windows' own switch (`windows`: Some(false) when the
+/// camera or desktop apps' access to it is off, None when unknown) and Lock
+/// it's own permission in its window ("granted", "prompt" or "denied").
+pub fn camera_text(windows: Option<bool>, window: &str) -> &'static str {
+    if windows == Some(false) || window == "denied" {
+        "Off"
+    } else if window == "granted" {
+        "Allowed · only while scanning"
+    } else {
+        "Not asked yet"
+    }
+}
+
+/// Reads one value of Windows' camera consent from `reg query` output:
+/// Some(true) for Allow, Some(false) for Deny, None when absent.
+pub fn camera_consent(reg_output: &str) -> Option<bool> {
+    reg_output.lines().find_map(|line| {
+        let mut words = line.split_whitespace();
+        (words.next() == Some("Value") && words.next() == Some("REG_SZ")).then(|| words.next() == Some("Allow"))
+    })
+}
+
+#[cfg(test)]
+mod camera_tests {
+    use super::{camera_consent, camera_text};
+
+    /// Lock it Mac's CameraAccess texts, with Windows' own switch on top.
+    #[test]
+    fn the_camera_state_in_words() {
+        assert_eq!(camera_text(Some(true), "granted"), "Allowed · only while scanning");
+        assert_eq!(camera_text(None, "granted"), "Allowed · only while scanning");
+        assert_eq!(camera_text(Some(true), "prompt"), "Not asked yet");
+        assert_eq!(camera_text(Some(false), "granted"), "Off", "Windows' switch is off");
+        assert_eq!(camera_text(Some(true), "denied"), "Off");
+        let allow = "\r\nHKEY_CURRENT_USER\\Software\\...\\webcam\r\n    Value    REG_SZ    Allow\r\n";
+        assert_eq!(camera_consent(allow), Some(true));
+        assert_eq!(camera_consent("    Value    REG_SZ    Deny"), Some(false));
+        assert_eq!(camera_consent("ERROR: The system was unable to find the specified registry key or value."), None);
+    }
+}
+
 #[cfg(test)]
 mod news_tests {
     use super::is_news;
