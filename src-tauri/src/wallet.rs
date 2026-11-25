@@ -93,6 +93,9 @@ struct NodeNotes {
     unsettled: Option<String>,
     /// The newest height the wallet's server told it.
     heard: u32,
+    /// Go Max served blocks that did not line up with the wallet's: older
+    /// blocks come from the server until they are all checked.
+    gap: bool,
 }
 
 /// Go Max's notes from the sync: older blocks from the server, whether the
@@ -300,11 +303,26 @@ fn choose_server(app: &AppHandle, wallet: &Wallet) -> (Server, Option<String>) {
     };
     let own = Server::OwnNode { port: 8137 };
     let oldest = wallet.oldest_to_scan().ok().flatten();
-    let has = match oldest {
-        Some(height) if height <= node => runtime().block_on(Wallet::server_has_block(&own, height)),
-        _ => None,
+    // After a pass whose blocks from Go Max did not line up, the older
+    // blocks come from the server until none are left.
+    let gap = match app.state::<WalletSlot>().notes.lock() {
+        Ok(mut notes) => {
+            if oldest.is_none() {
+                notes.gap = false;
+            }
+            notes.gap
+        }
+        Err(_) => false,
     };
-    match reading::missing(oldest, node, has) {
+    let known = if gap { oldest.filter(|&height| height <= node) } else { reading::too_old(oldest, node) };
+    let missing = known.or_else(|| {
+        let has = match oldest {
+            Some(height) if height <= node => runtime().block_on(Wallet::server_has_block(&own, height)),
+            _ => None,
+        };
+        reading::missing(oldest, node, has)
+    });
+    match missing {
         Some(from) => {
             let label = fallback.label();
             (fallback, Some(words::older_blocks(from, &label)))
@@ -419,6 +437,15 @@ pub fn start_syncing(app: AppHandle) {
                                             notes.quiet = quiet;
                                         }
                                     }
+                                }
+                                Err(error) if on_node && reading::blocks_do_not_line_up(&error.to_string()) => {
+                                    // Go Max's blocks did not line up with the wallet's:
+                                    // the older blocks come from the server from now on,
+                                    // and the next pass starts at once (25 Nov, Acer).
+                                    if let Ok(mut notes) = slot.notes.lock() {
+                                        notes.gap = true;
+                                    }
+                                    next_pass = true;
                                 }
                                 Err(error) => {
                                     failures += 1;

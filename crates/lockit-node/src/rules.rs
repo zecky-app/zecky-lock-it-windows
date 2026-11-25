@@ -122,6 +122,27 @@ pub mod reading {
         (oldest <= node_blocks && node_has_it == Some(false)).then_some(oldest)
     }
 
+    /// Blocks the node surely keeps in full: its smallest setting (10,000,
+    /// while it syncs; 100,000 once caught up), less a margin.
+    pub const SURELY_KEPT: u32 = crate::config::RETENTION_SYNCING - 1_000;
+
+    /// The block the wallet needs that is older than the node surely keeps,
+    /// whatever one block check says. Seen 25 Nov 2026 (Acer, a Keystone
+    /// wallet paired as "already holds Zcash"): the node answered for the
+    /// oldest block, but the blocks after it did not line up, and every pass
+    /// failed with "put_blocks requires that the provided block range be
+    /// sequential". The public server read them fine.
+    pub fn too_old(oldest_needed: Option<u32>, node_blocks: u32) -> Option<u32> {
+        let oldest = oldest_needed?;
+        (oldest.saturating_add(SURELY_KEPT) <= node_blocks).then_some(oldest)
+    }
+
+    /// Whether a pass failed because the blocks the node served did not line
+    /// up with the wallet's (the wallet library refuses to store them).
+    pub fn blocks_do_not_line_up(error: &str) -> bool {
+        error.contains("block range be sequential")
+    }
+
     /// This many blocks (five minutes) the node is ahead of what the wallet
     /// last heard: the wallet's connection to the node has gone quiet.
     pub const QUIET_BLOCKS: u32 = 12;
@@ -840,6 +861,15 @@ mod tests {
 
     #[test]
     fn an_older_block_the_node_lacks_goes_to_the_server() {
+        // Older than the node surely keeps: from the server, whatever the
+        // one block check says (25 Nov, Acer).
+        assert_eq!(reading::too_old(Some(3_000_000), 3_568_000), Some(3_000_000));
+        assert_eq!(reading::too_old(Some(3_559_000), 3_568_000), Some(3_559_000));
+        assert_eq!(reading::too_old(Some(3_559_001), 3_568_000), None);
+        assert_eq!(reading::too_old(None, 3_568_000), None);
+        assert_eq!(reading::too_old(Some(5), 100), None, "a node at the start is never 'too far ahead'");
+        assert!(reading::blocks_do_not_line_up("the server did not answer: Error while interacting with wallet database: `put_blocks` requires that the provided block range be sequential"));
+        assert!(!reading::blocks_do_not_line_up("the server did not answer: timed out"));
         assert_eq!(reading::missing(Some(2_900_000), 3_568_000, Some(false)), Some(2_900_000));
         // The node has it, or cannot say: stay on the node.
         assert_eq!(reading::missing(Some(2_900_000), 3_568_000, Some(true)), None);
