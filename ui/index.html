@@ -546,6 +546,7 @@
             <button type="button" class="row" data-go="gomax"><span class="row-icon">⌬</span><span class="row-title">Go Max</span><span class="row-detail" id="row-gomax"></span><span class="chev">›</span></button>
             <button type="button" class="row" data-go="display"><span class="row-icon">◐</span><span class="row-title">Display</span><span class="row-detail" id="row-display"></span><span class="chev">›</span></button>
             <button type="button" class="row" data-go="contacts"><span class="row-icon">☺</span><span class="row-title">Address book</span><span class="row-detail" id="row-contacts"></span><span class="chev">›</span></button>
+            <button type="button" class="row" data-go="business"><span class="row-icon">▣</span><span class="row-title">Business</span><span class="row-detail" id="row-business"></span><span class="chev">›</span></button>
             <button type="button" class="row" data-go="security"><span class="row-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none"/></svg></span><span class="row-title">Security</span><span class="row-detail" id="row-security"></span><span class="chev">›</span></button>
           </div>
           <div class="card list">
@@ -720,6 +721,36 @@
             <div class="inline">
               <span class="small message" id="viewkey-note"></span>
               <button type="button" class="secondary narrow" id="viewkey-toggle">Show viewing key</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Business: watch a wallet, share a viewing key, export (as Lock it Mac) -->
+        <div class="page" data-page="business" hidden>
+          <div class="card pad">
+            <p class="card-title">Watch a wallet</p>
+            <p class="small quiet">Add a wallet from its viewing key, such as your shop's: Lock it shows its balance, payments and memos, and can never spend from it.</p>
+            <ul class="biz-watch-list" id="biz-watch-list"></ul>
+            <div class="inline"><span></span><button type="button" class="secondary narrow" id="biz-watch">Watch a wallet</button></div>
+          </div>
+          <div class="card pad">
+            <p class="card-title">Viewing key</p>
+            <p class="small quiet">A viewing key gives read-only access to this wallet. Whoever has it can see your balance and every payment in and out, past and future, but cannot spend anything.</p>
+            <p class="small gold">It cannot be taken back once shared. Give it only to someone or something that should see everything, such as your own watch-only device or an accountant.</p>
+            <p class="address" id="biz-viewkey-text" hidden></p>
+            <img class="qr biz-qr" id="biz-viewkey-qr" alt="Viewing key as a QR code" hidden>
+            <div class="inline">
+              <span class="small message" id="biz-viewkey-note"></span>
+              <button type="button" class="secondary narrow" id="biz-viewkey-toggle">Show viewing key</button>
+            </div>
+          </div>
+          <div class="card pad">
+            <p class="card-title">Bookkeeping</p>
+            <p class="small quiet" id="biz-csv-text"></p>
+            <p class="small gold">The file is not encrypted and shows every payment: keep it where you keep your books.</p>
+            <div class="inline">
+              <span class="small message" id="biz-csv-note" role="status" aria-live="polite"></span>
+              <button type="button" class="secondary narrow" id="biz-csv">Export CSV…</button>
             </div>
           </div>
         </div>

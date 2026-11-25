@@ -391,9 +391,9 @@ function arrivalDetail(arrival) {
 
 /// Export CSV… (as Lock it Mac): the selected wallet's payments, with each
 /// payment's local offset (summer time included) for its date.
-async function exportCsv() {
-  const button = $("export-csv");
-  const note = $("export-note");
+async function exportCsv(buttonId = "export-csv", noteId = "export-note") {
+  const button = $(buttonId);
+  const note = $(noteId);
   button.disabled = true;
   button.textContent = "Exporting…";
   note.textContent = "";
@@ -414,7 +414,7 @@ async function exportCsv() {
   }
 }
 
-$("export-csv").addEventListener("click", exportCsv);
+$("export-csv").addEventListener("click", () => exportCsv());
 
 /// Shows the next waiting message, one at a time.
 async function nextArrival() {
@@ -2306,6 +2306,7 @@ const PAGE_TEXT = {
   contacts: ["Address book", "Addresses you send to often, picked by name."],
   phrase: ["Recovery phrase", "Your 24 words, sealed on this PC."],
   viewkey: ["Viewing key", "Read-only access to this wallet."],
+  business: ["Business", "For a shop or a business: watch a wallet, share a viewing key, export payments."],
   about: ["About", "Zecky Lock it for Windows."],
   how: ["How Zecky works", "Short chapters. Open the one you want."],
 };
@@ -2339,7 +2340,29 @@ function goSettings(page) {
   document.querySelector("#sheet-settings .sheet-scroll").scrollTop = 0;
 }
 
+/// The Business row's summary (Lock it Mac's WatchOnly.summary).
+function businessSummary(count) {
+  return count === 0 ? "Watch only · viewing key · CSV" : count === 1 ? "1 watch-only wallet" : `${count} watch-only wallets`;
+}
+
+function renderBusiness() {
+  const watched = ((overview && overview.wallets) || []).filter((w) => w.view_only);
+  $("row-business").textContent = businessSummary(watched.length);
+  const list = $("biz-watch-list");
+  list.textContent = "";
+  for (const w of watched) {
+    const item = document.createElement("li");
+    item.innerHTML = EYE_ICON;
+    item.append(walletName(w));
+    list.append(item);
+  }
+  const w = currentWallet();
+  $("biz-csv-text").textContent = `Save every payment of ${w ? `the wallet ${walletName(w)}` : "this wallet"} as a CSV file: date, direction, amount, fee, status, block, memo and transaction ID. It opens in Excel.`;
+  $("biz-csv").disabled = activity.length === 0;
+}
+
 function renderSettings() {
+  renderBusiness();
   const s = currentSettings();
   const b = (overview && overview.balance) || {};
   // Overview
@@ -2560,23 +2583,48 @@ $("phrase-toggle").addEventListener("click", async () => {
 });
 
 function hideViewKey() {
+  if (viewKeyShown) invoke("window_hide_from_capture", { hidden: false }).catch(() => {});
+  viewKeyShown = false;
+  $("biz-viewkey-text").textContent = "";
+  $("biz-viewkey-text").hidden = true;
+  $("biz-viewkey-qr").hidden = true;
+  $("biz-viewkey-qr").removeAttribute("src");
+  $("biz-viewkey-toggle").textContent = "Show viewing key";
   $("viewkey-text").textContent = "";
   $("viewkey-text").hidden = true;
   $("viewkey-toggle").textContent = "Show viewing key";
 }
 
-$("viewkey-toggle").addEventListener("click", async () => {
-  if (!$("viewkey-text").hidden) return hideViewKey();
-  say($("viewkey-note"), "");
+/// The viewing key after the keys, as text (and a QR code on Business);
+/// the window is hidden from screen capture while it shows.
+let viewKeyShown = false;
+async function showViewKey(where) {
+  const ids = where === "business"
+    ? { text: "biz-viewkey-text", qr: "biz-viewkey-qr", note: "biz-viewkey-note", toggle: "biz-viewkey-toggle" }
+    : { text: "viewkey-text", qr: null, note: "viewkey-note", toggle: "viewkey-toggle" };
+  if (!$(ids.text).hidden) return hideViewKey();
+  say($(ids.note), "");
   try {
     const typed = await askKeys("Confirm it's you", "Whoever has the viewing key sees every payment, past and future.", { action: "Show the key" });
-    $("viewkey-text").textContent = await invoke("wallet_viewing_key", { typed: typedOnly(typed) });
-    $("viewkey-text").hidden = false;
-    $("viewkey-toggle").textContent = "Hide";
+    const [key, qr] = await invoke("wallet_viewing_key", { typed: typedOnly(typed) });
+    await invoke("window_hide_from_capture", { hidden: true }).catch(() => {});
+    viewKeyShown = true;
+    $(ids.text).textContent = key;
+    $(ids.text).hidden = false;
+    if (ids.qr) {
+      $(ids.qr).src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(qr);
+      $(ids.qr).hidden = false;
+    }
+    $(ids.toggle).textContent = "Hide";
   } catch (problem) {
-    if (problem && problem.message !== "cancelled") say($("viewkey-note"), describe(problem) || "This wallet's viewing key could not be read.");
+    if (problem && problem.message !== "cancelled") say($(ids.note), describe(problem) || "This wallet's viewing key could not be read.");
   }
-});
+}
+
+$("viewkey-toggle").addEventListener("click", () => showViewKey("settings"));
+$("biz-viewkey-toggle").addEventListener("click", () => showViewKey("business"));
+$("biz-watch").addEventListener("click", () => openWatch());
+$("biz-csv").addEventListener("click", () => exportCsv("biz-csv", "biz-csv-note"));
 
 window.addEventListener("blur", () => { hidePhrase(); hideViewKey(); });
 document.addEventListener("visibilitychange", () => { if (document.hidden) { hidePhrase(); hideViewKey(); } });
@@ -3003,6 +3051,14 @@ const CHAPTERS = [
   ], [
     "Zcash that arrives on a transparent address is locked in with one step, with your keys. A transparent address works like Bitcoin: its payments are visible to everyone until you lock them in. Lock it never pays from it except to lock it in.",
     "The Transparent tab shows the same address each time, as on Lock it iPhone and Mac, so payments to it can be linked to each other. Use it only when the shielded address is not accepted.",
+  ]],
+  ["For business", "Watch a shop wallet, share a viewing key, export.", [
+    "Watch a wallet from its viewing key, such as your shop's: Lock it shows its balance, payments and memos, and can never spend from it. Receive shows its shielded address only.",
+    "Export CSV saves every payment of a wallet for your bookkeeping: date, direction, amount, fee, status, block, memo and transaction ID.",
+  ], [
+    "A viewing key sees every payment in and out, past and future, and cannot be taken back once shared. Settings › Business shows it as text and as a QR code, after your keys, and hides Lock it's window from screenshots and screen sharing while it shows.",
+    "Adding a wallet with an older start checks those older blocks in the background. Your other wallets stay up to date and can send meanwhile; payments found in old blocks go to Activity without a message.",
+    "In the CSV, amounts are in ZEC with 8 decimals, times are this PC's local time with its offset, and a memo never runs as a spreadsheet formula. The file is not encrypted: keep it where you keep your books.",
   ]],
   ["Go Max", "Your own Zcash node, inside Lock it.", [
     "Go Max runs a Zcash node in Lock it on this PC. It checks the blocks itself and keeps only recent blocks in full. When it is up to date, Lock it reads the chain from it instead of a server.",

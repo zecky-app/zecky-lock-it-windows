@@ -1355,10 +1355,25 @@ pub async fn wallet_show_words(app: AppHandle, window: WebviewWindow, typed: Typ
 
 /// The viewing key, after every key of the lock was asked.
 #[tauri::command]
-pub async fn wallet_viewing_key(app: AppHandle, window: WebviewWindow, typed: Typed) -> CommandResult<String> {
+pub async fn wallet_viewing_key(app: AppHandle, window: WebviewWindow, typed: Typed) -> CommandResult<(String, String)> {
     drop(ask_the_keys(&app, &window, typed).await?);
     let wallet = wallet(&app)?;
-    tauri::async_runtime::spawn_blocking(move || Ok(wallet.viewing_key()?)).await.map_err(|e| problem(e.to_string()))?
+    // As a QR code too, for a shop's device or an accountant's app; the
+    // screen hides the window from screen capture while it shows.
+    tauri::async_runtime::spawn_blocking(move || {
+        let key = wallet.viewing_key()?;
+        let qr = lockit_wallet::qr_svg(&key)?;
+        Ok((key, qr))
+    })
+    .await
+    .map_err(|e| problem(e.to_string()))?
+}
+
+/// Hides Lock it's window from screenshots and screen sharing (Windows'
+/// display affinity) while a viewing key is shown; shown again after.
+#[tauri::command]
+pub fn window_hide_from_capture(window: WebviewWindow, hidden: bool) -> CommandResult<()> {
+    window.set_content_protected(hidden).map_err(|e| problem(format!("could not hide the window from screen capture: {e}")))
 }
 
 /// Erases the wallet from this PC: the lock, the wallet's files, its

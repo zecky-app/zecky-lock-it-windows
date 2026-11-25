@@ -45,6 +45,8 @@ window.__calls = [];
         return "watch-1";
       }
       case "wallet_export_csv": m.lastExport = args; return m.exportResult === undefined ? ["zecky-this-pc-2026-11-25.csv", Boolean(m.mayMiss)] : m.exportResult;
+      case "wallet_viewing_key": return ["uview1shopkeyfortheTest", "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'/>"];
+      case "window_hide_from_capture": (m.capture = m.capture || []).push(args.hidden); return null;
       case "wallet_take_arrival": return (m.arrivals || []).shift() || null;
       case "sealit_start": return { frames: ["<svg xmlns='http://www.w3.org/2000/svg'/>"], cupcake: Boolean(m.cupcakeSigner), large_kb: m.largeKb || null };
       case "go_max_view": return m.goMax;
