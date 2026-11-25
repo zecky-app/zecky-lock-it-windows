@@ -4,7 +4,7 @@ SetCompressor /SOLID lzma
 !include "MUI2.nsh"
 
 !define NAME "Zecky Lock it"
-!define VERSION "0.1.0-beta.6"
+!define VERSION "0.1.0-beta.7"
 !define PUBLISHER "Zecky"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\ZeckyLockIt"
 

@@ -1,24 +1,47 @@
-# Zecky Lock it for Windows 0.1.0 beta 6
+# Zecky Lock it for Windows 0.1.0 beta 7
 
 A calm, self-custody Zcash wallet for Windows, with Go Max: your own pruned Zcash
 node, optional, on your PC. Free and open source (Apache-2.0).
 **Beta: use small amounts only (under 0.1 ZEC).**
 
-Install it over beta 5: your wallet and Go Max's data stay, and the node carries on
+Install it over beta 6: your wallet and Go Max's data stay, and the node carries on
 where it is (no new sync).
 
 ## Downloads
 
 | File | What |
 |---|---|
-| `ZeckyLockIt-0.1.0-beta.6-setup.exe` | Installer. Per-user, no admin rights needed. |
-| `ZeckyLockIt-0.1.0-beta.6-portable.zip` | The same app as a folder: unzip and run `Zecky Lock it.exe`. |
+| `ZeckyLockIt-0.1.0-beta.7-setup.exe` | Installer. Per-user, no admin rights needed. |
+| `ZeckyLockIt-0.1.0-beta.7-portable.zip` | The same app as a folder: unzip and run `Zecky Lock it.exe`. |
 | `SHA256SUMS.txt`, `SHA256SUMS.txt.asc` | Checksums, and my signature on them. |
 | `zecky-release-key.asc` | My public signing key. Fingerprint: `5FAF 9FC6 6F04 5B5F 7148 4960 77EB 552B C4BF DDD8`. |
 
 **Check before you run it:** see `VERIFY.txt`.
 
 Needs Windows 10 (1903+) or 11, x64. Go Max needs about 30 GB free.
+
+## What's new in beta 7
+
+The same as Lock it for Mac:
+
+- **Signing devices: Keystone and Cupcake** (experimental). Pair one from the +
+  next to your wallets; its keys stay on the device, and every payment is signed
+  there. Pairing asks whether the wallet is new or already holds Zcash, so its
+  older payments show up. The webcam now reads moving QR codes reliably.
+- **"Up to date" means the newest blocks are checked.** Older blocks are checked
+  after that; meanwhile the balance says it may still grow. Each wallet sends once
+  its own blocks are checked.
+- **A message when Zcash arrives,** once per payment.
+- **Watch a wallet** from its viewing key, such as your shop's: balance, payments
+  and memos, never able to spend.
+- **Export a wallet's payments as CSV** (Activity), for your bookkeeping.
+- **Settings › Business:** watch a wallet, share a viewing key (hidden from
+  screenshots while it shows), export CSV.
+- **Settings › Security › Camera:** whether Windows allows the camera, with a
+  button to Windows' camera settings.
+- **The Go Max button** shows the switch: the coin sits right while Go Max is on.
+
+Same node as beta 6: Zakura 1.8.9 and the NU7 build of Zaino.
 
 ## What's new in beta 6
 
@@ -31,11 +54,29 @@ Needs Windows 10 (1903+) or 11, x64. Go Max needs about 30 GB free.
   zec.rocks and says so.
 - **Sending waits until the wallet is up to date.** Right after starting, a payment
   could be built on an old view of the chain and refused as expired. Now Lock it
-  says "Catching up. You can send in a moment". A payment that expired before it got
+  says it is still catching up, with the block it is at. A payment that expired before it got
   through is named and dropped: it was never paid.
 - Small: no "node not answering" flashing during a slow moment, the Go Max page no
   longer shows a network height below the node's, dates in English, "since Canopy"
   wording, and the licence field matches the LICENSE file (Apache 2.0).
+
+Also in beta 6, the same as Lock it for Mac:
+
+- **Receive › Transparent.** Your wallet's transparent (t1) address, for senders
+  that cannot pay a shielded one, shown in a red PUBLIC frame. When Zcash arrives
+  there, Lock it asks to lock it in, so it is private again.
+- **Sign with Cupcake.** A Cupcake wallet can be your signing phone, like Seal it.
+  "Seal it phone" is now called "signing phone".
+- **TEX payments** show in Activity as "TEX payment" and "TEX payment · forwarding fee".
+  If only part of a payment gets through, Lock it says which part.
+- **Wallet name on Receive and Send.** With several wallets, the one you are using
+  is named under the title.
+- **The time lock counts blocks as well as time,** so moving the PC's clock does
+  not open it sooner.
+- **Prices over Tor** when Tor is on for sending.
+- Fix: after switching wallets, Receive › Transparent could show the previous
+  wallet's address.
+- Safety: payment QR codes with impossible lengths are refused.
 
 Same node as beta 5: Zakura 1.8.9 and the NU7 build of Zaino.
 
