@@ -334,14 +334,23 @@
           </details>
         </div>
         <div class="seal-stage" data-seal="age" hidden>
-          <p class="lead">When was this wallet first used? With a new wallet, Lock it starts at today's block and is ready in a minute.</p>
-          <button type="button" class="brass" id="seal-new">It is a new wallet</button>
-          <p class="lead">Older? A rough guess is fine: earlier is safer.</p>
-          <div class="seal-dates">
-            <select id="seal-month" class="input" aria-label="Month"></select>
-            <select id="seal-year" class="input" aria-label="Year"></select>
+          <h3 class="stage-title">Is this a new wallet?</h3>
+          <p class="lead">A new wallet is ready in seconds. For a wallet that already holds Zcash, Lock it also checks the older blocks, so its payments and balance show up.</p>
+          <div id="seal-age-ask">
+            <button type="button" class="brass" id="seal-new">New, never used</button>
+            <button type="button" class="secondary" id="seal-used">It already holds Zcash</button>
           </div>
-          <button type="button" class="secondary" id="seal-old">Pair from that month</button>
+          <div id="seal-age-since" hidden>
+            <p class="small quiet">Since when has this wallet been used?</p>
+            <div class="seal-dates">
+              <select id="seal-month" class="input" aria-label="Month"></select>
+              <select id="seal-year" class="input" aria-label="Year"></select>
+            </div>
+            <label class="check"><input type="checkbox" id="seal-unknown"> I don't know</label>
+            <p class="small quiet" id="seal-since-note"></p>
+            <button type="button" class="brass" id="seal-old">Continue</button>
+          </div>
+          <button type="button" class="quiet-button" id="seal-age-cancel">Cancel</button>
         </div>
         <div class="seal-stage" data-seal="done" hidden>
           <p class="lead center" id="seal-done-text"></p>

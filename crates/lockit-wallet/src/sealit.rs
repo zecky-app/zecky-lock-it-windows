@@ -318,6 +318,46 @@ pub fn parse_pczt(message: &[u8]) -> Result<Vec<u8>> {
     root.get(1).and_then(Cbor::bytes).map(<[u8]>::to_vec).ok_or_else(|| bad("the signed transaction is missing"))
 }
 
+/// Pairing a signing device: the owner says whether the wallet is new or
+/// already holds Zcash, and since when (Lock it Mac's PairingStart). A new
+/// wallet starts 1,000 blocks back (seconds, with the exact tree state). A
+/// used one starts a little before the month given, or, when unknown, where
+/// the device added Zcash: Keystone with Zashi in December 2024, Cupcake
+/// after NU7.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PairingStart {
+    /// New, never used.
+    New,
+    /// Used since this month.
+    Since {
+        /// The year.
+        year: i32,
+        /// The month, 1 to 12.
+        month: u32,
+    },
+    /// It already holds Zcash, since an unknown time.
+    Unknown,
+}
+
+/// NU7, where Cupcake's Zcash starts.
+pub const NU7_HEIGHT: u32 = 3_543_405;
+
+impl PairingStart {
+    /// The block to check from. `now`: Unix seconds.
+    pub fn height(self, cupcake: bool, tip: u32, now: i64) -> u32 {
+        let orchard = crate::ORCHARD_START;
+        let recent = tip.saturating_sub(1_000).max(orchard);
+        match self {
+            Self::New => recent,
+            Self::Since { year, month } => crate::estimate_birthday(year, month, tip, now).max(orchard).min(recent),
+            Self::Unknown if cupcake => NU7_HEIGHT,
+            // Keystone's shielded Zcash (with Zashi) came on 19 December 2024.
+            Self::Unknown => crate::estimate_birthday(2024, 12, tip, now),
+        }
+    }
+}
+
 /// Keystone can fail to read a payment larger than this (Keystone issue
 /// #2294: PCZTs over 14 KiB). Lock it still shows such a payment, with a
 /// warning: the size depends on how many notes it spends.
@@ -788,7 +828,25 @@ mod keystone_scan_tests {
 
 #[cfg(test)]
 mod wallet_name_tests {
-    use super::{keystone_may_not_read, wallet_name};
+    use super::{keystone_may_not_read, wallet_name, PairingStart, NU7_HEIGHT};
+
+    /// Lock it Mac's testPairingStart.
+    #[test]
+    fn pairing_asks_new_or_already_used() {
+        let tip = 3_609_700;
+        let now = 1_795_600_000;
+        assert_eq!(PairingStart::New.height(false, tip, now), tip - 1_000);
+        assert_eq!(PairingStart::New.height(true, tip, now), tip - 1_000, "a new Cupcake no longer starts at NU7");
+        assert_eq!(PairingStart::Unknown.height(true, tip, now), NU7_HEIGHT);
+        let keystone = PairingStart::Unknown.height(false, tip, now);
+        assert_eq!(keystone, crate::estimate_birthday(2024, 12, tip, now));
+        assert!(keystone > crate::ORCHARD_START && keystone < NU7_HEIGHT, "{keystone}");
+        let june = PairingStart::Since { year: 2026, month: 6 }.height(false, tip, now);
+        assert_eq!(june, crate::estimate_birthday(2026, 6, tip, now));
+        assert!(june < tip - 1_000);
+        assert_eq!(PairingStart::Since { year: 2022, month: 1 }.height(false, tip, now), crate::ORCHARD_START, "never before Orchard");
+        assert!(PairingStart::Since { year: 2026, month: 11 }.height(true, tip, now) <= tip - 1_000, "this month: at most 1,000 back");
+    }
 
     #[test]
     fn keystone_gets_a_warning_over_14_kib_only() {

@@ -992,3 +992,9 @@ select.input { appearance: auto; }
 .biz-watch-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
 .biz-watch-list svg { width: 14px; height: 14px; fill: var(--gold); flex: none; }
 .biz-qr { display: block; width: 244px; height: 244px; margin: 12px auto; padding: 12px; background: #fff; border-radius: 12px; }
+
+/* Pairing: Is this a new wallet? */
+.stage-title { font: 500 20px var(--serif); color: var(--text); margin: 0 0 6px; }
+#seal-age-ask, #seal-age-since { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+#sheet-seal .check { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; color: var(--text); }
+#seal-age-since .seal-dates[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }

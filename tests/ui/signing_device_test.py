@@ -62,11 +62,37 @@ async def main():
             check("pair: names Cupcake and Keystone", "Cupcake" in sheet and "Keystone" in sheet)
             check("pair: Keystone's menu named", "Connect Software Wallet" in sheet)
             check("pair: no Seal it, no phone", clean(sheet), repr(sheet))
-            await pg.evaluate("document.querySelector('[data-seal=age]').hidden = false")
-            age = await pg.inner_text("[data-seal=age]")
-            check("pair: the start question has no phone in it", clean(age), age)
             check("no page errors (pair)", not pg.errors, pg.errors)
             await pg.close()
+
+            # After the scan: "Is this a new wallet?" (as Lock it Mac), for
+            # Cupcake and Keystone alike.
+            for answer in ("new", "since", "unknown"):
+                pg = await page_with(b, base, {})
+                await pg.click(".ring-round.plus"); await pg.click("text=Pair a signing device"); await pg.wait_for_timeout(300)
+                await pg.evaluate("showPairingStart()"); await pg.wait_for_timeout(200)
+                stage = await pg.inner_text("[data-seal=age]")
+                if answer == "new":
+                    check("start: the question", "Is this a new wallet?" in stage and "A new wallet is ready in seconds." in stage)
+                    check("start: no phone in it", clean(stage), stage)
+                    await pg.click("#seal-new")
+                else:
+                    await pg.click("#seal-used"); await pg.wait_for_timeout(200)
+                    check(f"{answer}: asks since when", await pg.is_visible("#seal-age-since") and not await pg.is_visible("#seal-new"))
+                    if answer == "since":
+                        check("since: the month note", "this one shows “may grow” until its older blocks are done" in await pg.text_content("#seal-since-note"))
+                        await pg.select_option("#seal-year", "2025"); await pg.select_option("#seal-month", "4")
+                    else:
+                        await pg.check("#seal-unknown")
+                        check("unknown: where the device added Zcash", (await pg.text_content("#seal-since-note")).startswith("Lock it checks from when your device added Zcash: Keystone in December 2024, Cupcake at the NU7 upgrade."))
+                    await pg.click("#seal-old")
+                await pg.wait_for_timeout(400)
+                sent = await pg.evaluate("window.__m.lastPair")
+                want = {"new": {"kind": "new"}, "since": {"kind": "since", "year": 2025, "month": 4}, "unknown": {"kind": "unknown"}}[answer]
+                check(f"{answer}: the answer is sent", sent == want, sent)
+                check(f"{answer}: paired", await pg.is_visible("[data-seal=done]"))
+                check(f"no page errors (start {answer})", not pg.errors, pg.errors)
+                await pg.close()
 
             # A Keystone wallet: home, chip and the send screens.
             pg = await page_with(b, base, {"wallets": KEYSTONE, "current": "ks-1"})

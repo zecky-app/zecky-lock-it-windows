@@ -1531,9 +1531,8 @@ async function pushScanned(text) {
     stopCamera();
     // Watch a wallet: back to its form, with the key read.
     if (seal.kind === "viewing_key") return openWatch(await invoke("watch_scanned_key"), true);
-    // Cupcake's QR needs no "when were the words made": it starts at NU7.
-    if (seal.kind === "accounts" && progress.cupcake) await pair(null);
-    else if (seal.kind === "accounts") sealStage("age");
+    // Cupcake or Keystone: "Is this a new wallet?" (as Lock it Mac).
+    if (seal.kind === "accounts") showPairingStart();
     else await finishSeal();
   } catch (problem) {
     say($("seal-message"), describe(problem));
@@ -1547,10 +1546,36 @@ $("seal-paste-go").addEventListener("click", async () => {
   for (const line of lines) await pushScanned(line);
 });
 
-async function pair(madeIn) {
+/// "Is this a new wallet?" first; "It already holds Zcash" then asks since
+/// when (a month, or "I don't know": where the device added Zcash).
+function showPairingStart() {
+  $("seal-age-ask").hidden = false;
+  $("seal-age-since").hidden = true;
+  $("seal-unknown").checked = false;
+  pairingSinceNote();
+  sealStage("age");
+}
+
+function pairingSinceNote() {
+  const unknown = $("seal-unknown").checked;
+  document.querySelector("#seal-age-since .seal-dates").setAttribute("aria-disabled", String(unknown));
+  $("seal-since-note").textContent = unknown
+    ? "Lock it checks from when your device added Zcash: Keystone in December 2024, Cupcake at the NU7 upgrade. Your other wallets stay usable meanwhile."
+    : "Lock it checks from a little before then. Your other wallets stay usable; this one shows \u201Cmay grow\u201D until its older blocks are done.";
+}
+
+$("seal-used").addEventListener("click", () => {
+  $("seal-age-ask").hidden = true;
+  $("seal-age-since").hidden = false;
+});
+$("seal-unknown").addEventListener("change", pairingSinceNote);
+$("seal-age-cancel").addEventListener("click", () => closeSheet());
+
+/// `start`: {kind: "new"}, {kind: "since", year, month} or {kind: "unknown"}.
+async function pair(start) {
   say($("seal-message"), "Pairing. This takes a moment.", true);
   try {
-    await invoke("sealit_pair", { madeIn });
+    await invoke("sealit_pair", { start });
     activity = [];
     await refreshHome();
     sealStage("done");
@@ -1559,7 +1584,7 @@ async function pair(madeIn) {
     say($("seal-message"), describe(problem));
   }
 }
-$("seal-new").addEventListener("click", () => pair(null));
+$("seal-new").addEventListener("click", () => pair({ kind: "new" }));
 
 // ---------- Watch a wallet: from its viewing key, view only (as Lock it Mac) ----------
 
@@ -1621,7 +1646,9 @@ $("watch-go").addEventListener("click", async () => {
     button.textContent = "Watch this wallet";
   }
 });
-$("seal-old").addEventListener("click", () => pair({ year: Number($("seal-year").value), month: Number($("seal-month").value) }));
+$("seal-old").addEventListener("click", () => pair($("seal-unknown").checked
+  ? { kind: "unknown" }
+  : { kind: "since", year: Number($("seal-year").value), month: Number($("seal-month").value) }));
 
 async function finishSeal() {
   sealStage("done");

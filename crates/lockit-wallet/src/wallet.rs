@@ -332,7 +332,9 @@ impl Wallet {
         // no birthday and its wallet may hold Zcash already: look from NU7 on
         // (Cupcake added Zcash after it), as Lock it Mac does.
         let derivation = export.seed_fingerprint.map(|f| Zip32Derivation::new(zip32::fingerprint::SeedFingerprint::from_bytes(f), index));
-        let birthday = if export.from_cupcake() { Some(CUPCAKE_BIRTHDAY) } else { birthday };
+        // The start comes from the owner's answer (sealit::PairingStart);
+        // only without one does Cupcake start at NU7, as before.
+        let birthday = birthday.or(export.from_cupcake().then_some(CUPCAKE_BIRTHDAY));
         let (birthday, tip) = Self::birthday_from(server, birthday).await?;
         let mut db = self.db()?;
         let imported = db

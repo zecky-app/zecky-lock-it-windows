@@ -92,18 +92,16 @@ fn scanned(seal: &SealSlot) -> CommandResult<Vec<u8>> {
 /// Pairs the phone whose account code was scanned. `made_in`: when its
 /// words were made; none for a brand-new phone wallet (starts near now).
 #[tauri::command]
-pub async fn sealit_pair(app: AppHandle, slot: State<'_, WalletSlot>, seal: State<'_, SealSlot>, made_in: Option<MadeIn>) -> CommandResult<String> {
+pub async fn sealit_pair(app: AppHandle, slot: State<'_, WalletSlot>, seal: State<'_, SealSlot>, start: lockit_wallet::sealit::PairingStart) -> CommandResult<String> {
     let message = scanned(&seal)?;
     let export = lockit_wallet::sealit::parse_accounts(&message)?;
     let name = lockit_wallet::sealit::wallet_name(export.accounts[0].name.as_deref(), export.from_cupcake());
     let main = w::main_wallet(&app)?;
     let server = w::chosen_server(&app);
     let id = tauri::async_runtime::spawn_blocking(move || -> CommandResult<String> {
+        // The owner's answer to "Is this a new wallet?" (as Lock it Mac).
         let tip = w::runtime().block_on(Wallet::chain_tip(&server))?;
-        let birthday = match made_in {
-            Some(made) => made.birthday(tip),
-            None => tip.saturating_sub(1_000),
-        };
+        let birthday = start.height(export.from_cupcake(), tip, w::now());
         Ok(w::runtime().block_on(main.add_sealit(&name, &export, Some(birthday), &server))?)
     })
     .await
