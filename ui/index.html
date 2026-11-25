@@ -141,6 +141,11 @@
 
   <!-- ===== Home: the lock ===== -->
   <section id="view-home" class="home" hidden>
+    <!-- Zcash arrived: a short message that slides down (as Lock it Mac) -->
+    <button type="button" class="arrival" id="arrival" hidden aria-describedby="arrival-detail">
+      <span class="arrival-icon" aria-hidden="true">↓</span>
+      <span class="arrival-words"><strong id="arrival-title"></strong><small id="arrival-detail"></small></span>
+    </button>
     <div class="stage">
       <div class="key-ring" id="key-ring" role="toolbar" aria-label="Your wallets"></div>
       <div class="ring-menu" id="ring-menu" role="menu" hidden></div>

@@ -66,6 +66,10 @@ pub struct WalletSlot {
     last_synced: Mutex<Option<std::time::Instant>>,
     /// Blocks still open (all ranges) over the last minutes, for the pace.
     open_samples: Mutex<Vec<(std::time::Instant, u64)>>,
+    /// Which payments get a message (loaded on the first scan).
+    arrivals: Mutex<Option<lockit_wallet::ArrivalWatch>>,
+    /// Messages waiting to be shown, oldest first.
+    arrival_queue: Mutex<std::collections::VecDeque<lockit_wallet::Arrival>>,
     sync: Mutex<SyncView>,
     nudge: Mutex<Option<mpsc::Sender<()>>>,
     /// The words while the lock is open (after "Really open the lock?" and
@@ -382,9 +386,11 @@ pub fn start_syncing(app: AppHandle) {
                                     failures = 0;
                                     next_pass = true;
                                     set_sync(&app, "syncing", &server, None);
+                                    note_arrivals(&app, false);
                                 }
                                 Ok(finished) => {
                                     failures = 0;
+                                    note_arrivals(&app, true);
                                     next_pass = !finished;
                                     if let Ok(mut at) = slot.last_synced.lock() {
                                         *at = Some(std::time::Instant::now());
@@ -729,6 +735,44 @@ fn newest_checked_now(app: &AppHandle, wallet: &Wallet) -> bool {
     let Ok(balance) = wallet.balance() else { return false };
     let network = balance.chain_tip.max(network_heard(app));
     newest_checked(&balance.to_scan, network, NEWEST_WINDOW)
+}
+
+/// The payments announced before, newest last, kept across restarts.
+const ANNOUNCED_FILE: &str = "announced.json";
+
+/// After a scan: new payments of every wallet that are news get a message
+/// (as Lock it Mac's noteArrivals). `current`: Lock it is up to date.
+fn note_arrivals(app: &AppHandle, current: bool) {
+    let Ok(main) = main_wallet(app) else { return };
+    let Ok(lines) = main.incoming(200) else { return };
+    let network = main.balance().map(|b| b.chain_tip).unwrap_or(0).max(network_heard(app));
+    let path = data_dir(app).map(|d| d.join(ANNOUNCED_FILE)).ok();
+    let slot = app.state::<WalletSlot>();
+    let at = now();
+    let (new, announced) = {
+        let Ok(mut guard) = slot.arrivals.lock() else { return };
+        let watch = guard.get_or_insert_with(|| {
+            let before = path.as_ref().and_then(|p| fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+            lockit_wallet::ArrivalWatch::new(before)
+        });
+        let new = watch.note(&lines, current, at, |block, time, since| lockit_node::rules::is_news(block, time, network, since, at));
+        (new, watch.announced())
+    };
+    if new.is_empty() {
+        return;
+    }
+    if let (Some(path), Ok(bytes)) = (path, serde_json::to_vec(&announced)) {
+        let _ = fs::write(path, bytes);
+    }
+    if let Ok(mut queue) = slot.arrival_queue.lock() {
+        queue.extend(new);
+    };
+}
+
+/// The next arrival message to show, if any (the screen asks when it is free).
+#[tauri::command]
+pub fn wallet_take_arrival(slot: State<'_, WalletSlot>) -> Option<lockit_wallet::Arrival> {
+    slot.arrival_queue.lock().ok().and_then(|mut queue| queue.pop_front())
 }
 
 /// Blocks still to check and the time left, from blocks checked per minute.
@@ -1291,6 +1335,14 @@ pub async fn wallet_erase(app: AppHandle, window: WebviewWindow, slot: State<'_,
     let _ = fs::remove_dir_all(dir.join("wallet"));
     let _ = fs::remove_file(dir.join("settings.json"));
     let _ = fs::remove_file(dir.join("keyring.json"));
+    // Which payments had a message: history of these wallets too.
+    let _ = fs::remove_file(dir.join(ANNOUNCED_FILE));
+    if let Ok(mut watch) = slot.arrivals.lock() {
+        *watch = None;
+    }
+    if let Ok(mut queue) = slot.arrival_queue.lock() {
+        queue.clear();
+    }
     crate::firstrun::forget_tour(&app);
     crate::rules::erase(&app);
     #[cfg(windows)]

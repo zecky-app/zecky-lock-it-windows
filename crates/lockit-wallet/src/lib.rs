@@ -28,7 +28,7 @@ pub use amount::parse_zec;
 pub use net::{is_private_host, rates_from, Server, PRICE_URL, PUBLIC_SERVERS};
 pub use phrase::{new_phrase, phrase_to_seed, validate_phrase, Seed};
 pub use birthday::{estimate_birthday, SAPLING_ACTIVATION};
-pub use wallet::{AccountInfo, Activity, Balance, PreparedPayment, SignedPayment, Wallet, KEYRING_SOURCE, SEALIT_SOURCE};
+pub use wallet::{AccountInfo, Activity, Arrival, ArrivalKind, ArrivalWatch, Balance, Incoming, PreparedPayment, SignedPayment, Wallet, KEYRING_SOURCE, SEALIT_SOURCE};
 
 /// Whether `address` is a Zcash mainnet address Lock it can pay.
 pub fn is_valid_address(address: &str) -> bool {

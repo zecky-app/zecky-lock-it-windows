@@ -835,6 +835,40 @@ impl Wallet {
         Ok(Activity::mark(list))
     }
 
+    /// The newest payment lines of every wallet on this PC, for the arrival
+    /// message.
+    pub fn incoming(&self, limit: u32) -> Result<Vec<Incoming>> {
+        let conn = rusqlite::Connection::open(self.db_path()).map_err(db_err)?;
+        conn.busy_timeout(std::time::Duration::from_secs(15)).map_err(db_err)?;
+        let mut statement = conn
+            .prepare(
+                "SELECT txid, account_uuid, mined_height, block_time, account_balance_delta, expired_unmined,
+                        is_shielding, sent_note_count, pool_crossing_value
+                 FROM v_transactions
+                 ORDER BY (mined_height IS NULL) DESC, mined_height DESC
+                 LIMIT ?1",
+            )
+            .map_err(db_err)?;
+        let rows = statement
+            .query_map(rusqlite::params![limit], |row| {
+                let txid: Vec<u8> = row.get(0)?;
+                let account: Vec<u8> = row.get(1)?;
+                Ok(Incoming {
+                    txid: txid.iter().rev().map(|b| format!("{b:02x}")).collect(),
+                    account: uuid::Uuid::from_slice(&account).map(|u| u.to_string()).unwrap_or_default(),
+                    height: row.get::<_, Option<u32>>(2)?,
+                    time: row.get::<_, Option<i64>>(3)?,
+                    change: row.get(4)?,
+                    expired: row.get::<_, Option<bool>>(5)?.unwrap_or(false),
+                    shielding: row.get::<_, Option<bool>>(6)?.unwrap_or(false),
+                    sent_notes: row.get::<_, Option<u32>>(7)?.unwrap_or(0),
+                    pool_crossing: row.get::<_, Option<i64>>(8)?.is_some(),
+                })
+            })
+            .map_err(db_err)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(db_err)
+    }
+
     /// The wallet's unified full viewing key: sees everything, spends nothing.
     pub fn viewing_key(&self) -> Result<String> {
         let db = self.db()?;
@@ -912,6 +946,136 @@ pub struct Activity {
     pub tex_step: Option<u8>,
     /// "Locked", "Released", "TEX payment" or "TEX payment · forwarding fee".
     pub title: String,
+}
+
+/// A payment line of one wallet, for the arrival message: every wallet on
+/// this PC at once (a payment between two of them has a line for each).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Incoming {
+    /// Transaction id, as explorers show it.
+    pub txid: String,
+    /// The wallet's id (a UUID).
+    pub account: String,
+    /// The block it is in; `None` while waiting.
+    pub height: Option<u32>,
+    /// When its block was made (Unix seconds).
+    pub time: Option<i64>,
+    /// What it did to this wallet's balance, in zatoshis.
+    pub change: i64,
+    /// It never made it into a block and has expired.
+    pub expired: bool,
+    /// Locking in transparent Zcash (a shielding transaction).
+    pub shielding: bool,
+    /// Notes of this wallet it spent: this wallet sent it.
+    pub sent_notes: u32,
+    /// A move between pools of this wallet (e.g. to Ironwood).
+    pub pool_crossing: bool,
+}
+
+impl Incoming {
+    /// Money that came in from elsewhere: not sent by this wallet, no notes
+    /// of it spent, not locking in, not a move between its pools, not
+    /// expired, above zero (Lock it Mac's noteArrivals).
+    pub fn is_received(&self) -> bool {
+        self.change > 0 && self.sent_notes == 0 && !self.shielding && !self.pool_crossing && !self.expired
+    }
+
+    /// One payment for one wallet.
+    pub fn key(&self) -> String {
+        format!("{}:{}", self.txid, self.account)
+    }
+}
+
+/// What an arrival message is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArrivalKind {
+    /// Zcash came in: "Locked in · <wallet>".
+    LockedIn,
+    /// Transparent Zcash was locked in: "Locked in ✓ · <wallet>".
+    Shielded,
+}
+
+/// One arrival message, waiting to be shown.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Arrival {
+    /// The payment.
+    pub txid: String,
+    /// The wallet it arrived in.
+    pub account: String,
+    /// What happened.
+    pub kind: ArrivalKind,
+    /// The amount, in zatoshis.
+    pub amount: u64,
+}
+
+/// Which payments get a message, as Lock it Mac's noteArrivals: payments
+/// already there are history; only news gets a message, and never twice.
+#[derive(Default)]
+pub struct ArrivalWatch {
+    seen: std::collections::HashSet<String>,
+    shieldings_waiting: std::collections::HashSet<String>,
+    announced: std::collections::VecDeque<String>,
+    seen_current_at: Option<i64>,
+}
+
+impl ArrivalWatch {
+    /// How many announced payments are kept (on disk, across restarts).
+    pub const KEEP: usize = 100;
+
+    /// Starts with the payments announced before (newest last).
+    pub fn new(announced: Vec<String>) -> Self {
+        let mut watch = Self::default();
+        for key in announced {
+            watch.mark_announced(key);
+        }
+        watch
+    }
+
+    /// The announced payments to keep, oldest first.
+    pub fn announced(&self) -> Vec<String> {
+        self.announced.iter().cloned().collect()
+    }
+
+    fn mark_announced(&mut self, key: String) {
+        if !self.announced.contains(&key) {
+            self.announced.push_back(key);
+        }
+        while self.announced.len() > Self::KEEP {
+            self.announced.pop_front();
+        }
+    }
+
+    /// Looks at the newest payment lines of every wallet after a scan and
+    /// returns the new messages. `current`: Lock it is up to date now.
+    /// `is_news(block, block_time, since)` decides what is news.
+    pub fn note(&mut self, lines: &[Incoming], current: bool, now: i64, is_news: impl Fn(Option<u32>, Option<i64>, Option<i64>) -> bool) -> Vec<Arrival> {
+        let fresh: Vec<&Incoming> = lines.iter().filter(|line| self.seen.insert(line.key())).collect();
+        // Locking in transparent Zcash: news once it is in a block.
+        let shielded: Vec<&Incoming> = lines
+            .iter()
+            .filter(|line| line.shielding && line.height.is_some() && self.shieldings_waiting.remove(&line.key()))
+            .collect();
+        for line in lines.iter().filter(|line| line.shielding && line.height.is_none() && !line.expired) {
+            self.shieldings_waiting.insert(line.key());
+        }
+        let since = self.seen_current_at;
+        if current {
+            self.seen_current_at = Some(now);
+        }
+        let received = fresh.into_iter().filter(|line| line.is_received() && is_news(line.height, line.time, since));
+        let mut taken = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for (line, kind) in shielded.into_iter().map(|l| (l, ArrivalKind::Shielded)).chain(received.map(|l| (l, ArrivalKind::LockedIn))) {
+            let key = line.key();
+            if self.announced.contains(&key) || !taken.insert(key.clone()) {
+                continue;
+            }
+            self.mark_announced(key);
+            out.push(Arrival { txid: line.txid.clone(), account: line.account.clone(), kind, amount: line.change.unsigned_abs() });
+        }
+        out
+    }
 }
 
 impl Activity {
@@ -1040,6 +1204,91 @@ mod tests {
         assert!(wallet.for_account(Some(&cupcake)).is_sealit().unwrap());
         assert!(!wallet.for_account(Some(&sealit)).is_cupcake().unwrap());
         assert!(wallet.for_account(Some(&sealit)).is_sealit().unwrap());
+    }
+
+    /// The arrival message's filter: only money from elsewhere.
+    #[test]
+    fn only_money_from_elsewhere_counts_as_received() {
+        let paid = Incoming {
+            txid: "ab".into(), account: "w".into(), height: Some(3_600_000), time: Some(1), change: 50_000,
+            expired: false, shielding: false, sent_notes: 0, pool_crossing: false,
+        };
+        assert!(paid.is_received());
+        assert!(!Incoming { change: -20_000, ..paid.clone() }.is_received(), "sent");
+        assert!(!Incoming { sent_notes: 1, ..paid.clone() }.is_received(), "a move from this wallet (its change comes back)");
+        assert!(!Incoming { shielding: true, ..paid.clone() }.is_received(), "locking in");
+        assert!(!Incoming { pool_crossing: true, ..paid.clone() }.is_received(), "a move between pools");
+        assert!(!Incoming { expired: true, ..paid.clone() }.is_received(), "expired");
+        assert!(!Incoming { change: 0, ..paid.clone() }.is_received());
+        assert_eq!(paid.key(), "ab:w");
+    }
+
+    fn line(txid: &str, account: &str, height: Option<u32>, change: i64) -> Incoming {
+        Incoming { txid: txid.into(), account: account.into(), height, time: None, change, expired: false, shielding: false, sent_notes: 0, pool_crossing: false }
+    }
+
+    /// News once, never twice; history stays quiet; a lock-in gets its
+    /// message once in a block; a payment between two wallets here is news
+    /// only for the one that receives.
+    #[test]
+    fn arrivals_are_news_once() {
+        let news = |height: Option<u32>, _t: Option<i64>, _s: Option<i64>| height.map_or(true, |h| h >= 3_609_380);
+        let mut watch = ArrivalWatch::new(vec![]);
+        let old = line("aa", "main", Some(2_400_000), 10_000);
+        let new = line("bb", "main", Some(3_609_470), 25_000);
+        let got = watch.note(&[old.clone(), new.clone()], true, 1_000, news);
+        assert_eq!(got, vec![Arrival { txid: "bb".into(), account: "main".into(), kind: ArrivalKind::LockedIn, amount: 25_000 }]);
+        assert!(watch.note(&[old.clone(), new.clone()], true, 1_025, news).is_empty(), "never twice in a session");
+        // After a restart, the list on disk keeps it quiet.
+        let mut again = ArrivalWatch::new(watch.announced());
+        assert!(again.note(&[new.clone()], true, 2_000, news).is_empty(), "never twice across restarts");
+        // Between two wallets here: the sender's line (its notes spent) is no news.
+        let sent = Incoming { sent_notes: 2, change: -30_000, ..line("cc", "main", None, 0) };
+        let came = line("cc", "shop", None, 20_000);
+        let got = again.note(&[sent, came], true, 2_025, news);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].account, "shop");
+        // Locking in: a message once it is in a block, not while waiting.
+        let waiting = Incoming { shielding: true, ..line("dd", "main", None, -15_000) };
+        assert!(again.note(&[waiting.clone()], true, 2_050, news).is_empty());
+        let mined = Incoming { height: Some(3_609_475), ..waiting };
+        let got = again.note(&[mined.clone()], true, 2_075, news);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].kind, ArrivalKind::Shielded);
+        assert!(again.note(&[mined], true, 2_100, news).is_empty());
+    }
+
+    #[test]
+    fn the_announced_list_keeps_the_newest_100() {
+        let watch = ArrivalWatch::new((0..150).map(|i| format!("t{i}:main")).collect());
+        let kept = watch.announced();
+        assert_eq!(kept.len(), ArrivalWatch::KEEP);
+        assert_eq!(kept.first().unwrap(), "t50:main");
+        assert_eq!(kept.last().unwrap(), "t149:main");
+    }
+
+    /// Lock it was up to date, then the PC slept: a payment from the
+    /// sleep is news at the next scan (the rule gets the time it was
+    /// last up to date).
+    #[test]
+    fn the_rule_gets_when_lock_it_was_last_up_to_date() {
+        let mut watch = ArrivalWatch::new(vec![]);
+        let seen = std::cell::RefCell::new(Vec::new());
+        let rule = |_h: Option<u32>, _t: Option<i64>, since: Option<i64>| {
+            seen.borrow_mut().push(since);
+            false
+        };
+        watch.note(&[line("a1", "main", Some(1), 5)], true, 100, &rule);
+        watch.note(&[line("a2", "main", Some(2), 5)], false, 200, &rule);
+        watch.note(&[line("a3", "main", Some(3), 5)], true, 300, &rule);
+        assert_eq!(*seen.borrow(), vec![None, Some(100), Some(100)]);
+    }
+
+    /// The query reads every wallet's lines (an empty new wallet has none).
+    #[test]
+    fn incoming_reads_the_wallet_database() {
+        let (_dir, wallet, _seed) = fresh();
+        assert!(wallet.incoming(200).unwrap().is_empty());
     }
 
     /// A sync pass stops when its time is up and says more is left; a

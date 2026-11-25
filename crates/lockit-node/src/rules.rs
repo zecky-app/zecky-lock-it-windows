@@ -349,6 +349,45 @@ pub fn minutes_left(open: u64, samples: &[(f64, u64)]) -> Option<u64> {
     Some(((open as f64 / rate / 60.0).round() as u64).max(1))
 }
 
+/// A payment is news, worth a message, when it is still waiting for a
+/// block, or in one of the last 100 blocks (about 40 minutes), or its block
+/// is from the last 30 minutes, or from after Lock it was last up to date
+/// (`since`: a payment that came while the PC slept). Older payments found
+/// later, for a wallet just added, are history (Lock it Mac's isNews).
+/// Times in Unix seconds.
+pub fn is_news(block: Option<u32>, block_time: Option<i64>, network: u32, since: Option<i64>, now: i64) -> bool {
+    let Some(block) = block else { return true };
+    if network > 0 && block >= network.saturating_sub(100) {
+        return true;
+    }
+    let recent = now - 30 * 60;
+    let from = since.map_or(recent, |since| since.min(recent));
+    block_time.unwrap_or(0) >= from
+}
+
+#[cfg(test)]
+mod news_tests {
+    use super::is_news;
+
+    /// Lock it Mac's testOnlyNewPaymentsGetAMessage and the sleep case of
+    /// testAuditBeforeSaturday.
+    #[test]
+    fn only_new_payments_get_a_message() {
+        let now = 2_000_000_000;
+        assert!(is_news(None, None, 3_609_479, None, now), "waiting for a block");
+        assert!(is_news(Some(3_609_400), None, 3_609_479, None, now), "one of the last 100 blocks");
+        assert!(is_news(Some(3_500_000), Some(now - 600), 0, None, now), "network unknown, block 10 minutes old");
+        assert!(!is_news(Some(2_400_000), Some(now - 86_400 * 600), 3_609_479, None, now), "a payment from 2024");
+        assert!(!is_news(Some(3_609_000), None, 3_609_479, None, now), "older than 100 blocks, no time");
+        // Up to date at 22:00, asleep, paid at 23:00, awake at 07:00.
+        let last_up = now - 9 * 3_600;
+        let paid = now - 8 * 3_600;
+        assert!(is_news(Some(3_608_000), Some(paid), 3_609_479, Some(last_up), now));
+        assert!(!is_news(Some(3_608_000), Some(paid), 3_609_479, None, now), "fresh start: history");
+        assert!(!is_news(Some(2_400_000), Some(last_up - 86_400 * 300), 3_609_479, Some(last_up), now), "old payment for a new wallet");
+    }
+}
+
 #[cfg(test)]
 mod newest_blocks_tests {
     use super::*;

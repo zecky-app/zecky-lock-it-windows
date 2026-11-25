@@ -965,3 +965,14 @@ select.input { appearance: auto; }
   font-size: 11px; font-weight: 700; letter-spacing: 2px; padding: 3px 10px; border-radius: 999px; }
 .public-warning { margin: 12px auto; max-width: 420px; padding: 12px; border-radius: 10px; font-size: 12px; line-height: 1.45;
   background: color-mix(in srgb, var(--red) 10%, transparent); color: var(--text, inherit); text-align: left; }
+
+/* Zcash arrived: slides down from the top, leaves by itself (Lock it Mac's ArrivalToast). */
+.arrival { position: fixed; top: 52px; left: 50%; z-index: 40; width: 340px; display: flex; align-items: center; gap: 12px; padding: 10px 14px; text-align: left;
+  background: var(--surface); border: 1px solid rgba(212, 166, 87, 0.5); border-radius: 14px; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+  transform: translate(-50%, -16px); opacity: 0; transition: transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.1), opacity 0.3s; cursor: pointer; }
+.arrival.in { transform: translate(-50%, 0); opacity: 1; }
+.arrival-icon { width: 32px; height: 32px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--green); color: #14161c; font: 600 15px var(--sans); }
+.arrival-words { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.arrival-words strong { font: 600 14px var(--sans); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arrival-words small { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .arrival { transition: none; } }

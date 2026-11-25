@@ -358,7 +358,77 @@ async function refreshHome() {
   if (!$("sheet-sync").hidden) renderSync();
   if (!$("sheet-activity").hidden) renderActivity();
   if (!$("sheet-holding").hidden) renderHolding();
+  nextArrival();
 }
+
+// ---------- Zcash arrived (as Lock it Mac's ArrivalToast) ----------
+
+const ARRIVAL_SHOWN_MS = 4500;
+let arrivalShown = null;
+
+/// Waits while a sheet or a question is open, or Lock it is locked.
+function arrivalFree() {
+  return layer.hidden && !appLocked && ![...document.querySelectorAll(".scrim")].some((s) => !s.hidden);
+}
+
+function arrivalWallet(arrival) {
+  return ((overview && overview.wallets) || []).find((w) => w.id === arrival.account) || null;
+}
+
+/// The wallet's name in the title: Lock it holds several wallets.
+function arrivalTitle(arrival) {
+  const w = arrivalWallet(arrival);
+  const name = w ? walletName(w) : "your wallet";
+  return (arrival.kind === "shielded" ? "Locked in ✓ · " : "Locked in · ") + name;
+}
+
+function arrivalDetail(arrival) {
+  if (arrival.kind === "shielded") return "Your transparent Zcash is shielded now";
+  return prefs.hidden ? "Amount hidden" : amountText(arrival.amount);
+}
+
+/// Shows the next waiting message, one at a time.
+async function nextArrival() {
+  if (arrivalShown || !arrivalFree()) return;
+  let arrival = null;
+  try {
+    arrival = await invoke("wallet_take_arrival");
+  } catch {
+    return;
+  }
+  if (!arrival || arrivalShown) return;
+  arrivalShown = arrival;
+  const box = $("arrival");
+  $("arrival-title").textContent = arrivalTitle(arrival);
+  $("arrival-detail").textContent = arrivalDetail(arrival);
+  box.setAttribute("aria-label", `${arrivalTitle(arrival)}. ${arrivalDetail(arrival)}`);
+  box.title = "Opens Activity";
+  box.hidden = false;
+  requestAnimationFrame(() => box.classList.add("in"));
+  setTimeout(() => { if (arrivalShown === arrival) dismissArrival(); }, ARRIVAL_SHOWN_MS);
+}
+
+function dismissArrival() {
+  const box = $("arrival");
+  box.classList.remove("in");
+  setTimeout(() => {
+    box.hidden = true;
+    arrivalShown = null;
+    nextArrival();
+  }, 300);
+}
+
+/// A click opens Activity for that wallet.
+$("arrival").addEventListener("click", async () => {
+  const arrival = arrivalShown;
+  if (!arrival) return;
+  dismissArrival();
+  const w = arrivalWallet(arrival);
+  const current = currentWallet();
+  if (w && (!current || current.id !== w.id)) await chooseWallet(w);
+  renderActivity();
+  openSheet("activity");
+});
 
 /// Days the Zcash has been in the lock; null while unknown (as Lock it Mac).
 function heldDays() {
