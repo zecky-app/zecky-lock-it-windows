@@ -24,7 +24,8 @@ window.__calls = [];
       case "wallet_overview": return overview();
       case "first_run": return { terms_accepted: true, tour_seen: true };
       case "lock_rules": return { phase: { phase: "none" }, ask_on_start: false, contacts: [], only_saved: false, security_keys: [], log: [], time_lock_hours: 0 };
-      case "wallet_activity": return [];
+      case "wallet_activity": return m.activity || [];
+      case "lock_log": return m.lockLog || [];
       case "wallet_receive": return { address: "u1shieldedexample", qr: "<svg xmlns='http://www.w3.org/2000/svg'/>" };
       // Scans: every read is kept with its time, for the camera tests.
       case "sealit_scan_start": m.scanned = []; return null;
@@ -43,6 +44,7 @@ window.__calls = [];
         m.current = "watch-1";
         return "watch-1";
       }
+      case "wallet_export_csv": m.lastExport = args; return m.exportResult === undefined ? ["zecky-this-pc-2026-11-25.csv", Boolean(m.mayMiss)] : m.exportResult;
       case "wallet_take_arrival": return (m.arrivals || []).shift() || null;
       case "sealit_start": return { frames: ["<svg xmlns='http://www.w3.org/2000/svg'/>"], cupcake: Boolean(m.cupcakeSigner), large_kb: m.largeKb || null };
       case "go_max_view": return m.goMax;

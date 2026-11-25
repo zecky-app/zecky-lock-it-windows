@@ -110,6 +110,17 @@ fn circuit_version(pczt: &pczt::Pczt) -> Result<orchard::circuit::OrchardCircuit
         .ok_or_else(|| other("this network upgrade has no Orchard"))
 }
 
+/// A memo's text, if it is text and not empty (ZIP 302).
+pub fn memo_text(bytes: &[u8]) -> Option<String> {
+    match zcash_protocol::memo::Memo::from_bytes(bytes).ok()? {
+        zcash_protocol::memo::Memo::Text(text) => {
+            let text = text.to_string();
+            (!text.trim().is_empty()).then_some(text)
+        }
+        _ => None,
+    }
+}
+
 /// Runs `work` for at most `budget`: Ok(true) when it finished, Ok(false)
 /// when time ran out first.
 pub async fn within<F: std::future::Future<Output = Result<()>>>(work: F, budget: std::time::Duration) -> Result<bool> {
@@ -893,6 +904,38 @@ impl Wallet {
         net::price_over_tor(&self.tor_dir()).await
     }
 
+    /// The text memo of each payment of this wallet (txid as explorers
+    /// show it), for the CSV file: received ones, and those it sent to
+    /// others (not its own change). Empty and binary memos are left out.
+    pub fn memos(&self) -> Result<std::collections::HashMap<String, String>> {
+        let account = {
+            let db = self.db()?;
+            self.account(&db)?
+        };
+        let conn = rusqlite::Connection::open(self.db_path()).map_err(db_err)?;
+        conn.busy_timeout(std::time::Duration::from_secs(15)).map_err(db_err)?;
+        let mut statement = conn
+            .prepare(
+                "SELECT txid, memo FROM v_tx_outputs
+                 WHERE memo IS NOT NULL
+                   AND (to_account_uuid = ?1 OR (from_account_uuid = ?1 AND NOT is_change))
+                 ORDER BY output_pool, output_index",
+            )
+            .map_err(db_err)?;
+        let id = account.expose_uuid().as_bytes().to_vec();
+        let rows = statement
+            .query_map(rusqlite::params![id], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)))
+            .map_err(db_err)?;
+        let mut memos = std::collections::HashMap::new();
+        for found in rows {
+            let (txid, bytes) = found.map_err(db_err)?;
+            if let Some(text) = memo_text(&bytes) {
+                memos.entry(txid.iter().rev().map(|b| format!("{b:02x}")).collect::<String>()).or_insert(text);
+            }
+        }
+        Ok(memos)
+    }
+
     /// The newest payments in and out, newest first.
     pub fn activity(&self, limit: u32) -> Result<Vec<Activity>> {
         let account = {
@@ -1456,6 +1499,23 @@ mod tests {
         watch.note(&[line("a2", "main", Some(2), 5)], false, 200, &rule);
         watch.note(&[line("a3", "main", Some(3), 5)], true, 300, &rule);
         assert_eq!(*seen.borrow(), vec![None, Some(100), Some(100)]);
+    }
+
+    /// Memos for the CSV file: text only, empty and binary left out; the
+    /// query runs on a wallet database.
+    #[test]
+    fn memos_are_text_only() {
+        let mut text = b"Order 42".to_vec();
+        text.resize(512, 0);
+        assert_eq!(memo_text(&text).as_deref(), Some("Order 42"));
+        let mut empty = vec![0xF6];
+        empty.resize(512, 0);
+        assert_eq!(memo_text(&empty), None, "the empty memo");
+        let mut binary = vec![0xFF];
+        binary.resize(512, 7);
+        assert_eq!(memo_text(&binary), None, "not text");
+        let (_dir, wallet, _seed) = fresh();
+        assert!(wallet.memos().unwrap().is_empty());
     }
 
     /// The query reads every wallet's lines (an empty new wallet has none).

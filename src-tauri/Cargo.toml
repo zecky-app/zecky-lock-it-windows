@@ -26,6 +26,7 @@ ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 sha2 = "0.10"
 tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
 zeroize = { version = "1", features = ["serde"] }
 
 [target.'cfg(windows)'.dependencies]

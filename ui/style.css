@@ -981,3 +981,8 @@ select.input { appearance: auto; }
 .watch-buttons { display: flex; gap: 8px; margin: -4px 0 14px; }
 #sheet-watch .check { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--text); }
 #sheet-watch .seal-dates[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }
+
+/* Export CSV… under Activity */
+.export-row { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 10px 4px 2px; }
+.link-button { background: none; border: 0; padding: 4px 2px; color: var(--gold); font: 500 12px var(--sans); cursor: pointer; }
+.link-button:disabled { opacity: 0.4; cursor: default; }

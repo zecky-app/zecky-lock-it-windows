@@ -308,6 +308,9 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        // The Save dialog for Export CSV… (used from Rust only, so no
+        // permission is given to the page).
+        .plugin(tauri_plugin_dialog::init())
         .manage(go_max::GoMaxSlot::default())
         .manage(machine::PowerSlot::default())
         .manage(wallet::WalletSlot::default())
@@ -332,6 +335,7 @@ pub fn run() {
             wallet::wallet_receive_transparent,
             wallet::wallet_activity,
             wallet::wallet_take_arrival,
+            wallet::wallet_export_csv,
             sealit::watch_add,
             sealit::watch_scanned_key,
             wallet::wallet_prepare,

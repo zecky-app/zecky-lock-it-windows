@@ -389,6 +389,33 @@ function arrivalDetail(arrival) {
   return prefs.hidden ? "Amount hidden" : amountText(arrival.amount);
 }
 
+/// Export CSV… (as Lock it Mac): the selected wallet's payments, with each
+/// payment's local offset (summer time included) for its date.
+async function exportCsv() {
+  const button = $("export-csv");
+  const note = $("export-note");
+  button.disabled = true;
+  button.textContent = "Exporting…";
+  note.textContent = "";
+  try {
+    const offsets = {};
+    for (const item of activity) if (item.time) offsets[String(item.time)] = -new Date(item.time * 1000).getTimezoneOffset();
+    const w = currentWallet();
+    const saved = await invoke("wallet_export_csv", { name: w ? walletName(w) : "wallet", offsets, todayOffset: -new Date().getTimezoneOffset() });
+    if (saved) {
+      const [name, mayMiss] = saved;
+      note.textContent = `Saved ${name}` + (mayMiss ? ". Older blocks are still being checked; this file may miss payments." : "");
+    }
+  } catch (problem) {
+    note.textContent = describe(problem);
+  } finally {
+    button.textContent = "Export CSV…";
+    button.disabled = activity.length === 0;
+  }
+}
+
+$("export-csv").addEventListener("click", exportCsv);
+
 /// Shows the next waiting message, one at a time.
 async function nextArrival() {
   if (arrivalShown || !arrivalFree()) return;
@@ -1728,6 +1755,9 @@ $("outside-lockin").addEventListener("click", () => { $("outside-prompt").hidden
 
 // Activity
 function renderActivity() {
+  // Export the payments, not the lock's log; nothing to export when empty.
+  $("export-row").hidden = activityTab !== "payments";
+  $("export-csv").disabled = activity.length === 0;
   $("tab-payments").classList.toggle("on", activityTab === "payments");
   $("tab-lock").classList.toggle("on", activityTab === "lock");
   if (activityTab === "lock") return renderLockLog();

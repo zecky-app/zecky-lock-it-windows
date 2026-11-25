@@ -775,6 +775,43 @@ fn note_arrivals(app: &AppHandle, current: bool) {
     };
 }
 
+/// The selected wallet's payments as a CSV file (as Lock it Mac's Export
+/// CSV…): a Save dialog, then the file. `offsets`: minutes east of UTC at
+/// each payment's time (the screen knows summer time), `today_offset` for
+/// the rest; `name`: the wallet's name for the file name. Returns the saved
+/// file's name and whether older blocks are still checked (the file may
+/// miss payments), or None when the dialog was closed.
+#[tauri::command]
+pub async fn wallet_export_csv(
+    app: AppHandle,
+    name: String,
+    offsets: std::collections::HashMap<String, i32>,
+    today_offset: i32,
+) -> CommandResult<Option<(String, bool)>> {
+    use tauri_plugin_dialog::DialogExt;
+    let wallet = wallet(&app)?;
+    let heard = network_heard(&app);
+    tauri::async_runtime::spawn_blocking(move || -> CommandResult<Option<(String, bool)>> {
+        let activity = wallet.activity(100_000)?;
+        let memos = wallet.memos()?;
+        let rows: Vec<_> = activity.iter().map(|item| lockit_wallet::csv::row(item, memos.get(&item.txid).cloned())).collect();
+        let bytes = lockit_wallet::csv::file(&rows, |time| time.and_then(|t| offsets.get(&t.to_string()).copied()).unwrap_or(today_offset));
+        let file_name = lockit_wallet::csv::file_name(&name, lockit_wallet::csv::today(now(), today_offset));
+        let Some(path) = app.dialog().file().set_file_name(&file_name).add_filter("CSV", &["csv"]).blocking_save_file() else {
+            return Ok(None);
+        };
+        let path = path.into_path().map_err(|_| problem("Lock it could not save there. Choose a folder on this PC."))?;
+        fs::write(&path, bytes).map_err(|e| problem(format!("Could not save: {e}")))?;
+        let saved = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(file_name);
+        let balance = wallet.balance()?;
+        let network = balance.chain_tip.max(heard);
+        let may_miss = !own_checked(&balance.to_scan, balance.birthday, network);
+        Ok(Some((saved, may_miss)))
+    })
+    .await
+    .map_err(|e| problem(format!("the export stopped unexpectedly: {e}")))?
+}
+
 /// The next arrival message to show, if any (the screen asks when it is free).
 #[tauri::command]
 pub fn wallet_take_arrival(slot: State<'_, WalletSlot>) -> Option<lockit_wallet::Arrival> {
